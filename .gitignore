@@ -1,0 +1,15 @@
+# Build output
+*.out
+*.bin
+*.exe
+*.pdb
+*.o
+*.a
+*.so
+*.dll
+
+# Odin build cache
+.odin_cache/
+
+# Compiled shaders
+*.spv
