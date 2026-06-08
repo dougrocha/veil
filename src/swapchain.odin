@@ -41,21 +41,7 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 	self.swapchain_image_view = make([]vk.ImageView, image_count)
 
 	for i in 0 ..< len(self.swapchain_images) {
-		img_view_info := vk.ImageViewCreateInfo {
-			sType = .IMAGE_VIEW_CREATE_INFO,
-			image = self.swapchain_images[i],
-			viewType = .D2,
-			format = SWAPCHAIN_FORMAT,
-			subresourceRange = {
-				aspectMask = {.COLOR},
-				baseMipLevel = 0,
-				levelCount = 1,
-				baseArrayLayer = 0,
-				layerCount = 1,
-			},
-		}
-
-		vk_check(vk.CreateImageView(self.device, &img_view_info, nil, &self.swapchain_image_view[i]))
+		create_image_view(self, self.swapchain_images[i], SWAPCHAIN_FORMAT, {.COLOR}, &self.swapchain_image_view[i])
 	}
 
 	// setup semaphores
@@ -95,14 +81,7 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 		),
 	)
 
-	depth_img_view_info := vk.ImageViewCreateInfo {
-		sType = .IMAGE_VIEW_CREATE_INFO,
-		image = self.depth_image,
-		viewType = .D2,
-		format = DEPTH_FORMAT,
-		subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
-	}
-	vk_check(vk.CreateImageView(self.device, &depth_img_view_info, nil, &self.depth_image_view))
+	create_image_view(self, self.depth_image, DEPTH_FORMAT, {.DEPTH}, &self.depth_image_view)
 }
 
 cleanup_swapchain :: proc(self: ^Engine) {

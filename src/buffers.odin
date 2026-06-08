@@ -8,37 +8,10 @@ import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
 copy_buffer :: proc(engine: ^Engine, src, dst: vk.Buffer, size: vk.DeviceSize) {
-	cmd_alloc_info := vk.CommandBufferAllocateInfo {
-		sType              = .COMMAND_BUFFER_ALLOCATE_INFO,
-		commandPool        = engine.frame_resources[0].command_pool,
-		level              = .PRIMARY,
-		commandBufferCount = 1,
-	}
-
-	cmd: vk.CommandBuffer
-	vk_check(vk.AllocateCommandBuffers(engine.device, &cmd_alloc_info, &cmd))
-	defer vk.FreeCommandBuffers(engine.device, engine.frame_resources[0].command_pool, 1, &cmd)
-
-	begin_info := vk.CommandBufferBeginInfo {
-		sType = .COMMAND_BUFFER_BEGIN_INFO,
-		flags = {.ONE_TIME_SUBMIT},
-	}
-	vk_check(vk.BeginCommandBuffer(cmd, &begin_info))
-
-	region := vk.BufferCopy {
-		size = size,
-	}
+	cmd := begin_single_time_commands(engine)
+	region := vk.BufferCopy{size = size}
 	vk.CmdCopyBuffer(cmd, src, dst, 1, &region)
-
-	vk_check(vk.EndCommandBuffer(cmd))
-
-	submit_info := vk.SubmitInfo {
-		sType              = .SUBMIT_INFO,
-		commandBufferCount = 1,
-		pCommandBuffers    = &cmd,
-	}
-	vk_check(vk.QueueSubmit(engine.graphics_queue, 1, &submit_info, 0))
-	vk_check(vk.QueueWaitIdle(engine.graphics_queue))
+	end_single_time_commands(engine, &cmd)
 }
 
 create_uniform_buffers :: proc(engine: ^Engine) {

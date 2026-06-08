@@ -2,7 +2,9 @@ package main
 
 import "base:runtime"
 import "core:log"
+import "core:mem"
 import "core:time"
+import stbi "vendor:stb/image"
 
 import sp "shared:odin-slang/slang"
 import vma "shared:odin-vma"
@@ -11,6 +13,7 @@ import vk "vendor:vulkan"
 
 SWAPCHAIN_FORMAT :: vk.Format.B8G8R8A8_SRGB
 DEPTH_FORMAT :: vk.Format.D32_SFLOAT
+TEXTURE_FORMAT :: vk.Format.R8G8B8A8_SRGB
 MAX_FRAMES_IN_FLIGHT :: 2
 
 Vec2 :: [2]f32
@@ -21,8 +24,8 @@ Mat4x4 :: matrix[4, 4]f32
 Mat4x3 :: matrix[4, 3]f32
 
 Vertex :: struct {
-	pos:   Vec2,
-	color: Vec3,
+	pos:       Vec2,
+	tex_coord: Vec2,
 }
 
 UniformBufferObject :: struct #align (16) {
@@ -38,7 +41,7 @@ vertex_binding_description :: proc() -> vk.VertexInputBindingDescription {
 vertex_attribute_descriptions :: proc() -> [2]vk.VertexInputAttributeDescription {
 	return {
 		{location = 0, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Vertex, pos))},
-		{location = 1, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, color))},
+		{location = 1, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Vertex, tex_coord))},
 	}
 }
 
@@ -112,6 +115,12 @@ Engine :: struct {
 
 	// timers
 	start_time:                 time.Time,
+
+	// texture
+	texture_image:              vk.Image,
+	texture_image_allocation:   vma.Allocation,
+	texture_image_view:         vk.ImageView,
+	texture_sampler:            vk.Sampler,
 }
 
 main :: proc() {
@@ -170,6 +179,11 @@ main :: proc() {
 engine_shutdown :: proc(self: ^Engine) {
 	// wait in case resources are still in use
 	vk.DeviceWaitIdle(self.device)
+
+	// texture
+	vk.DestroySampler(self.device, self.texture_sampler, nil)
+	vk.DestroyImageView(self.device, self.texture_image_view, nil)
+	vma.destroy_image(self.vma_allocator, self.texture_image, self.texture_image_allocation)
 
 	// buffers
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
@@ -254,15 +268,17 @@ initialize_vulkan :: proc(app: ^App) -> bool {
 	create_sync_resources(self)
 
 	self.vertices = []Vertex {
-		{pos = {-0.5, -0.5}, color = {1.0, 0.0, 0.0}},
-		{pos = {0.5, -0.5}, color = {0.0, 1.0, 0.0}},
-		{pos = {0.5, 0.5}, color = {0.0, 0.0, 1.0}},
-		{pos = {-0.5, 0.5}, color = {1.0, 1.0, 1.0}},
+		{pos = {-0.5, -0.5}, tex_coord = {1.0, 0.0}},
+		{pos = {0.5, -0.5}, tex_coord = {0.0, 0.0}},
+		{pos = {0.5, 0.5}, tex_coord = {0.0, 1.0}},
+		{pos = {-0.5, 0.5}, tex_coord = {1.0, 1.0}},
 	}
 	self.indices = []u16{0, 1, 2, 2, 3, 0}
 
 	create_command_buffers(self)
 	create_texture_image(self)
+	create_texture_image_view(self)
+	create_texture_sampler(self)
 	create_geometry_buffer(self)
 	create_uniform_buffers(self)
 	create_descriptor_pool(self)
@@ -271,21 +287,132 @@ initialize_vulkan :: proc(app: ^App) -> bool {
 	return true
 }
 
+create_texture_image_view :: proc(engine: ^Engine) {
+	create_image_view(engine, engine.texture_image, TEXTURE_FORMAT, {.COLOR}, &engine.texture_image_view)
+}
+
+create_texture_sampler :: proc(engine: ^Engine) {
+	properties: vk.PhysicalDeviceProperties
+	vk.GetPhysicalDeviceProperties(engine.physical_device, &properties)
+
+	sampler_info := vk.SamplerCreateInfo {
+		sType                   = .SAMPLER_CREATE_INFO,
+		magFilter               = .LINEAR,
+		minFilter               = .LINEAR,
+		mipmapMode              = .LINEAR,
+		addressModeU            = .REPEAT,
+		addressModeV            = .REPEAT,
+		addressModeW            = .REPEAT,
+		anisotropyEnable        = true,
+		maxAnisotropy           = properties.limits.maxSamplerAnisotropy,
+		compareEnable           = false,
+		compareOp               = .ALWAYS,
+		borderColor             = .INT_OPAQUE_BLACK,
+		unnormalizedCoordinates = false,
+	}
+
+	vk_check(vk.CreateSampler(engine.device, &sampler_info, nil, &engine.texture_sampler))
+}
+
 create_texture_image :: proc(engine: ^Engine) {
+	texture_file :: "textures/texture.jpeg"
+	width, height, channels: i32
+	pixels := stbi.load(texture_file, &width, &height, &channels, 4)
+	if pixels == nil {
+		log.errorf("Failed to read image: %s", stbi.failure_reason())
+		return
+	}
+	defer stbi.image_free(pixels)
+
+	image_size := vk.DeviceSize(width * height * 4)
+
+	staging_buffer: vk.Buffer
+	staging_allocation: vma.Allocation
+	vk_check(
+		vma.create_buffer(
+			engine.vma_allocator,
+			vk.BufferCreateInfo{sType = .BUFFER_CREATE_INFO, size = image_size, usage = {.TRANSFER_SRC}},
+			vma.Allocation_Create_Info{usage = .Auto, flags = {.Host_Access_Sequential_Write}},
+			&staging_buffer,
+			&staging_allocation,
+			nil,
+		),
+	)
+	defer vma.destroy_buffer(engine.vma_allocator, staging_buffer, staging_allocation)
+
+	data: rawptr
+	vk_check(vma.map_memory(engine.vma_allocator, staging_allocation, &data))
+	mem.copy(data, pixels, int(image_size))
+	vma.unmap_memory(engine.vma_allocator, staging_allocation)
+
+	engine.texture_image, engine.texture_image_allocation = create_image(
+		engine,
+		u32(width),
+		u32(height),
+		TEXTURE_FORMAT,
+		.OPTIMAL,
+		{.TRANSFER_DST, .SAMPLED},
+	)
+
+	cmd := begin_single_time_commands(engine)
+	transition_image_layout(engine, &cmd, engine.texture_image, .UNDEFINED, .TRANSFER_DST_OPTIMAL)
+	copy_buffer_to_image(engine, &cmd, staging_buffer, engine.texture_image, u32(width), u32(height))
+	transition_image_layout(engine, &cmd, engine.texture_image, .TRANSFER_DST_OPTIMAL, .SHADER_READ_ONLY_OPTIMAL)
+	end_single_time_commands(engine, &cmd)
+}
+
+create_image :: proc(
+	engine: ^Engine,
+	width, height: u32,
+	format: vk.Format,
+	tiling: vk.ImageTiling,
+	usage: vk.ImageUsageFlags,
+) -> (
+	vk.Image,
+	vma.Allocation,
+) {
+	image_info := vk.ImageCreateInfo {
+		sType = .IMAGE_CREATE_INFO,
+		imageType = .D2,
+		format = format,
+		extent = {width = width, height = height, depth = 1},
+		mipLevels = 1,
+		arrayLayers = 1,
+		samples = {._1},
+		tiling = tiling,
+		usage = usage,
+		sharingMode = .EXCLUSIVE,
+		initialLayout = .UNDEFINED,
+	}
+
+	img: vk.Image
+	allocation: vma.Allocation
+	vk_check(
+		vma.create_image(
+			engine.vma_allocator,
+			image_info,
+			vma.Allocation_Create_Info{usage = .Auto, flags = {.Dedicated_Memory}},
+			&img,
+			&allocation,
+			nil,
+		),
+	)
+
+	return img, allocation
 }
 
 create_descriptor_pool :: proc(engine: ^Engine) {
-	pool_size := vk.DescriptorPoolSize {
-		type            = .UNIFORM_BUFFER,
-		descriptorCount = MAX_FRAMES_IN_FLIGHT,
+	pool_sizes := []vk.DescriptorPoolSize {
+		{type = .UNIFORM_BUFFER, descriptorCount = MAX_FRAMES_IN_FLIGHT},
+		{type = .COMBINED_IMAGE_SAMPLER, descriptorCount = MAX_FRAMES_IN_FLIGHT},
 	}
 
 	pool_info := vk.DescriptorPoolCreateInfo {
 		sType         = .DESCRIPTOR_POOL_CREATE_INFO,
 		flags         = {.FREE_DESCRIPTOR_SET},
 		maxSets       = MAX_FRAMES_IN_FLIGHT,
-		poolSizeCount = 1,
-		pPoolSizes    = &pool_size,
+		poolSizeCount = u32(len(pool_sizes)),
+		pPoolSizes    = raw_data(pool_sizes),
 	}
 
 	vk_check(vk.CreateDescriptorPool(engine.device, &pool_info, nil, &engine.descriptor_pool))
@@ -298,7 +425,7 @@ create_descriptor_sets :: proc(engine: ^Engine) {
 		sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
 		descriptorPool     = engine.descriptor_pool,
 		descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
-		pSetLayouts        = &layouts[0],
+		pSetLayouts        = raw_data(layouts[:]),
 	}
 
 	vk_check(vk.AllocateDescriptorSets(engine.device, &alloc_info, raw_data(engine.descriptor_sets[:])))
@@ -310,17 +437,34 @@ create_descriptor_sets :: proc(engine: ^Engine) {
 			range  = size_of(UniformBufferObject),
 		}
 
-		descriptor_write := vk.WriteDescriptorSet {
-			sType           = .WRITE_DESCRIPTOR_SET,
-			dstSet          = engine.descriptor_sets[i],
-			dstBinding      = 0,
-			dstArrayElement = 0,
-			descriptorCount = 1,
-			descriptorType  = .UNIFORM_BUFFER,
-			pBufferInfo     = &buffer_info,
+		image_info := vk.DescriptorImageInfo {
+			sampler     = engine.texture_sampler,
+			imageView   = engine.texture_image_view,
+			imageLayout = .READ_ONLY_OPTIMAL,
 		}
 
-		vk.UpdateDescriptorSets(engine.device, 1, &descriptor_write, 0, nil)
+		descriptor_write := []vk.WriteDescriptorSet {
+			{
+				sType = .WRITE_DESCRIPTOR_SET,
+				dstSet = engine.descriptor_sets[i],
+				dstBinding = 0,
+				dstArrayElement = 0,
+				descriptorCount = 1,
+				descriptorType = .UNIFORM_BUFFER,
+				pBufferInfo = &buffer_info,
+			},
+			{
+				sType = .WRITE_DESCRIPTOR_SET,
+				dstSet = engine.descriptor_sets[i],
+				dstBinding = 1,
+				dstArrayElement = 0,
+				descriptorCount = 1,
+				descriptorType = .COMBINED_IMAGE_SAMPLER,
+				pImageInfo = &image_info,
+			},
+		}
+
+		vk.UpdateDescriptorSets(engine.device, u32(len(descriptor_write)), raw_data(descriptor_write), 0, nil)
 	}
 }
 
@@ -758,13 +902,22 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 		sType = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
 		pNext = &features_13,
 	}
+	features_11 := vk.PhysicalDeviceVulkan11Features {
+		sType = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+		pNext = &features_12,
+	}
 	supported_features := vk.PhysicalDeviceFeatures2 {
 		sType = .PHYSICAL_DEVICE_FEATURES_2,
-		pNext = &features_12,
+		pNext = &features_11,
 	}
 	vk.GetPhysicalDeviceFeatures2(self.physical_device, &supported_features)
 
-	if !features_13.dynamicRendering || !features_13.synchronization2 || !features_12.timelineSemaphore {
+	if !features_13.dynamicRendering ||
+	   !features_13.synchronization2 ||
+	   !features_12.timelineSemaphore ||
+	   !features_12.bufferDeviceAddress ||
+	   !features_11.shaderDrawParameters ||
+	   !supported_features.features.samplerAnisotropy {
 		log.errorf("Physical Device does not meet feature requirement")
 		return false
 	}
@@ -792,6 +945,7 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 	enabled_features := vk.PhysicalDeviceFeatures2 {
 		sType = .PHYSICAL_DEVICE_FEATURES_2,
 		pNext = &enabled_features_11,
+		features = {samplerAnisotropy = true},
 	}
 
 	queue_priorities := []f32{1.0}
@@ -850,17 +1004,15 @@ vk_messenger_callback :: proc "system" (
 }
 
 create_descriptor_set_layout :: proc(self: ^Engine) {
-	ubo_layout_binding := vk.DescriptorSetLayoutBinding {
-		binding         = 0,
-		descriptorType  = .UNIFORM_BUFFER,
-		descriptorCount = 1,
-		stageFlags      = {.VERTEX},
+	bindings := []vk.DescriptorSetLayoutBinding {
+		{binding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.VERTEX}},
+		{binding = 1, descriptorType = .COMBINED_IMAGE_SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
 	}
 
 	layout_info := vk.DescriptorSetLayoutCreateInfo {
 		sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		bindingCount = 1,
-		pBindings    = &ubo_layout_binding,
+		bindingCount = u32(len(bindings)),
+		pBindings    = raw_data(bindings[:]),
 	}
 
 	vk_check(vk.CreateDescriptorSetLayout(self.device, &layout_info, nil, &self.descriptor_set_layout))
@@ -899,8 +1051,8 @@ create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 		sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 		pVertexBindingDescriptions      = &binding_description,
 		vertexBindingDescriptionCount   = 1,
-		pVertexAttributeDescriptions    = &attribute_descriptions[0],
-		vertexAttributeDescriptionCount = len(&attribute_descriptions),
+		pVertexAttributeDescriptions    = raw_data(attribute_descriptions[:]),
+		vertexAttributeDescriptionCount = u32(len(attribute_descriptions)),
 	}
 
 	input_assembly_info := vk.PipelineInputAssemblyStateCreateInfo {
