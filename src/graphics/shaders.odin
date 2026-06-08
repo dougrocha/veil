@@ -1,4 +1,4 @@
-package main
+package graphics
 
 import "core:log"
 import "core:os"
@@ -70,15 +70,15 @@ create_shaders_slang :: proc(self: ^Engine) -> bool {
 	defer module->release()
 
 	vert_entry: ^sp.IEntryPoint
-	if res := module->findEntryPointByName("vertMain", &vert_entry); sp.FAILED(res) {
-		log.errorf("Could not find Slang entry point: vertMain")
+	if res := module->findEntryPointByName(VERTEX_ENTRY, &vert_entry); sp.FAILED(res) {
+		log.errorf("Could not find Slang entry point: %s", VERTEX_ENTRY)
 		return false
 	}
 	defer vert_entry->release()
 
 	frag_entry: ^sp.IEntryPoint
-	if res := module->findEntryPointByName("fragMain", &frag_entry); sp.FAILED(res) {
-		log.errorf("Could not find Slang entry point: fragMain")
+	if res := module->findEntryPointByName(FRAGMENT_MAIN, &frag_entry); sp.FAILED(res) {
+		log.errorf("Could not find Slang entry point: %s", FRAGMENT_MAIN)
 		return false
 	}
 	defer frag_entry->release()

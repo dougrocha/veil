@@ -1,4 +1,4 @@
-package main
+package graphics
 
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
@@ -33,7 +33,6 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 
 	vk_check(vk.CreateSwapchainKHR(self.device, &swapchain_create_info, nil, &self.swapchain))
 
-	// ask for swapchain images
 	image_count: u32 = 0
 	vk.GetSwapchainImagesKHR(self.device, self.swapchain, &image_count, nil)
 	self.swapchain_images = make([]vk.Image, image_count)
@@ -44,7 +43,6 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 		create_image_view(self, self.swapchain_images[i], SWAPCHAIN_FORMAT, {.COLOR}, &self.swapchain_image_view[i])
 	}
 
-	// setup semaphores
 	self.render_complete_semaphores = make([]vk.Semaphore, len(self.swapchain_images))
 	semaphore_info := vk.SemaphoreCreateInfo {
 		sType = .SEMAPHORE_CREATE_INFO,

@@ -1,4 +1,4 @@
-package main
+package graphics
 
 import "core:log"
 
@@ -63,50 +63,38 @@ end_single_time_commands :: proc(engine: ^Engine, cmd: ^vk.CommandBuffer) {
 }
 
 transition_image_layout :: proc(
-	engine: ^Engine,
-	cmd: ^vk.CommandBuffer,
+	cmd: vk.CommandBuffer,
 	img: vk.Image,
 	old_layout, new_layout: vk.ImageLayout,
+	src_access: vk.AccessFlags2,
+	dst_access: vk.AccessFlags2,
+	src_stage: vk.PipelineStageFlags2,
+	dst_stage: vk.PipelineStageFlags2,
+	aspect: vk.ImageAspectFlags,
 ) {
 	barrier := vk.ImageMemoryBarrier2 {
 		sType = .IMAGE_MEMORY_BARRIER_2,
+		srcStageMask = src_stage,
+		srcAccessMask = src_access,
+		dstStageMask = dst_stage,
+		dstAccessMask = dst_access,
 		oldLayout = old_layout,
 		newLayout = new_layout,
 		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		image = img,
-		subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
-	}
-
-	if old_layout == .UNDEFINED && new_layout == .TRANSFER_DST_OPTIMAL {
-		barrier.srcAccessMask = {}
-		barrier.dstAccessMask = {.TRANSFER_WRITE}
-
-		barrier.srcStageMask = {.TOP_OF_PIPE}
-		barrier.dstStageMask = {.TRANSFER}
-	} else if old_layout == .TRANSFER_DST_OPTIMAL && new_layout == .SHADER_READ_ONLY_OPTIMAL {
-		barrier.srcAccessMask = {.TRANSFER_WRITE}
-		barrier.dstAccessMask = {.SHADER_READ}
-
-		barrier.srcStageMask = {.TRANSFER}
-		barrier.dstStageMask = {.FRAGMENT_SHADER}
+		subresourceRange = {aspectMask = aspect, levelCount = 1, layerCount = 1},
 	}
 
 	dep_info := vk.DependencyInfo {
 		sType                   = .DEPENDENCY_INFO,
-		pImageMemoryBarriers    = &barrier,
 		imageMemoryBarrierCount = 1,
+		pImageMemoryBarriers    = &barrier,
 	}
-	vk.CmdPipelineBarrier2(cmd^, &dep_info)
+	vk.CmdPipelineBarrier2(cmd, &dep_info)
 }
 
-copy_buffer_to_image :: proc(
-	engine: ^Engine,
-	cmd: ^vk.CommandBuffer,
-	buffer: vk.Buffer,
-	img: vk.Image,
-	width, height: u32,
-) {
+copy_buffer_to_image :: proc(cmd: vk.CommandBuffer, buffer: vk.Buffer, img: vk.Image, width, height: u32) {
 	region := vk.BufferImageCopy2 {
 		sType = .BUFFER_IMAGE_COPY_2,
 		bufferOffset = 0,
@@ -118,7 +106,7 @@ copy_buffer_to_image :: proc(
 	}
 
 	vk.CmdCopyBufferToImage2(
-		cmd^,
+		cmd,
 		&vk.CopyBufferToImageInfo2 {
 			sType = .COPY_BUFFER_TO_IMAGE_INFO_2,
 			srcBuffer = buffer,

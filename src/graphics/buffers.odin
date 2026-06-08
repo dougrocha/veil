@@ -1,4 +1,4 @@
-package main
+package graphics
 
 import "core:math/linalg"
 import "core:mem"
@@ -9,7 +9,9 @@ import vk "vendor:vulkan"
 
 copy_buffer :: proc(engine: ^Engine, src, dst: vk.Buffer, size: vk.DeviceSize) {
 	cmd := begin_single_time_commands(engine)
-	region := vk.BufferCopy{size = size}
+	region := vk.BufferCopy {
+		size = size,
+	}
 	vk.CmdCopyBuffer(cmd, src, dst, 1, &region)
 	end_single_time_commands(engine, &cmd)
 }
@@ -44,10 +46,10 @@ update_uniform_buffer :: proc(engine: ^Engine, frame_index: u64) {
 	current_time := time.now()
 
 	duration := time.diff(engine.start_time, current_time)
-	time := f32(time.duration_seconds(duration))
+	t := f32(time.duration_seconds(duration))
 
 	ubo := UniformBufferObject{}
-	ubo.model = linalg.matrix4_rotate(time * linalg.to_radians(f32(90)), Vec3{0.0, 0.0, 1.0})
+	ubo.model = linalg.matrix4_rotate(t * linalg.to_radians(f32(90)), Vec3{0.0, 0.0, 1.0})
 	ubo.view = linalg.matrix4_look_at_f32(Vec3{2, 2, 2}, Vec3{0, 0, 0}, Vec3{0, 0, 1})
 	ubo.proj = linalg.matrix4_perspective_f32(
 		linalg.to_radians(f32(45)),
@@ -63,7 +65,7 @@ update_uniform_buffer :: proc(engine: ^Engine, frame_index: u64) {
 
 create_geometry_buffer :: proc(engine: ^Engine) {
 	vertex_size := vk.DeviceSize(size_of(Vertex) * len(engine.vertices))
-	index_size := vk.DeviceSize(size_of(u16) * len(engine.indices))
+	index_size := vk.DeviceSize(size_of(u32) * len(engine.indices))
 	total_size := vertex_size + index_size
 
 	engine.index_buffer_offset = vertex_size
