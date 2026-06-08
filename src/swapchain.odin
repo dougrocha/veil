@@ -1,11 +1,9 @@
 package main
 
-import "core:log"
-
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
-create_swapchain :: proc(self: ^Engine, width, height: u32) -> bool {
+create_swapchain :: proc(self: ^Engine, width, height: u32) {
 	self.swapchain_width = width
 	self.swapchain_height = height
 
@@ -86,18 +84,16 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) -> bool {
 		flags = {.Dedicated_Memory},
 		usage = .Auto,
 	}
-	if vma.create_image(
-		   self.vma_allocator,
-		   depth_create_info,
-		   alloc_info,
-		   &self.depth_image,
-		   &self.depth_image_allocation,
-		   nil,
-	   ) !=
-	   .SUCCESS {
-		log.errorf("Error creating depth image")
-		return false
-	}
+	vk_check(
+		vma.create_image(
+			self.vma_allocator,
+			depth_create_info,
+			alloc_info,
+			&self.depth_image,
+			&self.depth_image_allocation,
+			nil,
+		),
+	)
 
 	depth_img_view_info := vk.ImageViewCreateInfo {
 		sType = .IMAGE_VIEW_CREATE_INFO,
@@ -107,8 +103,6 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) -> bool {
 		subresourceRange = {aspectMask = {.DEPTH}, levelCount = 1, layerCount = 1},
 	}
 	vk_check(vk.CreateImageView(self.device, &depth_img_view_info, nil, &self.depth_image_view))
-
-	return true
 }
 
 cleanup_swapchain :: proc(self: ^Engine) {

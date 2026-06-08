@@ -21,19 +21,27 @@ slang_cleanup :: proc(self: ^Engine) {
 }
 
 create_shaders_slang :: proc(self: ^Engine) -> bool {
-	compiler_option_entries := [1]sp.CompilerOptionEntry{{name = .VulkanUseEntryPointName, value = {intValue0 = 1}}}
+	compiler_option_entries := []sp.CompilerOptionEntry {
+		{name = .VulkanUseEntryPointName, value = {kind = .Int, intValue0 = 1}},
+		{name = .GLSLForceScalarLayout, value = {kind = .Int, intValue0 = 1}},
+	}
+
 	target_desc := sp.TargetDesc {
 		structureSize            = size_of(sp.TargetDesc),
 		format                   = .SPIRV,
 		flags                    = {.GENERATE_SPIRV_DIRECTLY},
 		profile                  = self.slang_session->findProfile("sm_6_0"),
 		compilerOptionEntries    = &compiler_option_entries[0],
-		compilerOptionEntryCount = 1,
+		compilerOptionEntryCount = u32(len(compiler_option_entries)),
 	}
+
 	session_desc := sp.SessionDesc {
-		structureSize = size_of(sp.SessionDesc),
-		targets       = &target_desc,
-		targetCount   = 1,
+		structureSize            = size_of(sp.SessionDesc),
+		targets                  = &target_desc,
+		targetCount              = 1,
+		defaultMatrixLayoutMode  = .COLUMN_MAJOR,
+		compilerOptionEntries    = &compiler_option_entries[0],
+		compilerOptionEntryCount = u32(len(compiler_option_entries)),
 	}
 
 	session: ^sp.ISession

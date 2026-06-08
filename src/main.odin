@@ -2,6 +2,7 @@ package main
 
 import "base:runtime"
 import "core:log"
+import "core:time"
 
 import sp "shared:odin-slang/slang"
 import vma "shared:odin-vma"
@@ -11,6 +12,35 @@ import vk "vendor:vulkan"
 SWAPCHAIN_FORMAT :: vk.Format.B8G8R8A8_SRGB
 DEPTH_FORMAT :: vk.Format.D32_SFLOAT
 MAX_FRAMES_IN_FLIGHT :: 2
+
+Vec2 :: [2]f32
+Vec3 :: [3]f32
+Vec4 :: [4]f32
+
+Mat4x4 :: matrix[4, 4]f32
+Mat4x3 :: matrix[4, 3]f32
+
+Vertex :: struct {
+	pos:   Vec2,
+	color: Vec3,
+}
+
+UniformBufferObject :: struct #align (16) {
+	model: Mat4x4,
+	view:  Mat4x4,
+	proj:  Mat4x4,
+}
+
+vertex_binding_description :: proc() -> vk.VertexInputBindingDescription {
+	return {binding = 0, stride = size_of(Vertex), inputRate = .VERTEX}
+}
+
+vertex_attribute_descriptions :: proc() -> [2]vk.VertexInputAttributeDescription {
+	return {
+		{location = 0, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Vertex, pos))},
+		{location = 1, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, color))},
+	}
+}
 
 g_ctx: runtime.Context
 
@@ -58,12 +88,30 @@ Engine :: struct {
 	// graphics pipeline
 	pipeline:                   vk.Pipeline,
 	pipeline_layout:            vk.PipelineLayout,
+	descriptor_pool:            vk.DescriptorPool,
+	descriptor_set_layout:      vk.DescriptorSetLayout,
+	descriptor_sets:            [MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
 
 	// frame and sync resources
 	timeline_semaphore:         vk.Semaphore,
 	frame_resources:            [MAX_FRAMES_IN_FLIGHT]FrameResources,
 	frame_index:                u64,
 	next_signal_value:          u64,
+
+	// buffers
+	vertices:                   []Vertex,
+	indices:                    []u16,
+	geometry_buffer:            vk.Buffer,
+	geometry_buffer_allocation: vma.Allocation,
+	index_buffer_offset:        vk.DeviceSize,
+
+	// uniform buffers (one per frame in flight)
+	uniform_buffers:            [MAX_FRAMES_IN_FLIGHT]vk.Buffer,
+	uniform_buffer_allocations: [MAX_FRAMES_IN_FLIGHT]vma.Allocation,
+	uniform_buffers_mapped:     [MAX_FRAMES_IN_FLIGHT]rawptr,
+
+	// timers
+	start_time:                 time.Time,
 }
 
 main :: proc() {
@@ -123,6 +171,16 @@ engine_shutdown :: proc(self: ^Engine) {
 	// wait in case resources are still in use
 	vk.DeviceWaitIdle(self.device)
 
+	// buffers
+	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		vma.destroy_buffer(self.vma_allocator, self.uniform_buffers[i], self.uniform_buffer_allocations[i])
+	}
+	vma.destroy_buffer(self.vma_allocator, self.geometry_buffer, self.geometry_buffer_allocation)
+
+	// descriptors
+	vk.DestroyDescriptorPool(self.device, self.descriptor_pool, nil)
+	vk.DestroyDescriptorSetLayout(self.device, self.descriptor_set_layout, nil)
+
 	// pipeline
 	vk.DestroyPipeline(self.device, self.pipeline, nil)
 	vk.DestroyPipelineLayout(self.device, self.pipeline_layout, nil)
@@ -148,10 +206,9 @@ engine_shutdown :: proc(self: ^Engine) {
 initialize_vulkan :: proc(app: ^App) -> bool {
 	self := &app.engine
 
-	if !create_vulkan_instance(self) {
-		log.errorf("Could not create a vulkan instance")
-		return false
-	}
+	self.start_time = time.now()
+
+	create_vulkan_instance(self)
 
 	if !create_vulkan_surface(app) {
 		log.errorf("Could not create a vulkan surface")
@@ -173,15 +230,9 @@ initialize_vulkan :: proc(app: ^App) -> bool {
 		return false
 	}
 
-	if !initialize_vma(self) {
-		log.errorf("Cannot initialize VMA")
-		return false
-	}
+	initialize_vma(self)
 
-	if !create_swapchain(self, app.width, app.height) {
-		log.errorf("Could not create swapchain")
-		return false
-	}
+	create_swapchain(self, app.width, app.height)
 
 	if !slang_init(self) {
 		log.errorf("Could not initialize Slang")
@@ -193,32 +244,92 @@ initialize_vulkan :: proc(app: ^App) -> bool {
 		return false
 	}
 
+	create_descriptor_set_layout(self)
+
 	if self.pipeline = create_graphics_pipeline(self); self.pipeline == 0 {
 		log.errorf("Could not create graphics pipeline")
 		return false
 	}
 
-	if !create_sync_resources(self) {
-		log.errorf("Could not create sync resources")
-		return false
-	}
+	create_sync_resources(self)
 
-	if !create_command_buffers(self) {
-		log.errorf("Could not create command buffers")
-		return false
+	self.vertices = []Vertex {
+		{pos = {-0.5, -0.5}, color = {1.0, 0.0, 0.0}},
+		{pos = {0.5, -0.5}, color = {0.0, 1.0, 0.0}},
+		{pos = {0.5, 0.5}, color = {0.0, 0.0, 1.0}},
+		{pos = {-0.5, 0.5}, color = {1.0, 1.0, 1.0}},
 	}
+	self.indices = []u16{0, 1, 2, 2, 3, 0}
+
+	create_command_buffers(self)
+	create_texture_image(self)
+	create_geometry_buffer(self)
+	create_uniform_buffers(self)
+	create_descriptor_pool(self)
+	create_descriptor_sets(self)
 
 	return true
+}
+
+create_texture_image :: proc(engine: ^Engine) {
+}
+
+create_descriptor_pool :: proc(engine: ^Engine) {
+	pool_size := vk.DescriptorPoolSize {
+		type            = .UNIFORM_BUFFER,
+		descriptorCount = MAX_FRAMES_IN_FLIGHT,
+	}
+
+	pool_info := vk.DescriptorPoolCreateInfo {
+		sType         = .DESCRIPTOR_POOL_CREATE_INFO,
+		flags         = {.FREE_DESCRIPTOR_SET},
+		maxSets       = MAX_FRAMES_IN_FLIGHT,
+		poolSizeCount = 1,
+		pPoolSizes    = &pool_size,
+	}
+
+	vk_check(vk.CreateDescriptorPool(engine.device, &pool_info, nil, &engine.descriptor_pool))
+}
+
+create_descriptor_sets :: proc(engine: ^Engine) {
+	layouts := [MAX_FRAMES_IN_FLIGHT]vk.DescriptorSetLayout{engine.descriptor_set_layout, engine.descriptor_set_layout}
+
+	alloc_info := vk.DescriptorSetAllocateInfo {
+		sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
+		descriptorPool     = engine.descriptor_pool,
+		descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
+		pSetLayouts        = &layouts[0],
+	}
+
+	vk_check(vk.AllocateDescriptorSets(engine.device, &alloc_info, raw_data(engine.descriptor_sets[:])))
+
+	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		buffer_info := vk.DescriptorBufferInfo {
+			buffer = engine.uniform_buffers[i],
+			offset = 0,
+			range  = size_of(UniformBufferObject),
+		}
+
+		descriptor_write := vk.WriteDescriptorSet {
+			sType           = .WRITE_DESCRIPTOR_SET,
+			dstSet          = engine.descriptor_sets[i],
+			dstBinding      = 0,
+			dstArrayElement = 0,
+			descriptorCount = 1,
+			descriptorType  = .UNIFORM_BUFFER,
+			pBufferInfo     = &buffer_info,
+		}
+
+		vk.UpdateDescriptorSets(engine.device, 1, &descriptor_write, 0, nil)
+	}
 }
 
 engine_render :: proc(app: ^App) {
 	if app.engine.require_swapchain_recreate {
 		vk.DeviceWaitIdle(app.engine.device)
 		cleanup_swapchain(&app.engine)
-		if !create_swapchain(&app.engine, app.width, app.height) {
-			log.errorf("Failed to recreate swapchain")
-			return
-		}
+		create_swapchain(&app.engine, app.width, app.height)
+
 		app.engine.require_swapchain_recreate = false
 	}
 
@@ -356,7 +467,22 @@ engine_render :: proc(app: ^App) {
 
 		// draw our triangle
 		vk.CmdBindPipeline(cmd, .GRAPHICS, app.engine.pipeline)
-		vk.CmdDraw(cmd, 3, 1, 0, 0)
+
+		offset: vk.DeviceSize = 0
+		vk.CmdBindVertexBuffers(cmd, 0, 1, &app.engine.geometry_buffer, &offset)
+		vk.CmdBindIndexBuffer(cmd, app.engine.geometry_buffer, app.engine.index_buffer_offset, .UINT16)
+		vk.CmdBindDescriptorSets(
+			cmd,
+			.GRAPHICS,
+			app.engine.pipeline_layout,
+			0,
+			1,
+			&app.engine.descriptor_sets[frame_res_index],
+			0,
+			nil,
+		)
+
+		vk.CmdDrawIndexed(cmd, u32(len(app.engine.indices)), 1, 0, 0, 0)
 	}
 	// end dynamic rendering
 	vk.CmdEndRendering(cmd)
@@ -411,6 +537,8 @@ engine_render :: proc(app: ^App) {
 		commandBuffer = cmd,
 	}
 
+	update_uniform_buffer(&app.engine, frame_res_index)
+
 	submit_info := vk.SubmitInfo2 {
 		sType                    = .SUBMIT_INFO_2,
 		waitSemaphoreInfoCount   = 1,
@@ -443,7 +571,7 @@ engine_render :: proc(app: ^App) {
 	}
 }
 
-create_sync_resources :: proc(self: ^Engine) -> bool {
+create_sync_resources :: proc(self: ^Engine) {
 	semaphore_type_info := vk.SemaphoreTypeCreateInfo {
 		sType         = .SEMAPHORE_TYPE_CREATE_INFO,
 		semaphoreType = .TIMELINE,
@@ -465,11 +593,9 @@ create_sync_resources :: proc(self: ^Engine) -> bool {
 		}
 		vk_check(vk.CreateSemaphore(self.device, &binary_semaphore_info, nil, &res.image_acquired_semaphore))
 	}
-
-	return true
 }
 
-create_command_buffers :: proc(self: ^Engine) -> bool {
+create_command_buffers :: proc(self: ^Engine) {
 	for &res in self.frame_resources {
 		pool_info := vk.CommandPoolCreateInfo {
 			sType            = .COMMAND_POOL_CREATE_INFO,
@@ -488,11 +614,9 @@ create_command_buffers :: proc(self: ^Engine) -> bool {
 
 		vk_check(vk.AllocateCommandBuffers(self.device, &cmd_alloc_info, &res.command_buffer))
 	}
-
-	return true
 }
 
-initialize_vma :: proc(self: ^Engine) -> bool {
+initialize_vma :: proc(self: ^Engine) {
 	vulkan_functions := vma.create_vulkan_functions()
 
 	create_info := vma.Allocator_Create_Info {
@@ -504,15 +628,10 @@ initialize_vma :: proc(self: ^Engine) -> bool {
 		vulkan_functions   = &vulkan_functions,
 	}
 
-	if vma.create_allocator(create_info, &self.vma_allocator) != .SUCCESS {
-		log.errorf("Failed to create VMA allocator")
-		return false
-	}
-
-	return true
+	vk_check(vma.create_allocator(create_info, &self.vma_allocator))
 }
 
-create_vulkan_instance :: proc(self: ^Engine) -> bool {
+create_vulkan_instance :: proc(self: ^Engine) {
 	vk.load_proc_addresses_global(rawptr(sdl.Vulkan_GetVkGetInstanceProcAddr()))
 	assert(vk.CreateInstance != nil, "vulkan function pointers not loaded")
 
@@ -552,8 +671,6 @@ create_vulkan_instance :: proc(self: ^Engine) -> bool {
 	vk_check(vk.CreateInstance(&create_info, nil, &self.instance))
 
 	vk.load_proc_addresses_instance(self.instance)
-
-	return true
 }
 
 create_vulkan_surface :: proc(app: ^App) -> bool {
@@ -662,9 +779,10 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 		synchronization2 = true,
 	}
 	enabled_features_12 := vk.PhysicalDeviceVulkan12Features {
-		sType             = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-		pNext             = &enabled_features_13,
-		timelineSemaphore = true,
+		sType               = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+		pNext               = &enabled_features_13,
+		timelineSemaphore   = true,
+		bufferDeviceAddress = true,
 	}
 	enabled_features_11 := vk.PhysicalDeviceVulkan11Features {
 		sType                = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
@@ -731,10 +849,28 @@ vk_messenger_callback :: proc "system" (
 	return false
 }
 
+create_descriptor_set_layout :: proc(self: ^Engine) {
+	ubo_layout_binding := vk.DescriptorSetLayoutBinding {
+		binding         = 0,
+		descriptorType  = .UNIFORM_BUFFER,
+		descriptorCount = 1,
+		stageFlags      = {.VERTEX},
+	}
+
+	layout_info := vk.DescriptorSetLayoutCreateInfo {
+		sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		bindingCount = 1,
+		pBindings    = &ubo_layout_binding,
+	}
+
+	vk_check(vk.CreateDescriptorSetLayout(self.device, &layout_info, nil, &self.descriptor_set_layout))
+}
+
 create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 	pipeline_layout_info := vk.PipelineLayoutCreateInfo {
 		sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
-		setLayoutCount         = 0,
+		setLayoutCount         = 1,
+		pSetLayouts            = &self.descriptor_set_layout,
 		pushConstantRangeCount = 0,
 	}
 
@@ -757,8 +893,14 @@ create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 		},
 	}
 
+	binding_description := vertex_binding_description()
+	attribute_descriptions := vertex_attribute_descriptions()
 	vertex_input_info := vk.PipelineVertexInputStateCreateInfo {
-		sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+		sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+		pVertexBindingDescriptions      = &binding_description,
+		vertexBindingDescriptionCount   = 1,
+		pVertexAttributeDescriptions    = &attribute_descriptions[0],
+		vertexAttributeDescriptionCount = len(&attribute_descriptions),
 	}
 
 	input_assembly_info := vk.PipelineInputAssemblyStateCreateInfo {
@@ -783,11 +925,13 @@ create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 	}
 
 	raster_info := vk.PipelineRasterizationStateCreateInfo {
-		sType       = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-		polygonMode = .FILL,
-		cullMode    = {.BACK},
-		frontFace   = .COUNTER_CLOCKWISE,
-		lineWidth   = 1.0,
+		sType                   = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+		rasterizerDiscardEnable = false,
+		polygonMode             = .FILL,
+		cullMode                = {.BACK},
+		frontFace               = .COUNTER_CLOCKWISE,
+		depthBiasEnable         = false,
+		lineWidth               = 1.0,
 	}
 
 	multisample_info := vk.PipelineMultisampleStateCreateInfo {
