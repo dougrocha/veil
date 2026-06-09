@@ -99,6 +99,7 @@ Engine :: struct {
 	start_time:                 time.Time,
 
 	// texture
+	mip_levels:                 u32,
 	texture_image:              vk.Image,
 	texture_image_allocation:   vma.Allocation,
 	texture_image_view:         vk.ImageView,

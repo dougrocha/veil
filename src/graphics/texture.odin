@@ -1,6 +1,7 @@
 package graphics
 
 import "core:log"
+import "core:math"
 import "core:mem"
 
 import vma "shared:odin-vma"
@@ -9,7 +10,7 @@ import vk "vendor:vulkan"
 
 create_image :: proc(
 	engine: ^Engine,
-	width, height: u32,
+	width, height, mip_levels: u32,
 	format: vk.Format,
 	tiling: vk.ImageTiling,
 	usage: vk.ImageUsageFlags,
@@ -22,7 +23,7 @@ create_image :: proc(
 		imageType = .D2,
 		format = format,
 		extent = {width = width, height = height, depth = 1},
-		mipLevels = 1,
+		mipLevels = engine.mip_levels,
 		arrayLayers = 1,
 		samples = {._1},
 		tiling = tiling,
@@ -79,13 +80,15 @@ create_texture_image :: proc(engine: ^Engine) {
 	mem.copy(data, pixels, int(image_size))
 	vma.unmap_memory(engine.vma_allocator, staging_allocation)
 
+	engine.mip_levels = u32(math.floor(math.log2(f32(max(width, height)))) + 1)
 	engine.texture_image, engine.texture_image_allocation = create_image(
 		engine,
 		u32(width),
 		u32(height),
+		engine.mip_levels,
 		TEXTURE_FORMAT,
 		.OPTIMAL,
-		{.TRANSFER_DST, .SAMPLED},
+		{.TRANSFER_SRC, .TRANSFER_DST, .SAMPLED},
 	)
 
 	cmd := begin_single_time_commands(engine)
@@ -99,25 +102,119 @@ create_texture_image :: proc(engine: ^Engine) {
 		{.TOP_OF_PIPE},
 		{.TRANSFER},
 		{.COLOR},
+		engine.mip_levels,
 	)
 	copy_buffer_to_image(cmd, staging_buffer, engine.texture_image, u32(width), u32(height))
-	transition_image_layout(
-		cmd,
-		engine.texture_image,
-		.TRANSFER_DST_OPTIMAL,
-		.SHADER_READ_ONLY_OPTIMAL,
-		{.TRANSFER_WRITE},
-		{.SHADER_READ},
-		{.TRANSFER},
-		{.FRAGMENT_SHADER},
-		{.COLOR},
-	)
+	end_single_time_commands(engine, &cmd)
+	// transitioned to SHADER_READ_ONLY_OPTIMAL while generating mipmaps
+
+	generate_mipmaps(engine, &engine.texture_image, TEXTURE_FORMAT, u32(width), u32(height), engine.mip_levels)
+}
+
+generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, width, height, mip_levels: u32) {
+	format_props: vk.FormatProperties
+	vk.GetPhysicalDeviceFormatProperties(engine.physical_device, format, &format_props)
+
+	if .SAMPLED_IMAGE_FILTER_LINEAR not_in format_props.optimalTilingFeatures {
+		log.panicf("Texture image format does not support linear blitting")
+	}
+
+	cmd := begin_single_time_commands(engine)
+
+	barrier := vk.ImageMemoryBarrier2 {
+		sType = .IMAGE_MEMORY_BARRIER_2,
+		srcStageMask = {.TRANSFER},
+		srcAccessMask = {.TRANSFER_WRITE},
+		dstStageMask = {.TRANSFER},
+		dstAccessMask = {.TRANSFER_READ},
+		oldLayout = .TRANSFER_DST_OPTIMAL,
+		newLayout = .TRANSFER_SRC_OPTIMAL,
+		image = image^,
+		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+		subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
+	}
+
+	mip_width, mip_height := width, height
+	for i in 1 ..< mip_levels {
+		barrier.subresourceRange.baseMipLevel = i - 1
+		barrier.oldLayout = .TRANSFER_DST_OPTIMAL
+		barrier.newLayout = .TRANSFER_SRC_OPTIMAL
+		barrier.srcStageMask = {.TRANSFER}
+		barrier.srcAccessMask = {.TRANSFER_WRITE}
+		barrier.dstStageMask = {.TRANSFER}
+		barrier.dstAccessMask = {.TRANSFER_READ}
+
+		dep_info := vk.DependencyInfo {
+			sType                   = .DEPENDENCY_INFO,
+			imageMemoryBarrierCount = 1,
+			pImageMemoryBarriers    = &barrier,
+		}
+		vk.CmdPipelineBarrier2(cmd, &dep_info)
+
+		blit := vk.ImageBlit2 {
+			sType = .IMAGE_BLIT_2,
+			srcSubresource = {aspectMask = {.COLOR}, mipLevel = i - 1, layerCount = 1},
+			srcOffsets = {{0, 0, 0}, {i32(mip_width), i32(mip_height), 1}},
+			dstSubresource = {aspectMask = {.COLOR}, mipLevel = i, layerCount = 1},
+			dstOffsets = {{0, 0, 0}, {i32(max(mip_width / 2, 1)), i32(max(mip_height / 2, 1)), 1}},
+		}
+
+		blit_info := vk.BlitImageInfo2 {
+			sType          = .BLIT_IMAGE_INFO_2,
+			srcImage       = image^,
+			srcImageLayout = .TRANSFER_SRC_OPTIMAL,
+			dstImage       = image^,
+			dstImageLayout = .TRANSFER_DST_OPTIMAL,
+			regionCount    = 1,
+			pRegions       = &blit,
+			filter         = .LINEAR,
+		}
+		vk.CmdBlitImage2(cmd, &blit_info)
+
+		barrier.oldLayout = .TRANSFER_SRC_OPTIMAL
+		barrier.newLayout = .SHADER_READ_ONLY_OPTIMAL
+		barrier.srcStageMask = {.TRANSFER}
+		barrier.srcAccessMask = {.TRANSFER_READ}
+		barrier.dstStageMask = {.FRAGMENT_SHADER}
+		barrier.dstAccessMask = {.SHADER_READ}
+
+		dep_info = vk.DependencyInfo {
+			sType                   = .DEPENDENCY_INFO,
+			imageMemoryBarrierCount = 1,
+			pImageMemoryBarriers    = &barrier,
+		}
+		vk.CmdPipelineBarrier2(cmd, &dep_info)
+
+		if mip_width > 1 do mip_width /= 2
+		if mip_height > 1 do mip_height /= 2
+	}
+
+	barrier.subresourceRange.baseMipLevel = mip_levels - 1
+	barrier.oldLayout = .TRANSFER_DST_OPTIMAL
+	barrier.newLayout = .SHADER_READ_ONLY_OPTIMAL
+	barrier.srcAccessMask = {.TRANSFER_WRITE}
+	barrier.dstAccessMask = {.SHADER_READ}
+	barrier.dstStageMask = {.FRAGMENT_SHADER}
+
+	dep_info := vk.DependencyInfo {
+		sType                   = .DEPENDENCY_INFO,
+		imageMemoryBarrierCount = 1,
+		pImageMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd, &dep_info)
 
 	end_single_time_commands(engine, &cmd)
 }
 
 create_texture_image_view :: proc(engine: ^Engine) {
-	create_image_view(engine, engine.texture_image, TEXTURE_FORMAT, {.COLOR}, &engine.texture_image_view)
+	engine.texture_image_view = create_image_view(
+		engine,
+		engine.texture_image,
+		TEXTURE_FORMAT,
+		{.COLOR},
+		engine.mip_levels,
+	)
 }
 
 create_texture_sampler :: proc(engine: ^Engine) {
@@ -132,10 +229,13 @@ create_texture_sampler :: proc(engine: ^Engine) {
 		addressModeU            = .REPEAT,
 		addressModeV            = .REPEAT,
 		addressModeW            = .REPEAT,
+		mipLodBias              = 0.0,
 		anisotropyEnable        = true,
 		maxAnisotropy           = properties.limits.maxSamplerAnisotropy,
 		compareEnable           = false,
 		compareOp               = .ALWAYS,
+		minLod                  = 0,
+		maxLod                  = vk.LOD_CLAMP_NONE,
 		borderColor             = .INT_OPAQUE_BLACK,
 		unnormalizedCoordinates = false,
 	}

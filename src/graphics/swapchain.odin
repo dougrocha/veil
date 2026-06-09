@@ -40,7 +40,7 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 	self.swapchain_image_view = make([]vk.ImageView, image_count)
 
 	for i in 0 ..< len(self.swapchain_images) {
-		create_image_view(self, self.swapchain_images[i], SWAPCHAIN_FORMAT, {.COLOR}, &self.swapchain_image_view[i])
+		self.swapchain_image_view[i] = create_image_view(self, self.swapchain_images[i], SWAPCHAIN_FORMAT, {.COLOR})
 	}
 
 	self.render_complete_semaphores = make([]vk.Semaphore, len(self.swapchain_images))
@@ -79,7 +79,7 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 		),
 	)
 
-	create_image_view(self, self.depth_image, DEPTH_FORMAT, {.DEPTH}, &self.depth_image_view)
+	self.depth_image_view = create_image_view(self, self.depth_image, DEPTH_FORMAT, {.DEPTH})
 }
 
 cleanup_swapchain :: proc(self: ^Engine) {

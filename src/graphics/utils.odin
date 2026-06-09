@@ -17,16 +17,24 @@ create_image_view :: proc(
 	img: vk.Image,
 	format: vk.Format,
 	aspect: vk.ImageAspectFlags,
-	view: ^vk.ImageView,
-) {
+	mip_levels: u32 = 1,
+) -> vk.ImageView {
 	info := vk.ImageViewCreateInfo {
 		sType = .IMAGE_VIEW_CREATE_INFO,
 		image = img,
 		viewType = .D2,
 		format = format,
-		subresourceRange = {aspectMask = aspect, baseMipLevel = 0, levelCount = 1, baseArrayLayer = 0, layerCount = 1},
+		subresourceRange = {
+			aspectMask = aspect,
+			baseMipLevel = 0,
+			levelCount = mip_levels,
+			baseArrayLayer = 0,
+			layerCount = 1,
+		},
 	}
-	vk_check(vk.CreateImageView(engine.device, &info, nil, view))
+	view: vk.ImageView
+	vk_check(vk.CreateImageView(engine.device, &info, nil, &view))
+	return view
 }
 
 begin_single_time_commands :: proc(engine: ^Engine) -> vk.CommandBuffer {
@@ -73,6 +81,7 @@ transition_image_layout :: proc(
 	src_stage: vk.PipelineStageFlags2,
 	dst_stage: vk.PipelineStageFlags2,
 	aspect: vk.ImageAspectFlags,
+	mip_levels: u32 = 1,
 ) {
 	barrier := vk.ImageMemoryBarrier2 {
 		sType = .IMAGE_MEMORY_BARRIER_2,
@@ -85,7 +94,7 @@ transition_image_layout :: proc(
 		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		image = img,
-		subresourceRange = {aspectMask = aspect, levelCount = 1, layerCount = 1},
+		subresourceRange = {aspectMask = aspect, levelCount = mip_levels, layerCount = 1},
 	}
 
 	dep_info := vk.DependencyInfo {
