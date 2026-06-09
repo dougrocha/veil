@@ -50,39 +50,12 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 	for &semaphore in self.render_complete_semaphores {
 		vk_check(vk.CreateSemaphore(self.device, &semaphore_info, nil, &semaphore))
 	}
-
-	depth_create_info := vk.ImageCreateInfo {
-		sType = .IMAGE_CREATE_INFO,
-		imageType = .D2,
-		format = DEPTH_FORMAT,
-		extent = {width = self.swapchain_width, height = self.swapchain_height, depth = 1},
-		mipLevels = 1,
-		arrayLayers = 1,
-		samples = {._1},
-		tiling = .OPTIMAL,
-		usage = {.DEPTH_STENCIL_ATTACHMENT},
-		initialLayout = .UNDEFINED,
-	}
-
-	alloc_info := vma.Allocation_Create_Info {
-		flags = {.Dedicated_Memory},
-		usage = .Auto,
-	}
-	vk_check(
-		vma.create_image(
-			self.vma_allocator,
-			depth_create_info,
-			alloc_info,
-			&self.depth_image,
-			&self.depth_image_allocation,
-			nil,
-		),
-	)
-
-	self.depth_image_view = create_image_view(self, self.depth_image, DEPTH_FORMAT, {.DEPTH})
 }
 
 cleanup_swapchain :: proc(self: ^Engine) {
+	vk.DestroyImageView(self.device, self.color_image_view, nil)
+	vma.destroy_image(self.vma_allocator, self.color_image, self.color_image_allocation)
+
 	vk.DestroyImageView(self.device, self.depth_image_view, nil)
 	vma.destroy_image(self.vma_allocator, self.depth_image, self.depth_image_allocation)
 
@@ -98,5 +71,33 @@ cleanup_swapchain :: proc(self: ^Engine) {
 	delete(self.render_complete_semaphores)
 
 	vk.DestroySwapchainKHR(self.device, self.swapchain, nil)
+}
+
+create_color_resources :: proc(engine: ^Engine) {
+	engine.color_image, engine.color_image_allocation = create_image(
+		engine,
+		engine.swapchain_width,
+		engine.swapchain_height,
+		1,
+		engine.msaa_samples,
+		SWAPCHAIN_FORMAT,
+		.OPTIMAL,
+		{.TRANSIENT_ATTACHMENT, .COLOR_ATTACHMENT},
+	)
+	engine.color_image_view = create_image_view(engine, engine.color_image, SWAPCHAIN_FORMAT, {.COLOR})
+}
+
+create_depth_resources :: proc(engine: ^Engine) {
+	engine.depth_image, engine.depth_image_allocation = create_image(
+		engine,
+		engine.swapchain_width,
+		engine.swapchain_height,
+		1,
+		engine.msaa_samples,
+		DEPTH_FORMAT,
+		.OPTIMAL,
+		{.DEPTH_STENCIL_ATTACHMENT},
+	)
+	engine.depth_image_view = create_image_view(engine, engine.depth_image, DEPTH_FORMAT, {.DEPTH})
 }
 

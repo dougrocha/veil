@@ -151,7 +151,8 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 	   !features_12.timelineSemaphore ||
 	   !features_12.bufferDeviceAddress ||
 	   !features_11.shaderDrawParameters ||
-	   !supported_features.features.samplerAnisotropy {
+	   !supported_features.features.samplerAnisotropy ||
+	   !supported_features.features.sampleRateShading {
 		log.errorf("Physical Device does not meet feature requirement")
 		return false
 	}
@@ -179,7 +180,7 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 	enabled_features := vk.PhysicalDeviceFeatures2 {
 		sType = .PHYSICAL_DEVICE_FEATURES_2,
 		pNext = &enabled_features_11,
-		features = {samplerAnisotropy = true},
+		features = {samplerAnisotropy = true, sampleRateShading = true},
 	}
 
 	queue_priorities := []f32{1.0}

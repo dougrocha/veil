@@ -10,7 +10,7 @@ COMPUTE_MAIN :: "compute_main"
 
 create_descriptor_set_layout :: proc(self: ^Engine) {
 	bindings := []vk.DescriptorSetLayoutBinding {
-		{binding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.VERTEX}},
+		{binding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.VERTEX, .FRAGMENT}},
 		{binding = 1, descriptorType = .COMBINED_IMAGE_SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
 	}
 
@@ -61,8 +61,9 @@ create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 	}
 
 	input_assembly_info := vk.PipelineInputAssemblyStateCreateInfo {
-		sType    = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-		topology = .TRIANGLE_LIST,
+		sType                  = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+		topology               = .TRIANGLE_LIST,
+		primitiveRestartEnable = false,
 	}
 
 	depth_stencil_info := vk.PipelineDepthStencilStateCreateInfo {
@@ -94,10 +95,11 @@ create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 
 	multisample_info := vk.PipelineMultisampleStateCreateInfo {
 		sType                = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-		rasterizationSamples = {._1},
+		rasterizationSamples = self.msaa_samples,
+		sampleShadingEnable  = false,
 	}
 
-	attach_state := vk.PipelineColorBlendAttachmentState {
+	color_blend_attach_state := vk.PipelineColorBlendAttachmentState {
 		blendEnable    = false,
 		colorWriteMask = {.R, .G, .B, .A},
 	}
@@ -105,7 +107,7 @@ create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 	blend_info := vk.PipelineColorBlendStateCreateInfo {
 		sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
 		attachmentCount = 1,
-		pAttachments    = &attach_state,
+		pAttachments    = &color_blend_attach_state,
 	}
 
 	dynamic_states := []vk.DynamicState{.VIEWPORT, .SCISSOR}

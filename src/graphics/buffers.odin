@@ -29,7 +29,10 @@ create_uniform_buffers :: proc(engine: ^Engine) {
 					usage = {.UNIFORM_BUFFER},
 					sharingMode = .EXCLUSIVE,
 				},
-				vma.Allocation_Create_Info{usage = .Auto, flags = {.Host_Access_Sequential_Write, .Mapped}},
+				vma.Allocation_Create_Info {
+					usage = .Auto,
+					flags = {.Host_Access_Sequential_Write, .Host_Access_Allow_Transfer_Instead, .Mapped},
+				},
 				&engine.uniform_buffers[i],
 				&engine.uniform_buffer_allocations[i],
 				nil,
@@ -59,6 +62,7 @@ update_uniform_buffer :: proc(engine: ^Engine, frame_index: u64) {
 		true,
 	)
 	ubo.proj[1][1] *= -1.0
+	ubo.light_pos = {0.0, -10.0, 10.0, 0.0}
 
 	mem.copy(engine.uniform_buffers_mapped[frame_index], &ubo, size_of(UniformBufferObject))
 }

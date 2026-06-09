@@ -20,11 +20,11 @@ Vec4 :: [4]f32
 Mat4x4 :: matrix[4, 4]f32
 Mat4x3 :: matrix[4, 3]f32
 
-
 UniformBufferObject :: struct #align (16) {
-	model: Mat4x4,
-	view:  Mat4x4,
-	proj:  Mat4x4,
+	model:     Mat4x4,
+	view:      Mat4x4,
+	proj:      Mat4x4,
+	light_pos: Vec4,
 }
 
 g_ctx: runtime.Context
@@ -65,6 +65,9 @@ Engine :: struct {
 	depth_image:                vk.Image,
 	depth_image_view:           vk.ImageView,
 	depth_image_allocation:     vma.Allocation,
+	color_image:                vk.Image,
+	color_image_view:           vk.ImageView,
+	color_image_allocation:     vma.Allocation,
 
 	// shaders
 	slang_session:              ^sp.IGlobalSession,
@@ -104,23 +107,26 @@ Engine :: struct {
 	texture_image_allocation:   vma.Allocation,
 	texture_image_view:         vk.ImageView,
 	texture_sampler:            vk.Sampler,
+	msaa_samples:               vk.SampleCountFlags,
 }
 
 Vertex :: struct {
 	pos:       Vec3,
 	color:     Vec3,
 	tex_coord: Vec2,
+	normal:    Vec3,
 }
 
 vertex_binding_description :: proc() -> vk.VertexInputBindingDescription {
 	return {binding = 0, stride = size_of(Vertex), inputRate = .VERTEX}
 }
 
-vertex_attribute_descriptions :: proc() -> [3]vk.VertexInputAttributeDescription {
+vertex_attribute_descriptions :: proc() -> [4]vk.VertexInputAttributeDescription {
 	return {
 		{location = 0, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, pos))},
 		{location = 1, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, color))},
 		{location = 2, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Vertex, tex_coord))},
+		{location = 3, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, normal))},
 	}
 }
 

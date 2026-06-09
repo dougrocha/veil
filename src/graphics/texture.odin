@@ -11,6 +11,7 @@ import vk "vendor:vulkan"
 create_image :: proc(
 	engine: ^Engine,
 	width, height, mip_levels: u32,
+	samples: vk.SampleCountFlags,
 	format: vk.Format,
 	tiling: vk.ImageTiling,
 	usage: vk.ImageUsageFlags,
@@ -23,9 +24,9 @@ create_image :: proc(
 		imageType = .D2,
 		format = format,
 		extent = {width = width, height = height, depth = 1},
-		mipLevels = engine.mip_levels,
+		mipLevels = mip_levels,
 		arrayLayers = 1,
-		samples = {._1},
+		samples = samples,
 		tiling = tiling,
 		usage = usage,
 		sharingMode = .EXCLUSIVE,
@@ -86,6 +87,7 @@ create_texture_image :: proc(engine: ^Engine) {
 		u32(width),
 		u32(height),
 		engine.mip_levels,
+		{._1},
 		TEXTURE_FORMAT,
 		.OPTIMAL,
 		{.TRANSFER_SRC, .TRANSFER_DST, .SAMPLED},
@@ -205,6 +207,22 @@ generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, w
 	vk.CmdPipelineBarrier2(cmd, &dep_info)
 
 	end_single_time_commands(engine, &cmd)
+}
+
+get_max_usable_sample_count :: proc(engine: ^Engine) -> vk.SampleCountFlags {
+	properties: vk.PhysicalDeviceProperties
+	vk.GetPhysicalDeviceProperties(engine.physical_device, &properties)
+
+	counts := properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts
+
+	if ._64 in counts {return {._64}}
+	if ._32 in counts {return {._32}}
+	if ._16 in counts {return {._16}}
+	if ._8 in counts {return {._8}}
+	if ._4 in counts {return {._4}}
+	if ._2 in counts {return {._2}}
+
+	return {._1}
 }
 
 create_texture_image_view :: proc(engine: ^Engine) {

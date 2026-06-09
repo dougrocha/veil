@@ -21,6 +21,15 @@ load_model :: proc(engine: ^Engine) {
 
 	for shape in obj.shapes {
 		for index in obj.attrib.faces[shape.face_offset:shape.face_offset + shape.length] {
+			normal: Vec3 = {0.0, 1.0, 0.0}
+			if index.v_idx != tinyobj.INVALID_INDEX {
+				normal = {
+					obj.attrib.normals[3 * index.vn_idx + 0],
+					obj.attrib.normals[3 * index.vn_idx + 1],
+					obj.attrib.normals[3 * index.vn_idx + 2],
+				}
+			}
+
 			vertex := Vertex {
 				pos       = {
 					obj.attrib.vertices[3 * index.v_idx + 0],
@@ -32,6 +41,7 @@ load_model :: proc(engine: ^Engine) {
 					1.0 - obj.attrib.texcoords[2 * index.vt_idx + 1],
 				},
 				color     = {1, 1, 1},
+				normal    = normal,
 			}
 
 			_, val, inserted, _ := map_entry(&unique_vertices, vertex)

@@ -22,6 +22,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 		log.errorf("Could not find a physical device")
 		return false
 	}
+	self.msaa_samples = get_max_usable_sample_count(self)
 
 	if !find_graphics_queue(self) {
 		log.errorf("Unable to find a graphics queue")
@@ -57,6 +58,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_sync_resources(self)
 
 	create_command_buffers(self)
+	create_color_resources(self)
+	create_depth_resources(self)
 	create_texture_image(self)
 	create_texture_image_view(self)
 	create_texture_sampler(self)
@@ -107,6 +110,8 @@ engine_render :: proc(app: ^App) {
 		vk.DeviceWaitIdle(app.engine.device)
 		cleanup_swapchain(&app.engine)
 		create_swapchain(&app.engine, app.width, app.height)
+		create_color_resources(&app.engine)
+		create_depth_resources(&app.engine)
 		app.engine.require_swapchain_recreate = false
 	}
 
@@ -155,6 +160,17 @@ engine_render :: proc(app: ^App) {
 
 	transition_image_layout(
 		cmd,
+		app.engine.color_image,
+		.UNDEFINED,
+		.COLOR_ATTACHMENT_OPTIMAL,
+		{},
+		{.COLOR_ATTACHMENT_WRITE},
+		{.COLOR_ATTACHMENT_OUTPUT},
+		{.COLOR_ATTACHMENT_OUTPUT},
+		{.COLOR},
+	)
+	transition_image_layout(
+		cmd,
 		app.engine.swapchain_images[image_index],
 		.UNDEFINED,
 		.COLOR_ATTACHMENT_OPTIMAL,
@@ -178,10 +194,13 @@ engine_render :: proc(app: ^App) {
 
 	color_attach_info := vk.RenderingAttachmentInfo {
 		sType = .RENDERING_ATTACHMENT_INFO,
-		imageView = app.engine.swapchain_image_view[image_index],
+		imageView = app.engine.color_image_view,
 		imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
+		resolveMode = {.AVERAGE},
+		resolveImageView = app.engine.swapchain_image_view[image_index],
+		resolveImageLayout = .COLOR_ATTACHMENT_OPTIMAL,
 		loadOp = .CLEAR,
-		storeOp = .STORE,
+		storeOp = .DONT_CARE,
 		clearValue = {color = {float32 = {0.1, 0.1, 0.1, 1}}},
 	}
 
