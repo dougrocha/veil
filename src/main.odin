@@ -29,17 +29,19 @@ main :: proc() {
 	}
 	defer sdl.DestroyWindow(app.window)
 
-	app.engine.vertices = []gfx.Vertex {
-		{pos = {-0.5, -0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 0.0}},
-		{pos = {0.5, -0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 0.0}},
-		{pos = {0.5, 0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 1.0}},
-		{pos = {-0.5, 0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 1.0}},
-		{pos = {-0.5, -0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 0.0}},
-		{pos = {0.5, -0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 0.0}},
-		{pos = {0.5, 0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 1.0}},
-		{pos = {-0.5, 0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 1.0}},
-	}
-	app.engine.indices = []u32{0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4}
+	gfx.load_model(&app.engine)
+
+	// app.engine.vertices = []gfx.Vertex {
+	// 	{pos = {-0.5, -0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 0.0}},
+	// 	{pos = {0.5, -0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 0.0}},
+	// 	{pos = {0.5, 0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 1.0}},
+	// 	{pos = {-0.5, 0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 1.0}},
+	// 	{pos = {-0.5, -0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 0.0}},
+	// 	{pos = {0.5, -0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 0.0}},
+	// 	{pos = {0.5, 0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 1.0}},
+	// 	{pos = {-0.5, 0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 1.0}},
+	// }
+	// app.engine.indices = []u32{0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4}
 
 	if !gfx.initialize_vulkan(&app) {
 		log.errorf("Failed to initialize Vulkan")
