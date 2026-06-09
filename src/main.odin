@@ -43,7 +43,8 @@ main :: proc() {
 	// }
 	// app.engine.indices = []u32{0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4}
 
-	if !gfx.initialize_vulkan(&app) {
+	init_ok := gfx.initialize_vulkan(&app)
+	if !init_ok {
 		log.errorf("Failed to initialize Vulkan")
 		return
 	}

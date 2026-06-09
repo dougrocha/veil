@@ -1,10 +1,14 @@
 package graphics
 
+import "base:runtime"
+
 import "core:log"
 
 import vma "shared:odin-vma"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
+
+VALIDATION_LAYER_NAME :: "VK_LAYER_KHRONOS_validation"
 
 create_vulkan_instance :: proc(self: ^Engine) {
 	vk.load_proc_addresses_global(rawptr(sdl.Vulkan_GetVkGetInstanceProcAddr()))
@@ -14,6 +18,7 @@ create_vulkan_instance :: proc(self: ^Engine) {
 		sType            = .APPLICATION_INFO,
 		pApplicationName = "First Triangle",
 		apiVersion       = vk.API_VERSION_1_4,
+		pEngineName      = "Veil",
 	}
 
 	extension_count: u32 = 0
@@ -24,7 +29,7 @@ create_vulkan_instance :: proc(self: ^Engine) {
 		append(&extensions, sdl_extensions[i])
 	}
 
-	requested_layers := []cstring{"VK_LAYER_KHRONOS_validation"}
+	requested_layers := []cstring{VALIDATION_LAYER_NAME}
 
 	dbg_create_info := vk.DebugUtilsMessengerCreateInfoEXT {
 		sType           = .DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
@@ -234,6 +239,7 @@ vk_messenger_callback :: proc "system" (
 
 	level: log.Level
 	if .ERROR in messageSeverity {
+		runtime.debug_trap()
 		level = .Error
 	} else if .WARNING in messageSeverity {
 		level = .Warning

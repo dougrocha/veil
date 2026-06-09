@@ -104,7 +104,7 @@ create_geometry_buffer :: proc(engine: ^Engine) {
 				usage = {.TRANSFER_DST, .VERTEX_BUFFER, .INDEX_BUFFER},
 				sharingMode = .EXCLUSIVE,
 			},
-			vma.Allocation_Create_Info{usage = .Auto, preferred_flags = {.DEVICE_LOCAL}},
+			vma.Allocation_Create_Info{usage = .Auto, required_flags = {.DEVICE_LOCAL}},
 			&engine.geometry_buffer,
 			&engine.geometry_buffer_allocation,
 			nil,

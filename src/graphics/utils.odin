@@ -1,12 +1,14 @@
 package graphics
 
+import "base:runtime"
+
 import "core:log"
 
 import vk "vendor:vulkan"
 
-vk_check :: proc(result: vk.Result, loc := #caller_location) {
+vk_check :: #force_inline proc(result: vk.Result, message := "Vulkan Error", loc := #caller_location) {
 	if result != .SUCCESS {
-		log.panicf("Vulkan failure: %v", result, location = loc)
+		log.panicf("[Vulkan Failure] %s: %v", message, result, loc)
 	}
 }
 

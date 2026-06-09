@@ -51,7 +51,7 @@ create_shaders_slang :: proc(self: ^Engine) -> bool {
 	}
 	defer session->release()
 
-	shader_path :: "src/shaders/shader.slang"
+	shader_path :: "shaders/shader.slang"
 	log.debug("Compiling shaders:", shader_path)
 
 	src := read_file(shader_path, context.temp_allocator)

@@ -37,7 +37,7 @@ create_image :: proc(
 		vma.create_image(
 			engine.vma_allocator,
 			image_info,
-			vma.Allocation_Create_Info{usage = .Auto, flags = {.Dedicated_Memory}},
+			vma.Allocation_Create_Info{usage = .Auto, flags = {}},
 			&img,
 			&allocation,
 			nil,

@@ -6,7 +6,7 @@ import "core:time"
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
-initialize_vulkan :: proc(app: ^App) -> bool {
+initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	self := &app.engine
 
 	self.start_time = time.now()
