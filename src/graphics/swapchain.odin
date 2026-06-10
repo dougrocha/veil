@@ -43,13 +43,6 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 		self.swapchain_image_view[i] = create_image_view(self, self.swapchain_images[i], SWAPCHAIN_FORMAT, {.COLOR})
 	}
 
-	self.render_complete_semaphores = make([]vk.Semaphore, len(self.swapchain_images))
-	semaphore_info := vk.SemaphoreCreateInfo {
-		sType = .SEMAPHORE_CREATE_INFO,
-	}
-	for &semaphore in self.render_complete_semaphores {
-		vk_check(vk.CreateSemaphore(self.device, &semaphore_info, nil, &semaphore))
-	}
 }
 
 cleanup_swapchain :: proc(self: ^Engine) {
@@ -62,13 +55,8 @@ cleanup_swapchain :: proc(self: ^Engine) {
 	for view in self.swapchain_image_view {
 		vk.DestroyImageView(self.device, view, nil)
 	}
-	for sem in self.render_complete_semaphores {
-		vk.DestroySemaphore(self.device, sem, nil)
-	}
-
 	delete(self.swapchain_images)
 	delete(self.swapchain_image_view)
-	delete(self.render_complete_semaphores)
 
 	vk.DestroySwapchainKHR(self.device, self.swapchain, nil)
 }

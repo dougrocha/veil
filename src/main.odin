@@ -1,6 +1,7 @@
 package main
 
 import "core:log"
+import "core:time"
 
 import sdl "vendor:sdl3"
 
@@ -28,6 +29,8 @@ main :: proc() {
 		return
 	}
 	defer sdl.DestroyWindow(app.window)
+
+	_ = sdl.SetWindowRelativeMouseMode(app.window, true)
 
 	gfx.load_model(&app.engine)
 
@@ -58,9 +61,14 @@ main :: proc() {
 			case .QUIT:
 				break main_loop
 			case .KEY_DOWN:
-				if ev.key.key == sdl.K_ESCAPE {
-					break main_loop
-				}
+			case .MOUSE_MOTION:
+				gfx.camera_process_mouse_movement(
+					&app.engine.camera,
+					ev.motion.xrel,
+					-ev.motion.yrel,
+				)
+			case .MOUSE_WHEEL:
+				gfx.camera_process_mouse_scroll(&app.engine.camera, ev.wheel.y)
 			case .WINDOW_PIXEL_SIZE_CHANGED:
 				app.width = u32(ev.window.data1)
 				app.height = u32(ev.window.data2)
@@ -68,7 +76,23 @@ main :: proc() {
 			}
 		}
 
+		now := time.now()
+		app.engine.delta_time = f32(time.duration_seconds(time.diff(app.engine.last_frame_time, now)))
+		app.engine.last_frame_time = now
+
+		process_input(&app.engine)
 		gfx.engine_render(&app)
 	}
+}
+
+process_input :: proc(engine: ^gfx.Engine) {
+	keys := sdl.GetKeyboardState(nil)
+
+	if keys[sdl.Scancode.W]     do gfx.camera_process_keyboard(&engine.camera, .Forward,  engine.delta_time)
+	if keys[sdl.Scancode.S]     do gfx.camera_process_keyboard(&engine.camera, .Backward, engine.delta_time)
+	if keys[sdl.Scancode.A]     do gfx.camera_process_keyboard(&engine.camera, .Left,     engine.delta_time)
+	if keys[sdl.Scancode.D]     do gfx.camera_process_keyboard(&engine.camera, .Right,    engine.delta_time)
+	if keys[sdl.Scancode.SPACE] do gfx.camera_process_keyboard(&engine.camera, .Up,       engine.delta_time)
+	if keys[sdl.Scancode.LCTRL] do gfx.camera_process_keyboard(&engine.camera, .Down,     engine.delta_time)
 }
 

@@ -150,6 +150,7 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 	   !features_13.synchronization2 ||
 	   !features_12.timelineSemaphore ||
 	   !features_12.bufferDeviceAddress ||
+	   !features_12.scalarBlockLayout ||
 	   !features_11.shaderDrawParameters ||
 	   !supported_features.features.samplerAnisotropy ||
 	   !supported_features.features.sampleRateShading {
@@ -171,6 +172,7 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 		pNext               = &enabled_features_13,
 		timelineSemaphore   = true,
 		bufferDeviceAddress = true,
+		scalarBlockLayout   = true,
 	}
 	enabled_features_11 := vk.PhysicalDeviceVulkan11Features {
 		sType                = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,

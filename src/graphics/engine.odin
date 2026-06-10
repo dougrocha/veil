@@ -1,6 +1,7 @@
 package graphics
 
 import "core:log"
+import "core:math"
 import "core:time"
 
 import vma "shared:odin-vma"
@@ -10,6 +11,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	self := &app.engine
 
 	self.start_time = time.now()
+	self.last_frame_time = self.start_time
+	self.camera = camera_create({2, 2, 2})
 
 	create_vulkan_instance(self)
 
@@ -95,6 +98,7 @@ engine_shutdown :: proc(self: ^Engine) {
 	vk.DestroySemaphore(self.device, self.timeline_semaphore, nil)
 	for &res in self.frame_resources {
 		vk.DestroySemaphore(self.device, res.image_acquired_semaphore, nil)
+		vk.DestroySemaphore(self.device, res.render_complete_semaphore, nil)
 		vk.DestroyCommandPool(self.device, res.command_pool, nil)
 	}
 	cleanup_swapchain(self)
@@ -115,13 +119,11 @@ engine_render :: proc(app: ^App) {
 		app.engine.require_swapchain_recreate = false
 	}
 
-	app.engine.next_signal_value += 1
-	signal_value := app.engine.next_signal_value
 	frame_res_index := app.engine.frame_index % MAX_FRAMES_IN_FLIGHT
-	app.engine.frame_index += 1
+	res := &app.engine.frame_resources[frame_res_index]
 
-	if signal_value > MAX_FRAMES_IN_FLIGHT {
-		wait_value := signal_value - MAX_FRAMES_IN_FLIGHT
+	if app.engine.next_signal_value >= MAX_FRAMES_IN_FLIGHT {
+		wait_value := app.engine.next_signal_value - MAX_FRAMES_IN_FLIGHT + 1
 		wait_info := vk.SemaphoreWaitInfo {
 			sType          = .SEMAPHORE_WAIT_INFO,
 			semaphoreCount = 1,
@@ -130,9 +132,6 @@ engine_render :: proc(app: ^App) {
 		}
 		vk_check(vk.WaitSemaphores(app.engine.device, &wait_info, max(u64)))
 	}
-
-	res := &app.engine.frame_resources[frame_res_index]
-	vk.ResetCommandPool(app.engine.device, res.command_pool, {})
 
 	image_index: u32
 	acquire_result := vk.AcquireNextImageKHR(
@@ -149,6 +148,12 @@ engine_render :: proc(app: ^App) {
 	} else if acquire_result == .SUBOPTIMAL_KHR {
 		app.engine.require_swapchain_recreate = true
 	}
+
+	app.engine.next_signal_value += 1
+	signal_value := app.engine.next_signal_value
+	app.engine.frame_index += 1
+
+	vk.ResetCommandPool(app.engine.device, res.command_pool, {})
 
 	cmd := res.command_buffer
 
@@ -246,7 +251,7 @@ engine_render :: proc(app: ^App) {
 		vk.CmdBindPipeline(cmd, .GRAPHICS, app.engine.pipeline)
 
 		offset: vk.DeviceSize = 0
-		vk.CmdBindVertexBuffers(cmd, 0, 1, &app.engine.geometry_buffer, &offset)
+		// vk.CmdBindVertexBuffers(cmd, 0, 1, &app.engine.geometry_buffer, &offset)
 		vk.CmdBindIndexBuffer(cmd, app.engine.geometry_buffer, app.engine.index_buffer_offset, .UINT32)
 		vk.CmdBindDescriptorSets(
 			cmd,
@@ -258,6 +263,20 @@ engine_render :: proc(app: ^App) {
 			0,
 			nil,
 		)
+
+		// push constants
+		elapsed := f32(time.duration_seconds(time.since(app.engine.start_time)))
+		data := Vec4 {
+			(math.sin_f32(elapsed) + 1.0) * 0.5,
+			(math.sin_f32(elapsed + 2.094) + 1.0) * 0.5,
+			(math.sin_f32(elapsed + 4.189) + 1.0) * 0.5,
+			1.0,
+		}
+		pc := PushConstants {
+			vertex_buffer_address = app.engine.geometry_buffer_address,
+			data                  = data,
+		}
+		vk.CmdPushConstants(cmd, app.engine.pipeline_layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &pc)
 
 		vk.CmdDrawIndexed(cmd, u32(len(app.engine.indices)), 1, 0, 0, 0)
 	}
@@ -290,12 +309,8 @@ engine_render :: proc(app: ^App) {
 		stageMask = {.COLOR_ATTACHMENT_OUTPUT},
 	}
 
-	semaphore_signals := []vk.SemaphoreSubmitInfo {
-		{
-			sType = .SEMAPHORE_SUBMIT_INFO,
-			semaphore = app.engine.render_complete_semaphores[image_index],
-			stageMask = {.ALL_GRAPHICS},
-		},
+	semaphore_signals := [2]vk.SemaphoreSubmitInfo {
+		{sType = .SEMAPHORE_SUBMIT_INFO, semaphore = res.render_complete_semaphore, stageMask = {.ALL_GRAPHICS}},
 		{
 			sType = .SEMAPHORE_SUBMIT_INFO,
 			semaphore = app.engine.timeline_semaphore,
@@ -317,8 +332,8 @@ engine_render :: proc(app: ^App) {
 		pWaitSemaphoreInfos      = &image_acquired_wait_info,
 		commandBufferInfoCount   = 1,
 		pCommandBufferInfos      = &cmd_submit_info,
-		signalSemaphoreInfoCount = u32(len(semaphore_signals)),
-		pSignalSemaphoreInfos    = raw_data(semaphore_signals),
+		signalSemaphoreInfoCount = len(semaphore_signals),
+		pSignalSemaphoreInfos    = &semaphore_signals[0],
 	}
 
 	vk_check(vk.QueueSubmit2(app.engine.graphics_queue, 1, &submit_info, 0))
@@ -326,7 +341,7 @@ engine_render :: proc(app: ^App) {
 	present_info := vk.PresentInfoKHR {
 		sType              = .PRESENT_INFO_KHR,
 		waitSemaphoreCount = 1,
-		pWaitSemaphores    = &app.engine.render_complete_semaphores[image_index],
+		pWaitSemaphores    = &res.render_complete_semaphore,
 		swapchainCount     = 1,
 		pSwapchains        = &app.engine.swapchain,
 		pImageIndices      = &image_index,

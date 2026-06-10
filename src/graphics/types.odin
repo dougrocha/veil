@@ -30,9 +30,10 @@ UniformBufferObject :: struct #align (16) {
 g_ctx: runtime.Context
 
 FrameResources :: struct {
-	command_pool:             vk.CommandPool,
-	command_buffer:           vk.CommandBuffer,
-	image_acquired_semaphore: vk.Semaphore,
+	command_pool:              vk.CommandPool,
+	command_buffer:            vk.CommandBuffer,
+	image_acquired_semaphore:  vk.Semaphore,
+	render_complete_semaphore: vk.Semaphore,
 }
 
 App :: struct {
@@ -58,7 +59,6 @@ Engine :: struct {
 	swapchain:                  vk.SwapchainKHR,
 	swapchain_images:           []vk.Image,
 	swapchain_image_view:       []vk.ImageView,
-	render_complete_semaphores: []vk.Semaphore,
 	require_swapchain_recreate: bool,
 	swapchain_width:            u32,
 	swapchain_height:           u32,
@@ -91,6 +91,7 @@ Engine :: struct {
 	indices:                    []u32,
 	geometry_buffer:            vk.Buffer,
 	geometry_buffer_allocation: vma.Allocation,
+	geometry_buffer_address:    vk.DeviceAddress,
 	index_buffer_offset:        vk.DeviceSize,
 
 	// uniform buffers (one per frame in flight)
@@ -100,6 +101,11 @@ Engine :: struct {
 
 	// timers
 	start_time:                 time.Time,
+	last_frame_time:            time.Time,
+	delta_time:                 f32,
+
+	// camera
+	camera:                     Camera,
 
 	// texture
 	mip_levels:                 u32,
@@ -128,5 +134,10 @@ vertex_attribute_descriptions :: proc() -> [4]vk.VertexInputAttributeDescription
 		{location = 2, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Vertex, tex_coord))},
 		{location = 3, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, normal))},
 	}
+}
+
+PushConstants :: struct {
+	data:                  Vec4,
+	vertex_buffer_address: vk.DeviceAddress,
 }
 

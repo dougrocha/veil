@@ -24,11 +24,18 @@ create_descriptor_set_layout :: proc(self: ^Engine) {
 }
 
 create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
+	push_constant_range := vk.PushConstantRange {
+		stageFlags = {.VERTEX, .FRAGMENT},
+		offset     = 0,
+		size       = size_of(PushConstants),
+	}
+
 	pipeline_layout_info := vk.PipelineLayoutCreateInfo {
 		sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
 		setLayoutCount         = 1,
 		pSetLayouts            = &self.descriptor_set_layout,
-		pushConstantRangeCount = 0,
+		pushConstantRangeCount = 1,
+		pPushConstantRanges    = &push_constant_range,
 	}
 
 	log.debug("Creating pipeline layout...")
@@ -53,11 +60,11 @@ create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 	binding_description := vertex_binding_description()
 	attribute_descriptions := vertex_attribute_descriptions()
 	vertex_input_info := vk.PipelineVertexInputStateCreateInfo {
-		sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-		pVertexBindingDescriptions      = &binding_description,
-		vertexBindingDescriptionCount   = 1,
-		pVertexAttributeDescriptions    = raw_data(attribute_descriptions[:]),
-		vertexAttributeDescriptionCount = u32(len(attribute_descriptions)),
+		sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+		// pVertexBindingDescriptions      = &binding_description,
+		// vertexBindingDescriptionCount   = 1,
+		// pVertexAttributeDescriptions    = raw_data(attribute_descriptions[:]),
+		// vertexAttributeDescriptionCount = u32(len(attribute_descriptions)),
 	}
 
 	input_assembly_info := vk.PipelineInputAssemblyStateCreateInfo {

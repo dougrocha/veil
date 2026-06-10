@@ -52,14 +52,16 @@ update_uniform_buffer :: proc(engine: ^Engine, frame_index: u64) {
 	t := f32(time.duration_seconds(duration))
 
 	ubo := UniformBufferObject{}
-	ubo.model = linalg.matrix4_rotate(t * linalg.to_radians(f32(90)), Vec3{0.0, 0.0, 1.0})
-	ubo.view = linalg.matrix4_look_at_f32(Vec3{2, 2, 2}, Vec3{0, 0, 0}, Vec3{0, 0, 1})
-	ubo.proj = linalg.matrix4_perspective_f32(
-		linalg.to_radians(f32(45)),
+
+	correction := linalg.matrix4_rotate(linalg.to_radians(f32(-90)), Vec3{1.0, 0.0, 0.0})
+	spin := linalg.matrix4_rotate(t * linalg.to_radians(f32(90)), Vec3{0.0, 1.0, 0.0})
+	ubo.model = spin * correction
+	ubo.view = camera_get_view_matrix(engine.camera)
+	ubo.proj = camera_get_projection_matrix(
+		engine.camera,
 		f32(engine.swapchain_width) / f32(engine.swapchain_height),
 		0.1,
 		10.0,
-		true,
 	)
 	ubo.proj[1][1] *= -1.0
 	ubo.light_pos = {0.0, -10.0, 10.0, 0.0}
@@ -105,7 +107,7 @@ create_geometry_buffer :: proc(engine: ^Engine) {
 			vk.BufferCreateInfo {
 				sType = .BUFFER_CREATE_INFO,
 				size = total_size,
-				usage = {.TRANSFER_DST, .VERTEX_BUFFER, .INDEX_BUFFER},
+				usage = {.TRANSFER_DST, .VERTEX_BUFFER, .INDEX_BUFFER, .SHADER_DEVICE_ADDRESS},
 				sharingMode = .EXCLUSIVE,
 			},
 			vma.Allocation_Create_Info{usage = .Auto, required_flags = {.DEVICE_LOCAL}},
@@ -116,5 +118,11 @@ create_geometry_buffer :: proc(engine: ^Engine) {
 	)
 
 	copy_buffer(engine, staging_buffer, engine.geometry_buffer, total_size)
+
+	addr_info := vk.BufferDeviceAddressInfo {
+		sType  = .BUFFER_DEVICE_ADDRESS_INFO,
+		buffer = engine.geometry_buffer,
+	}
+	engine.geometry_buffer_address = vk.GetBufferDeviceAddress(engine.device, &addr_info)
 }
 

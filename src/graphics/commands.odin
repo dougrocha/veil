@@ -41,6 +41,7 @@ create_sync_resources :: proc(self: ^Engine) {
 			sType = .SEMAPHORE_CREATE_INFO,
 		}
 		vk_check(vk.CreateSemaphore(self.device, &binary_semaphore_info, nil, &res.image_acquired_semaphore))
+		vk_check(vk.CreateSemaphore(self.device, &binary_semaphore_info, nil, &res.render_complete_semaphore))
 	}
 }
 

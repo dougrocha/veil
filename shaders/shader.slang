@@ -1,9 +1,10 @@
-struct VSInput {
-    float3 inPosition;
-    float3 inColor;
-    float2 inTexCoord;
-    float3 inNormal;
+struct Vertex {
+    float3 pos;
+    float3 color;
+    float2 tex_coord;
+    float3 normal;
 };
+
 
 struct UniformBuffer {
     float4x4 model;
@@ -12,6 +13,17 @@ struct UniformBuffer {
     float4 light_pos;
 }
 ConstantBuffer<UniformBuffer> ubo;
+
+struct PushConstants {
+    float4 data;
+    Vertex* vertex_buffer;
+};
+
+[[vk_push_constant]] PushConstants pc;
+
+struct VSInput {
+    uint vertex_index : SV_VertexID;
+};
 
 struct VSOutput
 {
@@ -24,16 +36,18 @@ struct VSOutput
 
 [shader("vertex")]
 VSOutput vertex_main(VSInput input) {
+    let v = pc.vertex_buffer[input.vertex_index];
+
     VSOutput output;
-    float4 worldPos = mul(ubo.model, float4(input.inPosition, 1.0));
+    float4 worldPos = mul(ubo.model, float4(v.pos, 1.0));
     output.fragPos = worldPos.xyz;
 
     output.pos = mul(ubo.proj, mul(ubo.view, worldPos));
 
-    output.fragNormal = mul((float3x3)ubo.model, input.inNormal);
+    output.fragNormal = mul((float3x3)ubo.model, v.normal);
 
-    output.fragColor = input.inColor;
-    output.fragTexCoord = input.inTexCoord;
+    output.fragColor = v.color;
+    output.fragTexCoord = v.tex_coord;
     return output;
 }
 
@@ -51,5 +65,5 @@ float4 fragment_main(VSOutput vertIn) : SV_TARGET {
 
     float3 finalLight = ambient + diff;
 
-    return float4(texColor.rgb * finalLight, texColor.a);
+    return float4(texColor.rgb * finalLight * pc.data.rgb, texColor.a);
 }
