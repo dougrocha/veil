@@ -8,47 +8,6 @@ import vma "shared:odin-vma"
 import stbi "vendor:stb/image"
 import vk "vendor:vulkan"
 
-create_image :: proc(
-	engine: ^Engine,
-	width, height, mip_levels: u32,
-	samples: vk.SampleCountFlags,
-	format: vk.Format,
-	tiling: vk.ImageTiling,
-	usage: vk.ImageUsageFlags,
-) -> (
-	vk.Image,
-	vma.Allocation,
-) {
-	image_info := vk.ImageCreateInfo {
-		sType = .IMAGE_CREATE_INFO,
-		imageType = .D2,
-		format = format,
-		extent = {width = width, height = height, depth = 1},
-		mipLevels = mip_levels,
-		arrayLayers = 1,
-		samples = samples,
-		tiling = tiling,
-		usage = usage,
-		sharingMode = .EXCLUSIVE,
-		initialLayout = .UNDEFINED,
-	}
-
-	img: vk.Image
-	allocation: vma.Allocation
-	vk_check(
-		vma.create_image(
-			engine.vma_allocator,
-			image_info,
-			vma.Allocation_Create_Info{usage = .Auto, flags = {}},
-			&img,
-			&allocation,
-			nil,
-		),
-	)
-
-	return img, allocation
-}
-
 upload_texture :: proc(engine: ^Engine, pixels: rawptr, width, height: u32) {
 	image_size := vk.DeviceSize(width * height * 4)
 
@@ -102,7 +61,11 @@ upload_texture :: proc(engine: ^Engine, pixels: rawptr, width, height: u32) {
 
 	generate_mipmaps(engine, &img, TEXTURE_FORMAT, width, height, mip_levels)
 
-	t := Texture{image = img, allocation = allocation, mip_levels = mip_levels}
+	t := Texture {
+		image      = img,
+		allocation = allocation,
+		mip_levels = mip_levels,
+	}
 	create_texture_image_view(engine, &t)
 	create_texture_sampler(engine, &t)
 	append(&engine.textures, t)

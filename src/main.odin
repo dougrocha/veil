@@ -32,19 +32,6 @@ main :: proc() {
 
 	_ = sdl.SetWindowRelativeMouseMode(app.window, true)
 
-	gfx.load_model(&app.engine)
-
-	// app.engine.vertices = []gfx.Vertex {
-	// 	{pos = {-0.5, -0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 0.0}},
-	// 	{pos = {0.5, -0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 0.0}},
-	// 	{pos = {0.5, 0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 1.0}},
-	// 	{pos = {-0.5, 0.5, 0.0}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 1.0}},
-	// 	{pos = {-0.5, -0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 0.0}},
-	// 	{pos = {0.5, -0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 0.0}},
-	// 	{pos = {0.5, 0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {1.0, 1.0}},
-	// 	{pos = {-0.5, 0.5, -0.5}, color = {1.0, 1.0, 1.0}, tex_coord = {0.0, 1.0}},
-	// }
-	// app.engine.indices = []u32{0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4}
 
 	init_ok := gfx.initialize_vulkan(&app)
 	if !init_ok {
@@ -53,6 +40,7 @@ main :: proc() {
 	}
 	defer gfx.engine_shutdown(&app.engine)
 
+	gfx.load_model(&app.engine, "models/viking_room.obj")
 	gfx.load_texture(&app.engine, "textures/viking_room.png")
 
 	main_loop: for {

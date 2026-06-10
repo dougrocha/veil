@@ -63,8 +63,6 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_command_buffers(self)
 	create_color_resources(self)
 	create_depth_resources(self)
-	create_geometry_buffer(self)
-	create_material_buffer(self)
 	create_uniform_buffers(self)
 	create_descriptor_pool(self)
 	create_descriptor_sets(self)
@@ -83,11 +81,16 @@ engine_shutdown :: proc(self: ^Engine) {
 	}
 	delete(self.textures)
 
+	for &mesh in self.meshes {
+		vma.destroy_buffer(self.vma_allocator, mesh.vertex_buffer, mesh.vertex_allocation)
+		vma.destroy_buffer(self.vma_allocator, mesh.index_buffer, mesh.index_allocation)
+	}
+	delete(self.meshes)
+	vma.destroy_buffer(self.vma_allocator, self.material_buffer, self.material_buffer_allocation)
+
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
 		vma.destroy_buffer(self.vma_allocator, self.uniform_buffers[i], self.uniform_buffer_allocations[i])
 	}
-	vma.destroy_buffer(self.vma_allocator, self.geometry_buffer, self.geometry_buffer_allocation)
-	vma.destroy_buffer(self.vma_allocator, self.material_buffer, self.material_buffer_allocation)
 
 	vk.DestroyDescriptorPool(self.device, self.descriptor_pool, nil)
 	vk.DestroyDescriptorSetLayout(self.device, self.descriptor_set_layout, nil)
@@ -253,9 +256,6 @@ engine_render :: proc(app: ^App) {
 
 		vk.CmdBindPipeline(cmd, .GRAPHICS, app.engine.pipeline)
 
-		offset: vk.DeviceSize = 0
-		// vk.CmdBindVertexBuffers(cmd, 0, 1, &app.engine.geometry_buffer, &offset)
-		vk.CmdBindIndexBuffer(cmd, app.engine.geometry_buffer, app.engine.index_buffer_offset, .UINT32)
 		vk.CmdBindDescriptorSets(
 			cmd,
 			.GRAPHICS,
@@ -272,12 +272,13 @@ engine_render :: proc(app: ^App) {
 			translation := linalg.matrix4_translate_f32(mesh.transform.translation)
 			pc := PushConstants {
 				model                   = translation * rot,
-				vertex_buffer_address   = app.engine.geometry_buffer_address,
+				vertex_buffer_address   = mesh.vertex_address,
 				material_buffer_address = app.engine.material_buffer_address,
 				material_index          = u32(mesh.material_index),
 			}
 			vk.CmdPushConstants(cmd, app.engine.pipeline_layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &pc)
-			vk.CmdDrawIndexed(cmd, u32(len(mesh.indices)), 1, mesh.index_offset, i32(mesh.vertex_offset), 0)
+			vk.CmdBindIndexBuffer(cmd, mesh.index_buffer, 0, .UINT32)
+			vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)
 		}
 	}
 	vk.CmdEndRendering(cmd)

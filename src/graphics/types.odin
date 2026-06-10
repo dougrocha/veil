@@ -12,7 +12,7 @@ SWAPCHAIN_FORMAT :: vk.Format.B8G8R8A8_SRGB
 DEPTH_FORMAT :: vk.Format.D32_SFLOAT
 TEXTURE_FORMAT :: vk.Format.R8G8B8A8_SRGB
 MAX_FRAMES_IN_FLIGHT :: 2
-MAX_TEXTURES         :: 1024
+MAX_TEXTURES :: 1024
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
@@ -90,10 +90,6 @@ Engine :: struct {
 	// buffers
 	meshes:                     [dynamic]Mesh,
 	materials:                  [dynamic]Material,
-	geometry_buffer:            vk.Buffer,
-	geometry_buffer_allocation: vma.Allocation,
-	geometry_buffer_address:    vk.DeviceAddress,
-	index_buffer_offset:        vk.DeviceSize,
 	material_buffer:            vk.Buffer,
 	material_buffer_allocation: vma.Allocation,
 	material_buffer_address:    vk.DeviceAddress,
@@ -123,18 +119,6 @@ Vertex :: struct {
 	tex_coord: Vec2,
 }
 
-vertex_binding_description :: proc() -> vk.VertexInputBindingDescription {
-	return {binding = 0, stride = size_of(Vertex), inputRate = .VERTEX}
-}
-
-vertex_attribute_descriptions :: proc() -> [4]vk.VertexInputAttributeDescription {
-	return {
-		{location = 0, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, pos))},
-		{location = 1, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, color))},
-		{location = 3, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, normal))},
-		{location = 2, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Vertex, tex_coord))},
-	}
-}
 
 PushConstants :: struct {
 	model:                   Mat4x4,
@@ -161,19 +145,21 @@ Transform :: struct {
 }
 
 Mesh :: struct {
-	vertices:       []Vertex,
-	indices:        []u32,
-	material_index: i32,
-	vertex_offset:  u32,
-	index_offset:   u32,
-	transform:      Transform,
+	vertex_buffer:     vk.Buffer,
+	vertex_allocation: vma.Allocation,
+	vertex_address:    vk.DeviceAddress,
+	index_buffer:      vk.Buffer,
+	index_allocation:  vma.Allocation,
+	index_count:       u32,
+	material_index:    i32,
+	transform:         Transform,
 }
 
 Texture :: struct {
-	image:            vk.Image,
-	allocation:       vma.Allocation,
-	image_view:       vk.ImageView,
-	sampler:          vk.Sampler,
-	mip_levels:       u32,
+	image:      vk.Image,
+	allocation: vma.Allocation,
+	image_view: vk.ImageView,
+	sampler:    vk.Sampler,
+	mip_levels: u32,
 }
 
