@@ -11,11 +11,24 @@ COMPUTE_MAIN :: "compute_main"
 create_descriptor_set_layout :: proc(self: ^Engine) {
 	bindings := []vk.DescriptorSetLayoutBinding {
 		{binding = 0, descriptorType = .UNIFORM_BUFFER, descriptorCount = 1, stageFlags = {.VERTEX, .FRAGMENT}},
-		{binding = 1, descriptorType = .COMBINED_IMAGE_SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+		{binding = 1, descriptorType = .COMBINED_IMAGE_SAMPLER, descriptorCount = MAX_TEXTURES, stageFlags = {.FRAGMENT}},
+	}
+
+	binding_flags := []vk.DescriptorBindingFlags {
+		{},
+		{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND},
+	}
+
+	binding_flags_info := vk.DescriptorSetLayoutBindingFlagsCreateInfo {
+		sType         = .DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+		bindingCount  = u32(len(binding_flags)),
+		pBindingFlags = raw_data(binding_flags),
 	}
 
 	layout_info := vk.DescriptorSetLayoutCreateInfo {
 		sType        = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		pNext        = &binding_flags_info,
+		flags        = {.UPDATE_AFTER_BIND_POOL},
 		bindingCount = u32(len(bindings)),
 		pBindings    = raw_data(bindings[:]),
 	}
@@ -158,12 +171,12 @@ create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 create_descriptor_pool :: proc(engine: ^Engine) {
 	pool_sizes := []vk.DescriptorPoolSize {
 		{type = .UNIFORM_BUFFER, descriptorCount = MAX_FRAMES_IN_FLIGHT},
-		{type = .COMBINED_IMAGE_SAMPLER, descriptorCount = MAX_FRAMES_IN_FLIGHT},
+		{type = .COMBINED_IMAGE_SAMPLER, descriptorCount = MAX_FRAMES_IN_FLIGHT * MAX_TEXTURES},
 	}
 
 	pool_info := vk.DescriptorPoolCreateInfo {
 		sType         = .DESCRIPTOR_POOL_CREATE_INFO,
-		flags         = {.FREE_DESCRIPTOR_SET},
+		flags         = {.FREE_DESCRIPTOR_SET, .UPDATE_AFTER_BIND},
 		maxSets       = MAX_FRAMES_IN_FLIGHT,
 		poolSizeCount = u32(len(pool_sizes)),
 		pPoolSizes    = raw_data(pool_sizes),
@@ -191,34 +204,39 @@ create_descriptor_sets :: proc(engine: ^Engine) {
 			range  = size_of(UniformBufferObject),
 		}
 
-		image_info := vk.DescriptorImageInfo {
-			sampler     = engine.texture_sampler,
-			imageView   = engine.texture_image_view,
-			imageLayout = .READ_ONLY_OPTIMAL,
+		descriptor_write := vk.WriteDescriptorSet {
+			sType           = .WRITE_DESCRIPTOR_SET,
+			dstSet          = engine.descriptor_sets[i],
+			dstBinding      = 0,
+			dstArrayElement = 0,
+			descriptorCount = 1,
+			descriptorType  = .UNIFORM_BUFFER,
+			pBufferInfo     = &buffer_info,
 		}
 
-		descriptor_write := []vk.WriteDescriptorSet {
-			{
-				sType = .WRITE_DESCRIPTOR_SET,
-				dstSet = engine.descriptor_sets[i],
-				dstBinding = 0,
-				dstArrayElement = 0,
-				descriptorCount = 1,
-				descriptorType = .UNIFORM_BUFFER,
-				pBufferInfo = &buffer_info,
-			},
-			{
-				sType = .WRITE_DESCRIPTOR_SET,
-				dstSet = engine.descriptor_sets[i],
-				dstBinding = 1,
-				dstArrayElement = 0,
-				descriptorCount = 1,
-				descriptorType = .COMBINED_IMAGE_SAMPLER,
-				pImageInfo = &image_info,
-			},
-		}
+		vk.UpdateDescriptorSets(engine.device, 1, &descriptor_write, 0, nil)
+	}
+}
 
-		vk.UpdateDescriptorSets(engine.device, u32(len(descriptor_write)), raw_data(descriptor_write), 0, nil)
+update_texture_descriptor :: proc(engine: ^Engine, index: u32) {
+	t := &engine.textures[index]
+	image_info := vk.DescriptorImageInfo {
+		sampler     = t.sampler,
+		imageView   = t.image_view,
+		imageLayout = .READ_ONLY_OPTIMAL,
+	}
+
+	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		descriptor_write := vk.WriteDescriptorSet {
+			sType           = .WRITE_DESCRIPTOR_SET,
+			dstSet          = engine.descriptor_sets[i],
+			dstBinding      = 1,
+			dstArrayElement = index,
+			descriptorCount = 1,
+			descriptorType  = .COMBINED_IMAGE_SAMPLER,
+			pImageInfo      = &image_info,
+		}
+		vk.UpdateDescriptorSets(engine.device, 1, &descriptor_write, 0, nil)
 	}
 }
 

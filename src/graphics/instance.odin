@@ -151,6 +151,9 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 	   !features_12.timelineSemaphore ||
 	   !features_12.bufferDeviceAddress ||
 	   !features_12.scalarBlockLayout ||
+	   !features_12.descriptorBindingPartiallyBound ||
+	   !features_12.runtimeDescriptorArray ||
+	   !features_12.descriptorBindingSampledImageUpdateAfterBind ||
 	   !features_11.shaderDrawParameters ||
 	   !supported_features.features.samplerAnisotropy ||
 	   !supported_features.features.sampleRateShading {
@@ -168,11 +171,14 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 		synchronization2 = true,
 	}
 	enabled_features_12 := vk.PhysicalDeviceVulkan12Features {
-		sType               = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-		pNext               = &enabled_features_13,
-		timelineSemaphore   = true,
-		bufferDeviceAddress = true,
-		scalarBlockLayout   = true,
+		sType                                        = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+		pNext                                        = &enabled_features_13,
+		timelineSemaphore                            = true,
+		bufferDeviceAddress                          = true,
+		scalarBlockLayout                            = true,
+		descriptorBindingPartiallyBound              = true,
+		runtimeDescriptorArray                       = true,
+		descriptorBindingSampledImageUpdateAfterBind = true,
 	}
 	enabled_features_11 := vk.PhysicalDeviceVulkan11Features {
 		sType                = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,

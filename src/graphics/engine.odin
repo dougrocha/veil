@@ -1,7 +1,7 @@
 package graphics
 
 import "core:log"
-import "core:math"
+import "core:math/linalg"
 import "core:time"
 
 import vma "shared:odin-vma"
@@ -12,7 +12,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	self.start_time = time.now()
 	self.last_frame_time = self.start_time
-	self.camera = camera_create({2, 2, 2})
+	self.camera = camera_create({2, 2, 2}, yaw = -135, pitch = -35)
 
 	create_vulkan_instance(self)
 
@@ -63,13 +63,12 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_command_buffers(self)
 	create_color_resources(self)
 	create_depth_resources(self)
-	create_texture_image(self)
-	create_texture_image_view(self)
-	create_texture_sampler(self)
 	create_geometry_buffer(self)
+	create_material_buffer(self)
 	create_uniform_buffers(self)
 	create_descriptor_pool(self)
 	create_descriptor_sets(self)
+	create_default_texture(self)
 
 	return true
 }
@@ -77,14 +76,18 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 engine_shutdown :: proc(self: ^Engine) {
 	vk.DeviceWaitIdle(self.device)
 
-	vk.DestroySampler(self.device, self.texture_sampler, nil)
-	vk.DestroyImageView(self.device, self.texture_image_view, nil)
-	vma.destroy_image(self.vma_allocator, self.texture_image, self.texture_image_allocation)
+	for &t in self.textures {
+		vk.DestroySampler(self.device, t.sampler, nil)
+		vk.DestroyImageView(self.device, t.image_view, nil)
+		vma.destroy_image(self.vma_allocator, t.image, t.allocation)
+	}
+	delete(self.textures)
 
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
 		vma.destroy_buffer(self.vma_allocator, self.uniform_buffers[i], self.uniform_buffer_allocations[i])
 	}
 	vma.destroy_buffer(self.vma_allocator, self.geometry_buffer, self.geometry_buffer_allocation)
+	vma.destroy_buffer(self.vma_allocator, self.material_buffer, self.material_buffer_allocation)
 
 	vk.DestroyDescriptorPool(self.device, self.descriptor_pool, nil)
 	vk.DestroyDescriptorSetLayout(self.device, self.descriptor_set_layout, nil)
@@ -264,21 +267,18 @@ engine_render :: proc(app: ^App) {
 			nil,
 		)
 
-		// push constants
-		elapsed := f32(time.duration_seconds(time.since(app.engine.start_time)))
-		data := Vec4 {
-			(math.sin_f32(elapsed) + 1.0) * 0.5,
-			(math.sin_f32(elapsed + 2.094) + 1.0) * 0.5,
-			(math.sin_f32(elapsed + 4.189) + 1.0) * 0.5,
-			1.0,
+		for &mesh in app.engine.meshes {
+			rot := linalg.matrix4_from_quaternion_f32(mesh.transform.rotation)
+			translation := linalg.matrix4_translate_f32(mesh.transform.translation)
+			pc := PushConstants {
+				model                   = translation * rot,
+				vertex_buffer_address   = app.engine.geometry_buffer_address,
+				material_buffer_address = app.engine.material_buffer_address,
+				material_index          = u32(mesh.material_index),
+			}
+			vk.CmdPushConstants(cmd, app.engine.pipeline_layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &pc)
+			vk.CmdDrawIndexed(cmd, u32(len(mesh.indices)), 1, mesh.index_offset, i32(mesh.vertex_offset), 0)
 		}
-		pc := PushConstants {
-			vertex_buffer_address = app.engine.geometry_buffer_address,
-			data                  = data,
-		}
-		vk.CmdPushConstants(cmd, app.engine.pipeline_layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &pc)
-
-		vk.CmdDrawIndexed(cmd, u32(len(app.engine.indices)), 1, 0, 0, 0)
 	}
 	vk.CmdEndRendering(cmd)
 

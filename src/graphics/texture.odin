@@ -49,17 +49,7 @@ create_image :: proc(
 	return img, allocation
 }
 
-create_texture_image :: proc(engine: ^Engine) {
-	texture_file :: "textures/viking_room.png"
-
-	width, height, channels: i32
-	pixels := stbi.load(texture_file, &width, &height, &channels, 4)
-	if pixels == nil {
-		log.errorf("Failed to read image: %s", stbi.failure_reason())
-		return
-	}
-	defer stbi.image_free(pixels)
-
+upload_texture :: proc(engine: ^Engine, pixels: rawptr, width, height: u32) {
 	image_size := vk.DeviceSize(width * height * 4)
 
 	staging_buffer: vk.Buffer
@@ -81,12 +71,12 @@ create_texture_image :: proc(engine: ^Engine) {
 	mem.copy(data, pixels, int(image_size))
 	vma.unmap_memory(engine.vma_allocator, staging_allocation)
 
-	engine.mip_levels = u32(math.floor(math.log2(f32(max(width, height)))) + 1)
-	engine.texture_image, engine.texture_image_allocation = create_image(
+	mip_levels := u32(math.floor(math.log2(f32(max(width, height)))) + 1)
+	img, allocation := create_image(
 		engine,
-		u32(width),
-		u32(height),
-		engine.mip_levels,
+		width,
+		height,
+		mip_levels,
 		{._1},
 		TEXTURE_FORMAT,
 		.OPTIMAL,
@@ -96,7 +86,7 @@ create_texture_image :: proc(engine: ^Engine) {
 	cmd := begin_single_time_commands(engine)
 	transition_image_layout(
 		cmd,
-		engine.texture_image,
+		img,
 		.UNDEFINED,
 		.TRANSFER_DST_OPTIMAL,
 		{},
@@ -104,13 +94,35 @@ create_texture_image :: proc(engine: ^Engine) {
 		{.TOP_OF_PIPE},
 		{.TRANSFER},
 		{.COLOR},
-		engine.mip_levels,
+		mip_levels,
 	)
-	copy_buffer_to_image(cmd, staging_buffer, engine.texture_image, u32(width), u32(height))
+	copy_buffer_to_image(cmd, staging_buffer, img, width, height)
 	end_single_time_commands(engine, &cmd)
 	// transitioned to SHADER_READ_ONLY_OPTIMAL while generating mipmaps
 
-	generate_mipmaps(engine, &engine.texture_image, TEXTURE_FORMAT, u32(width), u32(height), engine.mip_levels)
+	generate_mipmaps(engine, &img, TEXTURE_FORMAT, width, height, mip_levels)
+
+	t := Texture{image = img, allocation = allocation, mip_levels = mip_levels}
+	create_texture_image_view(engine, &t)
+	create_texture_sampler(engine, &t)
+	append(&engine.textures, t)
+	update_texture_descriptor(engine, u32(len(engine.textures)) - 1)
+}
+
+load_texture :: proc(engine: ^Engine, path: cstring) {
+	width, height, channels: i32
+	pixels := stbi.load(path, &width, &height, &channels, 4)
+	if pixels == nil {
+		log.errorf("Failed to read image: %s", stbi.failure_reason())
+		return
+	}
+	defer stbi.image_free(pixels)
+	upload_texture(engine, pixels, u32(width), u32(height))
+}
+
+create_default_texture :: proc(engine: ^Engine) {
+	pixels := [4]u8{0xFF, 0xFF, 0xFF, 0xFF}
+	upload_texture(engine, &pixels, 1, 1)
 }
 
 generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, width, height, mip_levels: u32) {
@@ -225,17 +237,11 @@ get_max_usable_sample_count :: proc(engine: ^Engine) -> vk.SampleCountFlags {
 	return {._1}
 }
 
-create_texture_image_view :: proc(engine: ^Engine) {
-	engine.texture_image_view = create_image_view(
-		engine,
-		engine.texture_image,
-		TEXTURE_FORMAT,
-		{.COLOR},
-		engine.mip_levels,
-	)
+create_texture_image_view :: proc(engine: ^Engine, t: ^Texture) {
+	t.image_view = create_image_view(engine, t.image, TEXTURE_FORMAT, {.COLOR}, t.mip_levels)
 }
 
-create_texture_sampler :: proc(engine: ^Engine) {
+create_texture_sampler :: proc(engine: ^Engine, t: ^Texture) {
 	properties: vk.PhysicalDeviceProperties
 	vk.GetPhysicalDeviceProperties(engine.physical_device, &properties)
 
@@ -258,6 +264,6 @@ create_texture_sampler :: proc(engine: ^Engine) {
 		unnormalizedCoordinates = false,
 	}
 
-	vk_check(vk.CreateSampler(engine.device, &sampler_info, nil, &engine.texture_sampler))
+	vk_check(vk.CreateSampler(engine.device, &sampler_info, nil, &t.sampler))
 }
 

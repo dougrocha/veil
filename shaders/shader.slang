@@ -1,22 +1,35 @@
 struct Vertex {
     float3 pos;
     float3 color;
-    float2 tex_coord;
     float3 normal;
+    float2 tex_coord;
 };
 
 
 struct UniformBuffer {
-    float4x4 model;
     float4x4 view;
     float4x4 proj;
     float4 light_pos;
 }
 ConstantBuffer<UniformBuffer> ubo;
 
+struct Material {
+    float4 base_color;
+    float metallic;
+    float roughness;
+    float3 emissive;
+    int base_color_texture_index;
+    int metallic_texture_index;
+    int normal_texture_index;
+    int roughness_texture_index;
+    int emissive_texture_index;
+};
+
 struct PushConstants {
-    float4 data;
+    float4x4 model;
     Vertex* vertex_buffer;
+    Material* material_buffer;
+    uint material_index;
 };
 
 [[vk_push_constant]] PushConstants pc;
@@ -39,23 +52,24 @@ VSOutput vertex_main(VSInput input) {
     let v = pc.vertex_buffer[input.vertex_index];
 
     VSOutput output;
-    float4 worldPos = mul(ubo.model, float4(v.pos, 1.0));
+    float4 worldPos = mul(pc.model, float4(v.pos, 1.0));
     output.fragPos = worldPos.xyz;
 
     output.pos = mul(ubo.proj, mul(ubo.view, worldPos));
 
-    output.fragNormal = mul((float3x3)ubo.model, v.normal);
+    output.fragNormal = mul((float3x3)pc.model, v.normal);
 
     output.fragColor = v.color;
     output.fragTexCoord = v.tex_coord;
     return output;
 }
 
-Sampler2D texture;
+Sampler2D textures[];
 
 [shader("fragment")]
 float4 fragment_main(VSOutput vertIn) : SV_TARGET {
-    float4 texColor = texture.Sample(vertIn.fragTexCoord) * float4(vertIn.fragColor, 1.0);
+    let mat = pc.material_buffer[pc.material_index];
+    float4 texColor = textures[mat.base_color_texture_index].Sample(vertIn.fragTexCoord) * float4(vertIn.fragColor, 1.0) * mat.base_color;
 
     float3 norm = normalize(vertIn.fragNormal);
     float3 lightDir = normalize(ubo.light_pos.xyz - vertIn.fragPos);
@@ -65,5 +79,5 @@ float4 fragment_main(VSOutput vertIn) : SV_TARGET {
 
     float3 finalLight = ambient + diff;
 
-    return float4(texColor.rgb * finalLight * pc.data.rgb, texColor.a);
+    return float4(texColor.rgb * finalLight, texColor.a);
 }

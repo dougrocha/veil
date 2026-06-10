@@ -53,6 +53,8 @@ main :: proc() {
 	}
 	defer gfx.engine_shutdown(&app.engine)
 
+	gfx.load_texture(&app.engine, "textures/viking_room.png")
+
 	main_loop: for {
 		ev: sdl.Event
 
@@ -62,11 +64,7 @@ main :: proc() {
 				break main_loop
 			case .KEY_DOWN:
 			case .MOUSE_MOTION:
-				gfx.camera_process_mouse_movement(
-					&app.engine.camera,
-					ev.motion.xrel,
-					-ev.motion.yrel,
-				)
+				gfx.camera_process_mouse_movement(&app.engine.camera, ev.motion.xrel, -ev.motion.yrel)
 			case .MOUSE_WHEEL:
 				gfx.camera_process_mouse_scroll(&app.engine.camera, ev.wheel.y)
 			case .WINDOW_PIXEL_SIZE_CHANGED:
@@ -88,11 +86,11 @@ main :: proc() {
 process_input :: proc(engine: ^gfx.Engine) {
 	keys := sdl.GetKeyboardState(nil)
 
-	if keys[sdl.Scancode.W]     do gfx.camera_process_keyboard(&engine.camera, .Forward,  engine.delta_time)
-	if keys[sdl.Scancode.S]     do gfx.camera_process_keyboard(&engine.camera, .Backward, engine.delta_time)
-	if keys[sdl.Scancode.A]     do gfx.camera_process_keyboard(&engine.camera, .Left,     engine.delta_time)
-	if keys[sdl.Scancode.D]     do gfx.camera_process_keyboard(&engine.camera, .Right,    engine.delta_time)
-	if keys[sdl.Scancode.SPACE] do gfx.camera_process_keyboard(&engine.camera, .Up,       engine.delta_time)
-	if keys[sdl.Scancode.LCTRL] do gfx.camera_process_keyboard(&engine.camera, .Down,     engine.delta_time)
+	if keys[sdl.Scancode.W] do gfx.camera_process_keyboard(&engine.camera, .Forward, engine.delta_time)
+	if keys[sdl.Scancode.S] do gfx.camera_process_keyboard(&engine.camera, .Backward, engine.delta_time)
+	if keys[sdl.Scancode.A] do gfx.camera_process_keyboard(&engine.camera, .Left, engine.delta_time)
+	if keys[sdl.Scancode.D] do gfx.camera_process_keyboard(&engine.camera, .Right, engine.delta_time)
+	if keys[sdl.Scancode.SPACE] do gfx.camera_process_keyboard(&engine.camera, .Up, engine.delta_time)
+	if keys[sdl.Scancode.LCTRL] do gfx.camera_process_keyboard(&engine.camera, .Down, engine.delta_time)
 }
 

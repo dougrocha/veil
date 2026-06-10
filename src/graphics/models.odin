@@ -1,6 +1,7 @@
 package graphics
 
 import "core:log"
+import "core:math/linalg"
 
 import "shared:tinyobj"
 
@@ -55,7 +56,15 @@ load_model :: proc(engine: ^Engine) {
 		}
 	}
 
-	engine.vertices = vertices[:]
-	engine.indices = indices[:]
+	material_index := i32(len(engine.materials))
+	append(&engine.materials, Material{base_color = {1, 1, 1, 1}, base_color_texture_index = 1})
+
+	correction := linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(-90)), Vec3{1, 0, 0})
+	append(&engine.meshes, Mesh{
+		vertices       = vertices[:],
+		indices        = indices[:],
+		material_index = material_index,
+		transform      = Transform{rotation = correction},
+	})
 }
 

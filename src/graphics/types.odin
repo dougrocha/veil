@@ -12,16 +12,17 @@ SWAPCHAIN_FORMAT :: vk.Format.B8G8R8A8_SRGB
 DEPTH_FORMAT :: vk.Format.D32_SFLOAT
 TEXTURE_FORMAT :: vk.Format.R8G8B8A8_SRGB
 MAX_FRAMES_IN_FLIGHT :: 2
+MAX_TEXTURES         :: 1024
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
 Vec4 :: [4]f32
+Quat :: quaternion128
 
 Mat4x4 :: matrix[4, 4]f32
 Mat4x3 :: matrix[4, 3]f32
 
 UniformBufferObject :: struct #align (16) {
-	model:     Mat4x4,
 	view:      Mat4x4,
 	proj:      Mat4x4,
 	light_pos: Vec4,
@@ -87,12 +88,15 @@ Engine :: struct {
 	next_signal_value:          u64,
 
 	// buffers
-	vertices:                   []Vertex,
-	indices:                    []u32,
+	meshes:                     [dynamic]Mesh,
+	materials:                  [dynamic]Material,
 	geometry_buffer:            vk.Buffer,
 	geometry_buffer_allocation: vma.Allocation,
 	geometry_buffer_address:    vk.DeviceAddress,
 	index_buffer_offset:        vk.DeviceSize,
+	material_buffer:            vk.Buffer,
+	material_buffer_allocation: vma.Allocation,
+	material_buffer_address:    vk.DeviceAddress,
 
 	// uniform buffers (one per frame in flight)
 	uniform_buffers:            [MAX_FRAMES_IN_FLIGHT]vk.Buffer,
@@ -108,19 +112,15 @@ Engine :: struct {
 	camera:                     Camera,
 
 	// texture
-	mip_levels:                 u32,
-	texture_image:              vk.Image,
-	texture_image_allocation:   vma.Allocation,
-	texture_image_view:         vk.ImageView,
-	texture_sampler:            vk.Sampler,
+	textures:                   [dynamic]Texture,
 	msaa_samples:               vk.SampleCountFlags,
 }
 
 Vertex :: struct {
 	pos:       Vec3,
 	color:     Vec3,
-	tex_coord: Vec2,
 	normal:    Vec3,
+	tex_coord: Vec2,
 }
 
 vertex_binding_description :: proc() -> vk.VertexInputBindingDescription {
@@ -131,13 +131,49 @@ vertex_attribute_descriptions :: proc() -> [4]vk.VertexInputAttributeDescription
 	return {
 		{location = 0, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, pos))},
 		{location = 1, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, color))},
-		{location = 2, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Vertex, tex_coord))},
 		{location = 3, binding = 0, format = .R32G32B32_SFLOAT, offset = u32(offset_of(Vertex, normal))},
+		{location = 2, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Vertex, tex_coord))},
 	}
 }
 
 PushConstants :: struct {
-	data:                  Vec4,
-	vertex_buffer_address: vk.DeviceAddress,
+	model:                   Mat4x4,
+	vertex_buffer_address:   vk.DeviceAddress,
+	material_buffer_address: vk.DeviceAddress,
+	material_index:          u32,
+}
+
+Material :: struct {
+	base_color:               Vec4,
+	metallic:                 f32,
+	roughness:                f32,
+	emissive:                 Vec3,
+	base_color_texture_index: i32,
+	metallic_texture_index:   i32,
+	normal_texture_index:     i32,
+	roughness_texture_index:  i32,
+	emissive_texture_index:   i32,
+}
+
+Transform :: struct {
+	translation: Vec3,
+	rotation:    Quat,
+}
+
+Mesh :: struct {
+	vertices:       []Vertex,
+	indices:        []u32,
+	material_index: i32,
+	vertex_offset:  u32,
+	index_offset:   u32,
+	transform:      Transform,
+}
+
+Texture :: struct {
+	image:            vk.Image,
+	allocation:       vma.Allocation,
+	image_view:       vk.ImageView,
+	sampler:          vk.Sampler,
+	mip_levels:       u32,
 }
 

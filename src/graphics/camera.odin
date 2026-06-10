@@ -58,6 +58,7 @@ camera_update_vectors :: proc(camera: ^Camera) {
 		linalg.sin(linalg.to_radians(camera.yaw)) * linalg.cos(linalg.to_radians(camera.pitch)),
 	}
 	camera.front = linalg.normalize(front)
+
 	camera.right = linalg.normalize(linalg.cross(camera.front, camera.world_up))
 	camera.up = linalg.normalize(linalg.cross(camera.right, camera.front))
 }
