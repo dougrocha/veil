@@ -5,10 +5,10 @@ import vk "vendor:vulkan"
 create_descriptor_set_layout :: proc(self: ^Engine) {
 	bindings := []vk.DescriptorSetLayoutBinding {
 		{
-			binding         = 0,
-			descriptorType  = .COMBINED_IMAGE_SAMPLER,
+			binding = 0,
+			descriptorType = .COMBINED_IMAGE_SAMPLER,
 			descriptorCount = MAX_TEXTURES,
-			stageFlags      = {.FRAGMENT},
+			stageFlags = {.FRAGMENT},
 		},
 	}
 

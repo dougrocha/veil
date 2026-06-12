@@ -116,7 +116,9 @@ find_graphics_queue :: proc(self: ^Engine) -> bool {
 		vk.GetPhysicalDeviceSurfaceSupportKHR(self.physical_device, i, self.surface, &has_present_support)
 
 		props := queue_fam_props[i]
-		if .GRAPHICS in props.queueFamilyProperties.queueFlags && has_present_support {
+		if .GRAPHICS in props.queueFamilyProperties.queueFlags &&
+		   .COMPUTE in props.queueFamilyProperties.queueFlags &&
+		   has_present_support {
 			self.gfx_queue_fam_idx = i
 			return true
 		}

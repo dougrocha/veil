@@ -4,8 +4,26 @@ import "core:log"
 import "core:math"
 import "core:mem"
 
+import vma "shared:odin-vma"
 import stbi "vendor:stb/image"
 import vk "vendor:vulkan"
+
+TextureHandle :: distinct u64
+INVALID_TEXTURE :: TextureHandle(max(u32))
+
+Texture :: struct {
+	image:      vk.Image,
+	allocation: vma.Allocation,
+	image_view: vk.ImageView,
+	sampler:    vk.Sampler,
+	mip_levels: u32,
+}
+
+TextureSystem :: struct {
+	textures: [dynamic]Texture,
+}
+
+// OLD TEXTURE STUFF BELOW
 
 upload_texture :: proc(engine: ^Engine, pixels: rawptr, width, height: u32) {
 	image_size := vk.DeviceSize(width * height * 4)
@@ -66,8 +84,19 @@ load_texture :: proc(engine: ^Engine, path: cstring) {
 }
 
 create_default_texture :: proc(engine: ^Engine) {
-	pixels := [4]u8{0xFF, 0xFF, 0xFF, 0xFF}
-	upload_texture(engine, &pixels, 1, 1)
+	SIZE :: 16
+	pixels: [SIZE * SIZE * 4]u8
+	for y in 0 ..< SIZE {
+		for x in 0 ..< SIZE {
+			i := (y * SIZE + x) * 4
+			is_magenta := (x + y) % 2 == 0
+			pixels[i + 0] = 0xFF if is_magenta else 0x00
+			pixels[i + 1] = 0x00
+			pixels[i + 2] = 0xFF if is_magenta else 0x00
+			pixels[i + 3] = 0xFF
+		}
+	}
+	upload_texture(engine, &pixels, SIZE, SIZE)
 }
 
 generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, width, height, mip_levels: u32) {
@@ -77,7 +106,6 @@ generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, w
 	if .SAMPLED_IMAGE_FILTER_LINEAR not_in format_props.optimalTilingFeatures {
 		log.panicf("Texture image format does not support linear blitting")
 	}
-
 
 	cmd := begin_single_time_commands(engine)
 

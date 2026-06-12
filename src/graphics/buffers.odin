@@ -1,7 +1,9 @@
 package graphics
 
+import "core:math"
+import "core:math/linalg"
+import "core:math/rand"
 import "core:mem"
-import "core:time"
 
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
@@ -20,20 +22,18 @@ Buffer_Flags :: struct {
 
 BufferKind :: enum {
 	Storage,
-	Uniform,
-	DynUniform,
+	MappedUniform,
 	Index,
 	Staging,
-	Readback,
+	ParticleSSBO,
 }
 
 BUFFER_FLAGS := [BufferKind]Buffer_Flags {
-	.Storage    = {{.TRANSFER_DST, .STORAGE_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},
-	.Uniform    = {{.TRANSFER_DST, .UNIFORM_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},
-	.DynUniform = {{.TRANSFER_DST, .UNIFORM_BUFFER, .SHADER_DEVICE_ADDRESS}, {.Mapped, .Host_Access_Random}},
-	.Index      = {{.TRANSFER_DST, .INDEX_BUFFER}, {}},
-	.Staging    = {{.TRANSFER_SRC}, {.Mapped, .Host_Access_Sequential_Write}},
-	.Readback   = {{.TRANSFER_DST}, {.Mapped, .Host_Access_Random}},
+	.Storage       = {{.TRANSFER_DST, .STORAGE_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},
+	.MappedUniform = {{.TRANSFER_DST, .UNIFORM_BUFFER, .SHADER_DEVICE_ADDRESS}, {.Mapped, .Host_Access_Random}},
+	.Index         = {{.TRANSFER_DST, .INDEX_BUFFER}, {}},
+	.Staging       = {{.TRANSFER_SRC}, {.Mapped, .Host_Access_Sequential_Write}},
+	.ParticleSSBO  = {{.TRANSFER_DST, .STORAGE_BUFFER, .VERTEX_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},
 }
 
 create_buffer :: proc(engine: ^Engine, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
@@ -66,18 +66,18 @@ destroy_buffer :: proc(engine: ^Engine, buffer: GpuBuffer) {
 	vma.destroy_buffer(engine.vma_allocator, buffer.buffer, buffer.alloc)
 }
 
-buffer_upload :: proc(engine: ^Engine, data: rawptr, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
+upload_buffer :: proc(engine: ^Engine, data: rawptr, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
 	staging := create_buffer(engine, size, .Staging)
 	defer destroy_buffer(engine, staging)
 
 	mem.copy(staging.alloc_info.mapped_data, data, int(size))
 
 	dest := create_buffer(engine, size, kind)
-	buffer_copy(engine, staging.buffer, dest.buffer, size)
+	copy_buffer(engine, staging.buffer, dest.buffer, size)
 	return dest
 }
 
-buffer_copy :: proc(engine: ^Engine, src, dst: vk.Buffer, size: vk.DeviceSize) {
+copy_buffer :: proc(engine: ^Engine, src, dst: vk.Buffer, size: vk.DeviceSize) {
 	cmd := begin_single_time_commands(engine)
 	region := vk.BufferCopy {
 		size = size,
@@ -89,7 +89,29 @@ buffer_copy :: proc(engine: ^Engine, src, dst: vk.Buffer, size: vk.DeviceSize) {
 create_scene_data_buffer :: proc(engine: ^Engine) {
 	size := vk.DeviceSize(size_of(SceneData))
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.scene_data_buffers[i] = create_buffer(engine, size, .DynUniform)
+		engine.scene_data_buffers[i] = create_buffer(engine, size, .MappedUniform)
+	}
+}
+
+create_particle_buffer :: proc(engine: ^Engine) {
+	particles := make([]Particle, PARTICLE_COUNT, context.temp_allocator)
+	aspect_ratio := f32(engine.swapchain_extent.height) / f32(engine.swapchain_extent.width)
+
+	for &p in particles {
+		r := 0.25 * math.sqrt(rand.float32())
+		theta := rand.float32() * math.TAU
+
+		x := r * math.cos(theta) * aspect_ratio
+		y := r * math.sin(theta)
+
+		p.position = {x, y}
+		p.velocity = linalg.normalize([2]f32{x, y}) * 0.00025
+		p.color = {rand.float32(), rand.float32(), rand.float32(), 1.0}
+	}
+
+	size := vk.DeviceSize(size_of(Particle) * len(particles))
+	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		engine.particle_buffers[i] = upload_buffer(engine, raw_data(particles), size, .ParticleSSBO)
 	}
 }
 
@@ -103,6 +125,7 @@ update_scene_data_buffer :: proc(engine: ^Engine, frame_index: u64) {
 		light_pos = {2.0, 4.0, 3.0, 0.0},
 	}
 	scene.proj[1][1] *= -1.0
+	scene.delta_time = engine.delta_time
 	mem.copy(engine.scene_data_buffers[frame_index].alloc_info.mapped_data, &scene, size_of(SceneData))
 }
 

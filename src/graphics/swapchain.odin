@@ -21,7 +21,7 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 		imageColorSpace  = .SRGB_NONLINEAR,
 		imageExtent      = self.swapchain_extent,
 		imageArrayLayers = 1,
-		imageUsage       = {.COLOR_ATTACHMENT},
+		imageUsage       = {.COLOR_ATTACHMENT, .TRANSFER_DST},
 		imageSharingMode = .EXCLUSIVE,
 		preTransform     = surface_caps.currentTransform,
 		compositeAlpha   = {.OPAQUE},
@@ -46,6 +46,7 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 cleanup_swapchain :: proc(self: ^Engine) {
 	destroy_image(self, self.color_image)
 	destroy_image(self, self.depth_image)
+	destroy_image(self, self.draw_image)
 
 	for view in self.swapchain_image_view {
 		vk.DestroyImageView(self.device, view, nil)
@@ -60,11 +61,11 @@ create_color_resources :: proc(engine: ^Engine) {
 	engine.color_image = create_image(
 		engine,
 		{engine.swapchain_extent.width, engine.swapchain_extent.height, 1},
-		SWAPCHAIN_FORMAT,
+		DRAW_FORMAT,
 		{.TRANSIENT_ATTACHMENT, .COLOR_ATTACHMENT},
 		samples = engine.msaa_samples,
 	)
-	engine.color_image.image_view = create_image_view(engine, engine.color_image.image, SWAPCHAIN_FORMAT, {.COLOR})
+	engine.color_image.image_view = create_image_view(engine, engine.color_image.image, DRAW_FORMAT, {.COLOR})
 }
 
 create_depth_resources :: proc(engine: ^Engine) {
@@ -76,5 +77,15 @@ create_depth_resources :: proc(engine: ^Engine) {
 		samples = engine.msaa_samples,
 	)
 	engine.depth_image.image_view = create_image_view(engine, engine.depth_image.image, DEPTH_FORMAT, {.DEPTH})
+}
+
+create_draw_image :: proc(engine: ^Engine) {
+	engine.draw_image = create_image(
+		engine,
+		{engine.swapchain_extent.width, engine.swapchain_extent.height, 1},
+		DRAW_FORMAT,
+		{.COLOR_ATTACHMENT, .TRANSFER_SRC, .TRANSFER_DST, .STORAGE},
+	)
+	engine.draw_image.image_view = create_image_view(engine, engine.draw_image.image, DRAW_FORMAT, {.COLOR})
 }
 

@@ -25,11 +25,13 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_swapchain(engine, app.width, app.height)
 	create_color_resources(engine)
 	create_depth_resources(engine)
+	create_draw_image(engine)
 
 	slang_init(engine) or_return
 	create_shaders_slang(engine) or_return
 	create_descriptor_set_layout(engine)
 	engine.pipeline = create_graphics_pipeline(engine)
+	engine.compute_pipeline = create_compute_pipeline(engine)
 
 	create_sync_resources(engine)
 	create_command_buffers(engine)
@@ -38,6 +40,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_descriptor_sets(engine)
 
 	create_default_texture(engine)
+	create_default_material(engine)
+	create_particle_buffer(engine)
 
 	return true
 }
@@ -60,7 +64,11 @@ engine_shutdown :: proc(self: ^Engine) {
 	destroy_buffer(self, self.material_buffer)
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
 		destroy_buffer(self, self.scene_data_buffers[i])
+		destroy_buffer(self, self.particle_buffers[i])
 	}
+
+	vk.DestroyPipeline(self.device, self.compute_pipeline.pipeline, nil)
+	vk.DestroyPipelineLayout(self.device, self.compute_pipeline.layout, nil)
 
 	vk.DestroyDescriptorPool(self.device, self.descriptor_pool, nil)
 	vk.DestroyDescriptorSetLayout(self.device, self.descriptor_set_layout, nil)
@@ -76,6 +84,7 @@ engine_shutdown :: proc(self: ^Engine) {
 		vk.DestroySemaphore(self.device, res.image_acquired_semaphore, nil)
 		vk.DestroySemaphore(self.device, res.render_complete_semaphore, nil)
 		vk.DestroyCommandPool(self.device, res.command_pool, nil)
+		delete(res.deletion_queue.deletors)
 	}
 	cleanup_swapchain(self)
 	vma.destroy_allocator(self.vma_allocator)
@@ -93,6 +102,7 @@ engine_render :: proc(app: ^App) {
 		create_swapchain(&app.engine, app.width, app.height)
 		create_color_resources(&app.engine)
 		create_depth_resources(&app.engine)
+		create_draw_image(&app.engine)
 		app.engine.require_swapchain_recreate = false
 	}
 
@@ -110,8 +120,7 @@ engine_render :: proc(app: ^App) {
 
 	frame_res_index := app.engine.frame_index % MAX_FRAMES_IN_FLIGHT
 	current_frame_res := &app.engine.frame_resources[frame_res_index]
-
-	update_scene_data_buffer(&app.engine, frame_res_index)
+	flush_deletion_queue(&current_frame_res.deletion_queue)
 
 	// get the next swapchain image we can write too
 	//
@@ -137,149 +146,11 @@ engine_render :: proc(app: ^App) {
 	signal_value := app.engine.next_signal_value
 	app.engine.frame_index += 1
 
-	vk.ResetCommandPool(app.engine.device, current_frame_res.command_pool, {})
+	update_scene_data_buffer(&app.engine, frame_res_index)
+
+	record_command_buffer(&app.engine, image_index, frame_res_index)
 
 	cmd := current_frame_res.command_buffer
-
-	begin_info := vk.CommandBufferBeginInfo {
-		sType = .COMMAND_BUFFER_BEGIN_INFO,
-		flags = {.ONE_TIME_SUBMIT},
-	}
-	vk_check(vk.BeginCommandBuffer(cmd, &begin_info))
-
-	transition_image_layout(
-		cmd,
-		app.engine.color_image.image,
-		.UNDEFINED,
-		.COLOR_ATTACHMENT_OPTIMAL,
-		{},
-		{.COLOR_ATTACHMENT_WRITE},
-		{.COLOR_ATTACHMENT_OUTPUT},
-		{.COLOR_ATTACHMENT_OUTPUT},
-		{.COLOR},
-	)
-	transition_image_layout(
-		cmd,
-		app.engine.swapchain_images[image_index],
-		.UNDEFINED,
-		.COLOR_ATTACHMENT_OPTIMAL,
-		{},
-		{.COLOR_ATTACHMENT_WRITE},
-		{.COLOR_ATTACHMENT_OUTPUT},
-		{.COLOR_ATTACHMENT_OUTPUT},
-		{.COLOR},
-	)
-	transition_image_layout(
-		cmd,
-		app.engine.depth_image.image,
-		.UNDEFINED,
-		.DEPTH_ATTACHMENT_OPTIMAL,
-		{},
-		{.DEPTH_STENCIL_ATTACHMENT_WRITE},
-		{.EARLY_FRAGMENT_TESTS},
-		{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
-		{.DEPTH},
-	)
-
-	color_attach_info := vk.RenderingAttachmentInfo {
-		sType = .RENDERING_ATTACHMENT_INFO,
-		imageView = app.engine.color_image.image_view,
-		imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
-		resolveMode = {.AVERAGE},
-		resolveImageView = app.engine.swapchain_image_view[image_index],
-		resolveImageLayout = .COLOR_ATTACHMENT_OPTIMAL,
-		loadOp = .CLEAR,
-		storeOp = .DONT_CARE,
-		clearValue = {color = {float32 = {0.1, 0.1, 0.1, 1}}},
-	}
-
-	depth_attach_info := vk.RenderingAttachmentInfo {
-		sType = .RENDERING_ATTACHMENT_INFO,
-		imageView = app.engine.depth_image.image_view,
-		imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
-		loadOp = .CLEAR,
-		storeOp = .DONT_CARE,
-		clearValue = {depthStencil = {depth = 1}},
-	}
-
-	rendering_info := vk.RenderingInfo {
-		sType = .RENDERING_INFO,
-		renderArea = {offset = {0, 0}, extent = app.engine.swapchain_extent},
-		layerCount = 1,
-		colorAttachmentCount = 1,
-		pColorAttachments = &color_attach_info,
-		pDepthAttachment = &depth_attach_info,
-	}
-
-	vk.CmdBeginRendering(cmd, &rendering_info)
-	{
-		viewport := vk.Viewport {
-			x        = 0,
-			y        = 0,
-			width    = f32(app.engine.swapchain_extent.width),
-			height   = f32(app.engine.swapchain_extent.height),
-			minDepth = 0,
-			maxDepth = 1,
-		}
-		vk.CmdSetViewport(cmd, 0, 1, &viewport)
-
-		scissor := vk.Rect2D {
-			offset = {x = 0, y = 0},
-			extent = app.engine.swapchain_extent,
-		}
-		vk.CmdSetScissor(cmd, 0, 1, &scissor)
-
-		vk.CmdBindPipeline(cmd, .GRAPHICS, app.engine.pipeline.pipeline)
-
-		vk.CmdBindDescriptorSets(
-			cmd,
-			.GRAPHICS,
-			app.engine.pipeline.layout,
-			0,
-			1,
-			&app.engine.descriptor_sets[frame_res_index],
-			0,
-			nil,
-		)
-
-		for &mesh in app.engine.meshes {
-			rot := linalg.matrix4_from_quaternion(mesh.transform.rotation)
-			translation := linalg.matrix4_translate(mesh.transform.translation)
-			scale := linalg.matrix4_scale(mesh.transform.scale)
-			pc := PushConstants {
-				scene_data              = app.engine.scene_data_buffers[frame_res_index].ptr,
-				model                   = translation * rot * scale,
-				vertex_buffer_address   = mesh.vertex_address,
-				material_buffer_address = app.engine.material_buffer.ptr,
-				material_index          = u32(mesh.material_index),
-			}
-			vk.CmdPushConstants(cmd, app.engine.pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &pc)
-			vk.CmdBindIndexBuffer(cmd, mesh.index_buffer, 0, .UINT32)
-			vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)
-		}
-	}
-	vk.CmdEndRendering(cmd)
-
-	present_layout_barrier := vk.ImageMemoryBarrier2 {
-		sType = .IMAGE_MEMORY_BARRIER_2,
-		srcStageMask = {.COLOR_ATTACHMENT_OUTPUT},
-		srcAccessMask = {.COLOR_ATTACHMENT_WRITE},
-		dstStageMask = {},
-		dstAccessMask = {},
-		oldLayout = .COLOR_ATTACHMENT_OPTIMAL,
-		newLayout = .PRESENT_SRC_KHR,
-		image = app.engine.swapchain_images[image_index],
-		subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
-	}
-
-	present_dep_info := vk.DependencyInfo {
-		sType                   = .DEPENDENCY_INFO,
-		imageMemoryBarrierCount = 1,
-		pImageMemoryBarriers    = &present_layout_barrier,
-	}
-	vk.CmdPipelineBarrier2(cmd, &present_dep_info)
-
-	vk_check(vk.EndCommandBuffer(cmd))
 
 	// set the semaphore that tells the GPU only wait for the image
 	// when you reach the stage for COLOR_ATTACHMENT_OUTPUT
@@ -341,4 +212,224 @@ engine_render :: proc(app: ^App) {
 	} else if present_result != .SUCCESS {
 		log.errorf("QueuePresentKHR failed")
 	}
+}
+
+record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index: u64) {
+	current_frame_res := &engine.frame_resources[frame_res_index]
+
+	vk.ResetCommandPool(engine.device, current_frame_res.command_pool, {})
+
+	cmd := current_frame_res.command_buffer
+
+	begin_info := vk.CommandBufferBeginInfo {
+		sType = .COMMAND_BUFFER_BEGIN_INFO,
+		flags = {.ONE_TIME_SUBMIT},
+	}
+	vk_check(vk.BeginCommandBuffer(cmd, &begin_info))
+
+	// currently disabled, because we dont have a proper shader system for this yet
+	// compute pass, do it here since we use the same command buffer
+	// otherwise we need to handle some compute semaphores for timing
+	{
+		vk.CmdBindPipeline(cmd, .COMPUTE, engine.compute_pipeline.pipeline)
+
+		last_frame := (frame_res_index + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT
+		compute_pc := ComputePushConstants {
+			delta_time    = engine.delta_time * 1000.0,
+			particles_in  = engine.particle_buffers[last_frame].ptr,
+			particles_out = engine.particle_buffers[frame_res_index].ptr,
+		}
+		vk.CmdPushConstants(
+			cmd,
+			engine.compute_pipeline.layout,
+			{.COMPUTE},
+			0,
+			size_of(ComputePushConstants),
+			&compute_pc,
+		)
+
+		vk.CmdDispatch(cmd, PARTICLE_COUNT / 256, 1, 1)
+
+		barrier := vk.MemoryBarrier2 {
+			sType         = .MEMORY_BARRIER_2,
+			srcStageMask  = {.COMPUTE_SHADER},
+			srcAccessMask = {.SHADER_WRITE},
+			dstStageMask  = {.VERTEX_SHADER},
+			dstAccessMask = {.SHADER_READ},
+		}
+		dep_info := vk.DependencyInfo {
+			sType              = .DEPENDENCY_INFO,
+			memoryBarrierCount = 1,
+			pMemoryBarriers    = &barrier,
+		}
+		vk.CmdPipelineBarrier2(cmd, &dep_info)
+	}
+
+	transition_image_layout(
+		cmd,
+		engine.color_image.image,
+		.UNDEFINED,
+		.COLOR_ATTACHMENT_OPTIMAL,
+		{},
+		{.COLOR_ATTACHMENT_WRITE},
+		{.COLOR_ATTACHMENT_OUTPUT},
+		{.COLOR_ATTACHMENT_OUTPUT},
+		{.COLOR},
+	)
+	transition_image_layout(
+		cmd,
+		engine.draw_image.image,
+		.UNDEFINED,
+		.COLOR_ATTACHMENT_OPTIMAL,
+		{},
+		{.COLOR_ATTACHMENT_WRITE},
+		{.COLOR_ATTACHMENT_OUTPUT},
+		{.COLOR_ATTACHMENT_OUTPUT},
+		{.COLOR},
+	)
+	transition_image_layout(
+		cmd,
+		engine.depth_image.image,
+		.UNDEFINED,
+		.DEPTH_ATTACHMENT_OPTIMAL,
+		{},
+		{.DEPTH_STENCIL_ATTACHMENT_WRITE},
+		{.EARLY_FRAGMENT_TESTS},
+		{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
+		{.DEPTH},
+	)
+
+	color_attach_info := vk.RenderingAttachmentInfo {
+		sType = .RENDERING_ATTACHMENT_INFO,
+		imageView = engine.color_image.image_view,
+		imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
+		resolveMode = {.AVERAGE},
+		resolveImageView = engine.draw_image.image_view,
+		resolveImageLayout = .COLOR_ATTACHMENT_OPTIMAL,
+		loadOp = .CLEAR,
+		storeOp = .DONT_CARE,
+		clearValue = {color = {float32 = {0.1, 0.1, 0.1, 1}}},
+	}
+
+	depth_attach_info := vk.RenderingAttachmentInfo {
+		sType = .RENDERING_ATTACHMENT_INFO,
+		imageView = engine.depth_image.image_view,
+		imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
+		loadOp = .CLEAR,
+		storeOp = .DONT_CARE,
+		clearValue = {depthStencil = {depth = 1}},
+	}
+
+	rendering_info := vk.RenderingInfo {
+		sType = .RENDERING_INFO,
+		renderArea = {offset = {0, 0}, extent = engine.swapchain_extent},
+		layerCount = 1,
+		colorAttachmentCount = 1,
+		pColorAttachments = &color_attach_info,
+		pDepthAttachment = &depth_attach_info,
+	}
+
+	vk.CmdBeginRendering(cmd, &rendering_info)
+	{
+		viewport := vk.Viewport {
+			x        = 0,
+			y        = 0,
+			width    = f32(engine.swapchain_extent.width),
+			height   = f32(engine.swapchain_extent.height),
+			minDepth = 0,
+			maxDepth = 1,
+		}
+		vk.CmdSetViewport(cmd, 0, 1, &viewport)
+
+		scissor := vk.Rect2D {
+			offset = {x = 0, y = 0},
+			extent = engine.swapchain_extent,
+		}
+		vk.CmdSetScissor(cmd, 0, 1, &scissor)
+
+		vk.CmdBindPipeline(cmd, .GRAPHICS, engine.pipeline.pipeline)
+
+		vk.CmdBindDescriptorSets(
+			cmd,
+			.GRAPHICS,
+			engine.pipeline.layout,
+			0,
+			1,
+			&engine.descriptor_sets[frame_res_index],
+			0,
+			nil,
+		)
+
+		for &mesh in engine.meshes {
+			rot := linalg.matrix4_from_quaternion(mesh.transform.rotation)
+			translation := linalg.matrix4_translate(mesh.transform.translation)
+			scale := linalg.matrix4_scale(mesh.transform.scale)
+			pc := PushConstants {
+				scene_data              = engine.scene_data_buffers[frame_res_index].ptr,
+				model                   = translation * rot * scale,
+				vertex_buffer_address   = mesh.vertex_address,
+				material_buffer_address = engine.material_buffer.ptr,
+				material_index          = u32(mesh.material_index),
+			}
+			vk.CmdPushConstants(cmd, engine.pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &pc)
+			vk.CmdBindIndexBuffer(cmd, mesh.index_buffer, 0, .UINT32)
+			vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)
+		}
+
+		// draw particles here (temp)
+		// {
+		// 	particle_pc := PushConstants {
+		// 		scene_data      = engine.scene_data_buffers[frame_res_index].ptr,
+		// 		particle_buffer = engine.particle_buffers[frame_res_index].ptr,
+		// 	}
+		// 	vk.CmdPushConstants(cmd, engine.pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &particle_pc)
+		// 	vk.CmdDraw(cmd, PARTICLE_COUNT, 1, 0, 0)
+		// }
+	}
+	vk.CmdEndRendering(cmd)
+
+	transition_image_layout(
+		cmd,
+		engine.draw_image.image,
+		.COLOR_ATTACHMENT_OPTIMAL,
+		.TRANSFER_SRC_OPTIMAL,
+		{.COLOR_ATTACHMENT_WRITE},
+		{.TRANSFER_READ},
+		{.COLOR_ATTACHMENT_OUTPUT},
+		{.TRANSFER},
+		{.COLOR},
+	)
+	transition_image_layout(
+		cmd,
+		engine.swapchain_images[image_index],
+		.UNDEFINED,
+		.TRANSFER_DST_OPTIMAL,
+		{},
+		{.TRANSFER_WRITE},
+		{},
+		{.TRANSFER},
+		{.COLOR},
+	)
+
+	copy_image_to_image(
+		cmd,
+		engine.draw_image.image,
+		engine.swapchain_images[image_index],
+		engine.swapchain_extent,
+		engine.swapchain_extent,
+	)
+
+	transition_image_layout(
+		cmd,
+		engine.swapchain_images[image_index],
+		.TRANSFER_DST_OPTIMAL,
+		.PRESENT_SRC_KHR,
+		{.TRANSFER_WRITE},
+		{},
+		{.TRANSFER},
+		{},
+		{.COLOR},
+	)
+
+	vk_check(vk.EndCommandBuffer(cmd))
 }

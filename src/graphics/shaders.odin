@@ -81,7 +81,14 @@ create_shaders_slang :: proc(self: ^Engine) -> bool {
 	}
 	defer frag_entry->release()
 
-	components := [3]^sp.IComponentType{module, vert_entry, frag_entry}
+	compute_entry: ^sp.IEntryPoint
+	if res := module->findEntryPointByName(COMPUTE_MAIN, &compute_entry); sp.FAILED(res) {
+		log.errorf("Could not find Slang entry point: %s", COMPUTE_MAIN)
+		return false
+	}
+	defer compute_entry->release()
+
+	components := [4]^sp.IComponentType{module, vert_entry, frag_entry, compute_entry}
 
 	linked: ^sp.IComponentType
 	diag: ^sp.IBlob

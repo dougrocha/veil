@@ -18,12 +18,12 @@ load_model :: proc(engine: ^Engine, path: string) {
 	vertices := make([dynamic]Vertex, context.temp_allocator)
 	indices := make([dynamic]u32, context.temp_allocator)
 
-	unique_vertices := make(map[Vertex]u32)
+	unique_vertices := make(map[Vertex]u32, context.temp_allocator)
 
 	for shape in obj.shapes {
 		for index in obj.attrib.faces[shape.face_offset:shape.face_offset + shape.length] {
 			normal: Vec3 = {0.0, 1.0, 0.0}
-			if index.v_idx != tinyobj.INVALID_INDEX {
+			if index.vn_idx != tinyobj.INVALID_INDEX {
 				normal = {
 					obj.attrib.normals[3 * index.vn_idx + 0],
 					obj.attrib.normals[3 * index.vn_idx + 1],
@@ -59,8 +59,8 @@ load_model :: proc(engine: ^Engine, path: string) {
 	vertex_size := vk.DeviceSize(size_of(Vertex) * len(vertices))
 	index_size := vk.DeviceSize(size_of(u32) * len(indices))
 
-	vertex_buf := buffer_upload(engine, raw_data(vertices[:]), vertex_size, .Storage)
-	index_buf := buffer_upload(engine, raw_data(indices[:]), index_size, .Index)
+	vertex_buf := upload_buffer(engine, raw_data(vertices[:]), vertex_size, .Storage)
+	index_buf := upload_buffer(engine, raw_data(indices[:]), index_size, .Index)
 
 	material_index := i32(len(engine.materials))
 	append(&engine.materials, Material{base_color = {1, 1, 1, 1}, base_color_texture_index = 1})

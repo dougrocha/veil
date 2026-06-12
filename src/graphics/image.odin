@@ -128,6 +128,7 @@ transition_image_layout :: proc(
 			aspectMask = aspect,
 			baseMipLevel = base_mip_level,
 			levelCount = mip_levels,
+			baseArrayLayer = 0,
 			layerCount = 1,
 		},
 	}
@@ -138,6 +139,30 @@ transition_image_layout :: proc(
 		pImageMemoryBarriers    = &barrier,
 	}
 	vk.CmdPipelineBarrier2(cmd, &dep_info)
+}
+
+copy_image_to_image :: proc(cmd: vk.CommandBuffer, src, dst: vk.Image, src_extent, dst_extent: vk.Extent2D) {
+	blit_region := vk.ImageBlit2 {
+		sType = .IMAGE_BLIT_2,
+		srcSubresource = {aspectMask = {.COLOR}, layerCount = 1},
+		dstSubresource = {aspectMask = {.COLOR}, layerCount = 1},
+	}
+	blit_region.srcOffsets[1] = {i32(src_extent.width), i32(src_extent.height), 1}
+	blit_region.dstOffsets[1] = {i32(dst_extent.width), i32(dst_extent.height), 1}
+
+	vk.CmdBlitImage2(
+		cmd,
+		&vk.BlitImageInfo2 {
+			sType = .BLIT_IMAGE_INFO_2,
+			srcImage = src,
+			srcImageLayout = .TRANSFER_SRC_OPTIMAL,
+			dstImage = dst,
+			dstImageLayout = .TRANSFER_DST_OPTIMAL,
+			filter = .NEAREST,
+			regionCount = 1,
+			pRegions = &blit_region,
+		},
+	)
 }
 
 copy_buffer_to_image :: proc(cmd: vk.CommandBuffer, buffer: vk.Buffer, img: vk.Image, width, height: u32) {

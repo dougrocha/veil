@@ -11,8 +11,12 @@ import vk "vendor:vulkan"
 SWAPCHAIN_FORMAT :: vk.Format.B8G8R8A8_SRGB
 DEPTH_FORMAT :: vk.Format.D32_SFLOAT
 TEXTURE_FORMAT :: vk.Format.R8G8B8A8_SRGB
+DRAW_FORMAT :: vk.Format.R16G16B16A16_SFLOAT
+
 MAX_FRAMES_IN_FLIGHT :: 2
 MAX_TEXTURES :: 1024
+
+PARTICLE_COUNT :: 8192
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
@@ -30,6 +34,7 @@ FrameResources :: struct {
 	command_buffer:            vk.CommandBuffer,
 	image_acquired_semaphore:  vk.Semaphore,
 	render_complete_semaphore: vk.Semaphore,
+	deletion_queue:            DeletionQueue,
 }
 
 App :: struct {
@@ -59,6 +64,7 @@ Engine :: struct {
 	swapchain_extent:           vk.Extent2D,
 	depth_image:                GpuImage,
 	color_image:                GpuImage,
+	draw_image:                 GpuImage,
 
 	// shaders
 	slang_session:              ^sp.IGlobalSession,
@@ -69,6 +75,7 @@ Engine :: struct {
 	descriptor_pool:            vk.DescriptorPool,
 	descriptor_set_layout:      vk.DescriptorSetLayout,
 	descriptor_sets:            [MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	compute_pipeline:           Pipeline,
 
 	// frame and sync resources
 	timeline_semaphore:         vk.Semaphore,
@@ -81,6 +88,7 @@ Engine :: struct {
 	materials:                  [dynamic]Material,
 	material_buffer:            GpuBuffer,
 	scene_data_buffers:         [MAX_FRAMES_IN_FLIGHT]GpuBuffer,
+	particle_buffers:           [MAX_FRAMES_IN_FLIGHT]GpuBuffer,
 
 	// timers
 	start_time:                 time.Time,
@@ -96,9 +104,10 @@ Engine :: struct {
 }
 
 SceneData :: struct #align (16) {
-	view:      Mat4x4,
-	proj:      Mat4x4,
-	light_pos: Vec4,
+	view:       Mat4x4,
+	proj:       Mat4x4,
+	light_pos:  Vec4,
+	delta_time: f32,
 }
 
 Vertex :: struct {
@@ -114,6 +123,12 @@ PushConstants :: struct {
 	vertex_buffer_address:   vk.DeviceAddress,
 	material_buffer_address: vk.DeviceAddress,
 	material_index:          u32,
+}
+
+ComputePushConstants :: struct {
+	delta_time:    f32,
+	particles_in:  vk.DeviceAddress,
+	particles_out: vk.DeviceAddress,
 }
 
 Material :: struct {
@@ -145,11 +160,8 @@ Mesh :: struct {
 	transform:         Transform,
 }
 
-Texture :: struct {
-	image:      vk.Image,
-	allocation: vma.Allocation,
-	image_view: vk.ImageView,
-	sampler:    vk.Sampler,
-	mip_levels: u32,
+Particle :: struct {
+	position: Vec2,
+	velocity: Vec2,
+	color:    Vec4,
 }
-
