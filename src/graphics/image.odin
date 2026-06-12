@@ -3,45 +3,73 @@ package graphics
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
+GpuImage :: struct {
+	image:        vk.Image,
+	image_view:   vk.ImageView,
+	alloc:        vma.Allocation,
+	alloc_info:   vma.Allocation_Info,
+	extent:       vk.Extent3D,
+	format:       vk.Format,
+	mip_levels:   u32,
+	array_layers: u32,
+	layout:       vk.ImageLayout,
+	usage:        vk.ImageUsageFlags,
+}
+
 create_image :: proc(
 	engine: ^Engine,
-	width, height, mip_levels: u32,
-	samples: vk.SampleCountFlags,
+	extent: vk.Extent3D,
 	format: vk.Format,
-	tiling: vk.ImageTiling,
-	usage: vk.ImageUsageFlags,
-) -> (
-	vk.Image,
-	vma.Allocation,
-) {
+	image_usage_flags: vk.ImageUsageFlags,
+	mip_levels: u32 = 1,
+	array_layers: u32 = 1,
+	samples: vk.SampleCountFlags = {._1},
+	tiling: vk.ImageTiling = .OPTIMAL,
+	image_type: vk.ImageType = .D2,
+	image_flags: vk.ImageCreateFlags = {},
+	alloc_flags: vma.Allocation_Create_Flags = {},
+) -> GpuImage {
 	image_info := vk.ImageCreateInfo {
-		sType = .IMAGE_CREATE_INFO,
-		imageType = .D2,
-		format = format,
-		extent = {width = width, height = height, depth = 1},
-		mipLevels = mip_levels,
-		arrayLayers = 1,
-		samples = samples,
-		tiling = tiling,
-		usage = usage,
-		sharingMode = .EXCLUSIVE,
+		sType         = .IMAGE_CREATE_INFO,
+		imageType     = image_type,
+		format        = format,
+		extent        = extent,
+		mipLevels     = mip_levels,
+		arrayLayers   = array_layers,
+		samples       = samples,
+		tiling        = tiling,
+		usage         = image_usage_flags,
+		sharingMode   = .EXCLUSIVE,
 		initialLayout = .UNDEFINED,
+		flags         = image_flags,
 	}
 
-	img: vk.Image
-	allocation: vma.Allocation
+	gpu_img := GpuImage {
+		extent       = extent,
+		format       = format,
+		mip_levels   = mip_levels,
+		array_layers = array_layers,
+		layout       = .UNDEFINED,
+		usage        = image_usage_flags,
+	}
+
 	vk_check(
 		vma.create_image(
 			engine.vma_allocator,
 			image_info,
-			vma.Allocation_Create_Info{usage = .Auto, flags = {}},
-			&img,
-			&allocation,
-			nil,
+			vma.Allocation_Create_Info{usage = .Auto, required_flags = {.DEVICE_LOCAL}, flags = alloc_flags},
+			&gpu_img.image,
+			&gpu_img.alloc,
+			&gpu_img.alloc_info,
 		),
 	)
 
-	return img, allocation
+	return gpu_img
+}
+
+destroy_image :: proc(engine: ^Engine, img: GpuImage) {
+	vk.DestroyImageView(engine.device, img.image_view, nil)
+	vma.destroy_image(engine.vma_allocator, img.image, img.alloc)
 }
 
 create_image_view :: proc(
@@ -49,19 +77,23 @@ create_image_view :: proc(
 	img: vk.Image,
 	format: vk.Format,
 	aspect: vk.ImageAspectFlags,
+	view_type: vk.ImageViewType = .D2,
 	mip_levels: u32 = 1,
+	array_layers: u32 = 1,
+	base_mip_level: u32 = 0,
+	base_array_layer: u32 = 0,
 ) -> vk.ImageView {
 	info := vk.ImageViewCreateInfo {
 		sType = .IMAGE_VIEW_CREATE_INFO,
 		image = img,
-		viewType = .D2,
+		viewType = view_type,
 		format = format,
 		subresourceRange = {
 			aspectMask = aspect,
-			baseMipLevel = 0,
+			baseMipLevel = base_mip_level,
 			levelCount = mip_levels,
-			baseArrayLayer = 0,
-			layerCount = 1,
+			baseArrayLayer = base_array_layer,
+			layerCount = array_layers,
 		},
 	}
 	view: vk.ImageView
@@ -79,6 +111,7 @@ transition_image_layout :: proc(
 	dst_stage: vk.PipelineStageFlags2,
 	aspect: vk.ImageAspectFlags,
 	mip_levels: u32 = 1,
+	base_mip_level: u32 = 0,
 ) {
 	barrier := vk.ImageMemoryBarrier2 {
 		sType = .IMAGE_MEMORY_BARRIER_2,
@@ -91,7 +124,12 @@ transition_image_layout :: proc(
 		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		image = img,
-		subresourceRange = {aspectMask = aspect, levelCount = mip_levels, layerCount = 1},
+		subresourceRange = {
+			aspectMask = aspect,
+			baseMipLevel = base_mip_level,
+			levelCount = mip_levels,
+			layerCount = 1,
+		},
 	}
 
 	dep_info := vk.DependencyInfo {

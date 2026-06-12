@@ -53,20 +53,21 @@ create_vulkan_instance :: proc(self: ^Engine) {
 	vk.load_proc_addresses_instance(self.instance)
 }
 
-create_vulkan_surface :: proc(app: ^App) -> bool {
-	if !sdl.Vulkan_CreateSurface(app.window, app.engine.instance, nil, &app.engine.surface) {
+create_vulkan_surface :: proc(app: ^App) -> (vk.SurfaceKHR, bool) {
+	surface: vk.SurfaceKHR
+	if !sdl.Vulkan_CreateSurface(app.window, app.engine.instance, nil, &surface) {
 		log.errorf("Failed to create vulkan surface: %s", sdl.GetError())
-		return false
+		return {}, false
 	}
-	return true
+	return surface, true
 }
 
-find_physical_device :: proc(self: ^Engine) -> vk.PhysicalDevice {
+find_physical_device :: proc(self: ^Engine) -> (vk.PhysicalDevice, bool) {
 	device_count: u32 = 0
 	vk.EnumeratePhysicalDevices(self.instance, &device_count, nil)
 	if device_count == 0 {
 		log.errorf("No Vulkan physical devices found")
-		return nil
+		return nil, false
 	}
 
 	physical_devices := make([]vk.PhysicalDevice, device_count, context.temp_allocator)
@@ -97,10 +98,10 @@ find_physical_device :: proc(self: ^Engine) -> vk.PhysicalDevice {
 
 	if !format_supported {
 		log.errorf("Requested swapchain format is not supported by surface")
-		return nil
+		return nil, false
 	}
 
-	return physical_device
+	return physical_device, true
 }
 
 find_graphics_queue :: proc(self: ^Engine) -> bool {
@@ -110,7 +111,7 @@ find_graphics_queue :: proc(self: ^Engine) -> bool {
 	for &p in queue_fam_props {p.sType = .QUEUE_FAMILY_PROPERTIES_2}
 	vk.GetPhysicalDeviceQueueFamilyProperties2(self.physical_device, &queue_fam_count, raw_data(queue_fam_props))
 
-	for i: u32 = 0; i < queue_fam_count; i += 1 {
+	for i in 0 ..< queue_fam_count {
 		has_present_support: b32
 		vk.GetPhysicalDeviceSurfaceSupportKHR(self.physical_device, i, self.surface, &has_present_support)
 
@@ -121,6 +122,7 @@ find_graphics_queue :: proc(self: ^Engine) -> bool {
 		}
 	}
 
+	log.errorf("Unable to find a graphics queue")
 	return false
 }
 

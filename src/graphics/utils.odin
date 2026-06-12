@@ -1,6 +1,7 @@
 package graphics
 
 import "core:log"
+import "core:os"
 
 import vk "vendor:vulkan"
 
@@ -43,5 +44,17 @@ end_single_time_commands :: proc(engine: ^Engine, cmd: ^vk.CommandBuffer) {
 	vk_check(vk.QueueSubmit2(engine.graphics_queue, 1, &submit_info, 0))
 	vk_check(vk.QueueWaitIdle(engine.graphics_queue))
 	vk.FreeCommandBuffers(engine.device, engine.frame_resources[0].command_pool, 1, cmd)
+}
+
+get_physical_device_properties :: proc(engine: ^Engine) -> vk.PhysicalDeviceProperties {
+	properties: vk.PhysicalDeviceProperties
+	vk.GetPhysicalDeviceProperties(engine.physical_device, &properties)
+	return properties
+}
+
+read_file :: proc(filepath: string, allocator := context.allocator) -> string {
+	buf, err := os.read_entire_file(filepath, allocator)
+	log.assertf(err == os.ERROR_NONE, "Failed to read file '%s': %v", filepath, err)
+	return string(buf)
 }
 

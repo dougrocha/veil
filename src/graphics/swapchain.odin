@@ -1,11 +1,9 @@
 package graphics
 
-import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
 create_swapchain :: proc(self: ^Engine, width, height: u32) {
-	self.swapchain_width = width
-	self.swapchain_height = height
+	self.swapchain_extent = {width, height}
 
 	surface_caps: vk.SurfaceCapabilitiesKHR
 	vk_check(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface, &surface_caps))
@@ -16,19 +14,19 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 	}
 
 	swapchain_create_info := vk.SwapchainCreateInfoKHR {
-		sType = .SWAPCHAIN_CREATE_INFO_KHR,
-		surface = self.surface,
-		minImageCount = u32(requested_image_count),
-		imageFormat = SWAPCHAIN_FORMAT,
-		imageColorSpace = .SRGB_NONLINEAR,
-		imageExtent = {width = self.swapchain_width, height = self.swapchain_height},
+		sType            = .SWAPCHAIN_CREATE_INFO_KHR,
+		surface          = self.surface,
+		minImageCount    = u32(requested_image_count),
+		imageFormat      = SWAPCHAIN_FORMAT,
+		imageColorSpace  = .SRGB_NONLINEAR,
+		imageExtent      = self.swapchain_extent,
 		imageArrayLayers = 1,
-		imageUsage = {.COLOR_ATTACHMENT},
+		imageUsage       = {.COLOR_ATTACHMENT},
 		imageSharingMode = .EXCLUSIVE,
-		preTransform = surface_caps.currentTransform,
-		compositeAlpha = {.OPAQUE},
-		presentMode = .FIFO,
-		clipped = true,
+		preTransform     = surface_caps.currentTransform,
+		compositeAlpha   = {.OPAQUE},
+		presentMode      = .FIFO,
+		clipped          = true,
 	}
 
 	vk_check(vk.CreateSwapchainKHR(self.device, &swapchain_create_info, nil, &self.swapchain))
@@ -46,11 +44,8 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 }
 
 cleanup_swapchain :: proc(self: ^Engine) {
-	vk.DestroyImageView(self.device, self.color_image_view, nil)
-	vma.destroy_image(self.vma_allocator, self.color_image, self.color_image_allocation)
-
-	vk.DestroyImageView(self.device, self.depth_image_view, nil)
-	vma.destroy_image(self.vma_allocator, self.depth_image, self.depth_image_allocation)
+	destroy_image(self, self.color_image)
+	destroy_image(self, self.depth_image)
 
 	for view in self.swapchain_image_view {
 		vk.DestroyImageView(self.device, view, nil)
@@ -62,30 +57,24 @@ cleanup_swapchain :: proc(self: ^Engine) {
 }
 
 create_color_resources :: proc(engine: ^Engine) {
-	engine.color_image, engine.color_image_allocation = create_image(
+	engine.color_image = create_image(
 		engine,
-		engine.swapchain_width,
-		engine.swapchain_height,
-		1,
-		engine.msaa_samples,
+		{engine.swapchain_extent.width, engine.swapchain_extent.height, 1},
 		SWAPCHAIN_FORMAT,
-		.OPTIMAL,
 		{.TRANSIENT_ATTACHMENT, .COLOR_ATTACHMENT},
+		samples = engine.msaa_samples,
 	)
-	engine.color_image_view = create_image_view(engine, engine.color_image, SWAPCHAIN_FORMAT, {.COLOR})
+	engine.color_image.image_view = create_image_view(engine, engine.color_image.image, SWAPCHAIN_FORMAT, {.COLOR})
 }
 
 create_depth_resources :: proc(engine: ^Engine) {
-	engine.depth_image, engine.depth_image_allocation = create_image(
+	engine.depth_image = create_image(
 		engine,
-		engine.swapchain_width,
-		engine.swapchain_height,
-		1,
-		engine.msaa_samples,
+		{engine.swapchain_extent.width, engine.swapchain_extent.height, 1},
 		DEPTH_FORMAT,
-		.OPTIMAL,
 		{.DEPTH_STENCIL_ATTACHMENT},
+		samples = engine.msaa_samples,
 	)
-	engine.depth_image_view = create_image_view(engine, engine.depth_image, DEPTH_FORMAT, {.DEPTH})
+	engine.depth_image.image_view = create_image_view(engine, engine.depth_image.image, DEPTH_FORMAT, {.DEPTH})
 }
 

@@ -5,13 +5,12 @@ struct Vertex {
     float2 tex_coord;
 };
 
-
-struct UniformBuffer {
+struct SceneData {
     float4x4 view;
     float4x4 proj;
     float4 light_pos;
 }
-ConstantBuffer<UniformBuffer> ubo;
+
 
 struct Material {
     float4 base_color;
@@ -27,11 +26,11 @@ struct Material {
 
 struct PushConstants {
     float4x4 model;
+    SceneData* scene_data;
     Vertex* vertex_buffer;
     Material* material_buffer;
     uint material_index;
 };
-
 [[vk_push_constant]] PushConstants pc;
 
 struct VSInput {
@@ -55,7 +54,7 @@ VSOutput vertex_main(VSInput input) {
     float4 worldPos = mul(pc.model, float4(v.pos, 1.0));
     output.fragPos = worldPos.xyz;
 
-    output.pos = mul(ubo.proj, mul(ubo.view, worldPos));
+    output.pos = mul(pc.scene_data.proj, mul(pc.scene_data.view, worldPos));
 
     output.fragNormal = mul((float3x3)pc.model, v.normal);
 
@@ -72,7 +71,7 @@ float4 fragment_main(VSOutput vertIn) : SV_TARGET {
     float4 texColor = textures[mat.base_color_texture_index].Sample(vertIn.fragTexCoord) * float4(vertIn.fragColor, 1.0) * mat.base_color;
 
     float3 norm = normalize(vertIn.fragNormal);
-    float3 lightDir = normalize(ubo.light_pos.xyz - vertIn.fragPos);
+    float3 lightDir = normalize(pc.scene_data.light_pos.xyz - vertIn.fragPos);
 
     float diff = max(dot(norm, lightDir), 0.0);
     float ambient = 0.15;

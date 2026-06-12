@@ -4,48 +4,30 @@ import "core:log"
 import "core:math"
 import "core:mem"
 
-import vma "shared:odin-vma"
 import stbi "vendor:stb/image"
 import vk "vendor:vulkan"
 
 upload_texture :: proc(engine: ^Engine, pixels: rawptr, width, height: u32) {
 	image_size := vk.DeviceSize(width * height * 4)
 
-	staging_buffer: vk.Buffer
-	staging_allocation: vma.Allocation
-	vk_check(
-		vma.create_buffer(
-			engine.vma_allocator,
-			vk.BufferCreateInfo{sType = .BUFFER_CREATE_INFO, size = image_size, usage = {.TRANSFER_SRC}},
-			vma.Allocation_Create_Info{usage = .Auto, flags = {.Host_Access_Sequential_Write}},
-			&staging_buffer,
-			&staging_allocation,
-			nil,
-		),
-	)
-	defer vma.destroy_buffer(engine.vma_allocator, staging_buffer, staging_allocation)
-
-	data: rawptr
-	vk_check(vma.map_memory(engine.vma_allocator, staging_allocation, &data))
-	mem.copy(data, pixels, int(image_size))
-	vma.unmap_memory(engine.vma_allocator, staging_allocation)
+	staging := create_buffer(engine, image_size, .Staging)
+	defer destroy_buffer(engine, staging)
+	mem.copy(staging.alloc_info.mapped_data, pixels, int(image_size))
 
 	mip_levels := u32(math.floor(math.log2(f32(max(width, height)))) + 1)
-	img, allocation := create_image(
+	gpu_img := create_image(
 		engine,
-		width,
-		height,
-		mip_levels,
-		{._1},
+		{width, height, 1},
 		TEXTURE_FORMAT,
-		.OPTIMAL,
 		{.TRANSFER_SRC, .TRANSFER_DST, .SAMPLED},
+		mip_levels = mip_levels,
 	)
+
 
 	cmd := begin_single_time_commands(engine)
 	transition_image_layout(
 		cmd,
-		img,
+		gpu_img.image,
 		.UNDEFINED,
 		.TRANSFER_DST_OPTIMAL,
 		{},
@@ -55,15 +37,15 @@ upload_texture :: proc(engine: ^Engine, pixels: rawptr, width, height: u32) {
 		{.COLOR},
 		mip_levels,
 	)
-	copy_buffer_to_image(cmd, staging_buffer, img, width, height)
+	copy_buffer_to_image(cmd, staging.buffer, gpu_img.image, width, height)
 	end_single_time_commands(engine, &cmd)
 	// transitioned to SHADER_READ_ONLY_OPTIMAL while generating mipmaps
 
-	generate_mipmaps(engine, &img, TEXTURE_FORMAT, width, height, mip_levels)
+	generate_mipmaps(engine, &gpu_img.image, TEXTURE_FORMAT, width, height, mip_levels)
 
 	t := Texture {
-		image      = img,
-		allocation = allocation,
+		image      = gpu_img.image,
+		allocation = gpu_img.alloc,
 		mip_levels = mip_levels,
 	}
 	create_texture_image_view(engine, &t)
@@ -75,11 +57,11 @@ upload_texture :: proc(engine: ^Engine, pixels: rawptr, width, height: u32) {
 load_texture :: proc(engine: ^Engine, path: cstring) {
 	width, height, channels: i32
 	pixels := stbi.load(path, &width, &height, &channels, 4)
+	defer stbi.image_free(pixels)
 	if pixels == nil {
 		log.errorf("Failed to read image: %s", stbi.failure_reason())
 		return
 	}
-	defer stbi.image_free(pixels)
 	upload_texture(engine, pixels, u32(width), u32(height))
 }
 
@@ -96,38 +78,24 @@ generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, w
 		log.panicf("Texture image format does not support linear blitting")
 	}
 
-	cmd := begin_single_time_commands(engine)
 
-	barrier := vk.ImageMemoryBarrier2 {
-		sType = .IMAGE_MEMORY_BARRIER_2,
-		srcStageMask = {.TRANSFER},
-		srcAccessMask = {.TRANSFER_WRITE},
-		dstStageMask = {.TRANSFER},
-		dstAccessMask = {.TRANSFER_READ},
-		oldLayout = .TRANSFER_DST_OPTIMAL,
-		newLayout = .TRANSFER_SRC_OPTIMAL,
-		image = image^,
-		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-		subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
-	}
+	cmd := begin_single_time_commands(engine)
 
 	mip_width, mip_height := width, height
 	for i in 1 ..< mip_levels {
-		barrier.subresourceRange.baseMipLevel = i - 1
-		barrier.oldLayout = .TRANSFER_DST_OPTIMAL
-		barrier.newLayout = .TRANSFER_SRC_OPTIMAL
-		barrier.srcStageMask = {.TRANSFER}
-		barrier.srcAccessMask = {.TRANSFER_WRITE}
-		barrier.dstStageMask = {.TRANSFER}
-		barrier.dstAccessMask = {.TRANSFER_READ}
-
-		dep_info := vk.DependencyInfo {
-			sType                   = .DEPENDENCY_INFO,
-			imageMemoryBarrierCount = 1,
-			pImageMemoryBarriers    = &barrier,
-		}
-		vk.CmdPipelineBarrier2(cmd, &dep_info)
+		transition_image_layout(
+			cmd,
+			image^,
+			.TRANSFER_DST_OPTIMAL,
+			.TRANSFER_SRC_OPTIMAL,
+			{.TRANSFER_WRITE},
+			{.TRANSFER_READ},
+			{.TRANSFER},
+			{.TRANSFER},
+			{.COLOR},
+			1,
+			i - 1,
+		)
 
 		blit := vk.ImageBlit2 {
 			sType = .IMAGE_BLIT_2,
@@ -136,7 +104,6 @@ generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, w
 			dstSubresource = {aspectMask = {.COLOR}, mipLevel = i, layerCount = 1},
 			dstOffsets = {{0, 0, 0}, {i32(max(mip_width / 2, 1)), i32(max(mip_height / 2, 1)), 1}},
 		}
-
 		blit_info := vk.BlitImageInfo2 {
 			sType          = .BLIT_IMAGE_INFO_2,
 			srcImage       = image^,
@@ -149,44 +116,43 @@ generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, w
 		}
 		vk.CmdBlitImage2(cmd, &blit_info)
 
-		barrier.oldLayout = .TRANSFER_SRC_OPTIMAL
-		barrier.newLayout = .SHADER_READ_ONLY_OPTIMAL
-		barrier.srcStageMask = {.TRANSFER}
-		barrier.srcAccessMask = {.TRANSFER_READ}
-		barrier.dstStageMask = {.FRAGMENT_SHADER}
-		barrier.dstAccessMask = {.SHADER_READ}
-
-		dep_info = vk.DependencyInfo {
-			sType                   = .DEPENDENCY_INFO,
-			imageMemoryBarrierCount = 1,
-			pImageMemoryBarriers    = &barrier,
-		}
-		vk.CmdPipelineBarrier2(cmd, &dep_info)
+		transition_image_layout(
+			cmd,
+			image^,
+			.TRANSFER_SRC_OPTIMAL,
+			.SHADER_READ_ONLY_OPTIMAL,
+			{.TRANSFER_READ},
+			{.SHADER_READ},
+			{.TRANSFER},
+			{.FRAGMENT_SHADER},
+			{.COLOR},
+			1,
+			i - 1,
+		)
 
 		if mip_width > 1 do mip_width /= 2
 		if mip_height > 1 do mip_height /= 2
 	}
 
-	barrier.subresourceRange.baseMipLevel = mip_levels - 1
-	barrier.oldLayout = .TRANSFER_DST_OPTIMAL
-	barrier.newLayout = .SHADER_READ_ONLY_OPTIMAL
-	barrier.srcAccessMask = {.TRANSFER_WRITE}
-	barrier.dstAccessMask = {.SHADER_READ}
-	barrier.dstStageMask = {.FRAGMENT_SHADER}
-
-	dep_info := vk.DependencyInfo {
-		sType                   = .DEPENDENCY_INFO,
-		imageMemoryBarrierCount = 1,
-		pImageMemoryBarriers    = &barrier,
-	}
-	vk.CmdPipelineBarrier2(cmd, &dep_info)
-
+	// transition the last mip level which was never used as a blit source
+	transition_image_layout(
+		cmd,
+		image^,
+		.TRANSFER_DST_OPTIMAL,
+		.SHADER_READ_ONLY_OPTIMAL,
+		{.TRANSFER_WRITE},
+		{.SHADER_READ},
+		{.TRANSFER},
+		{.FRAGMENT_SHADER},
+		{.COLOR},
+		1,
+		mip_levels - 1,
+	)
 	end_single_time_commands(engine, &cmd)
 }
 
 get_max_usable_sample_count :: proc(engine: ^Engine) -> vk.SampleCountFlags {
-	properties: vk.PhysicalDeviceProperties
-	vk.GetPhysicalDeviceProperties(engine.physical_device, &properties)
+	properties := get_physical_device_properties(engine)
 
 	counts := properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts
 
@@ -201,12 +167,11 @@ get_max_usable_sample_count :: proc(engine: ^Engine) -> vk.SampleCountFlags {
 }
 
 create_texture_image_view :: proc(engine: ^Engine, t: ^Texture) {
-	t.image_view = create_image_view(engine, t.image, TEXTURE_FORMAT, {.COLOR}, t.mip_levels)
+	t.image_view = create_image_view(engine, t.image, TEXTURE_FORMAT, {.COLOR}, mip_levels = t.mip_levels)
 }
 
 create_texture_sampler :: proc(engine: ^Engine, t: ^Texture) {
-	properties: vk.PhysicalDeviceProperties
-	vk.GetPhysicalDeviceProperties(engine.physical_device, &properties)
+	properties := get_physical_device_properties(engine)
 
 	sampler_info := vk.SamplerCreateInfo {
 		sType                   = .SAMPLER_CREATE_INFO,

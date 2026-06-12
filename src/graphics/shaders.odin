@@ -1,9 +1,7 @@
 package graphics
 
 import "core:log"
-import "core:os"
 import "core:slice"
-import "core:strings"
 
 import sp "shared:odin-slang/slang"
 import vk "vendor:vulkan"
@@ -20,6 +18,7 @@ slang_cleanup :: proc(self: ^Engine) {
 	self.slang_session->release()
 }
 
+// TODO: split this up so I can actually create new shaders
 create_shaders_slang :: proc(self: ^Engine) -> bool {
 	compiler_option_entries := []sp.CompilerOptionEntry {
 		{name = .VulkanUseEntryPointName, value = {kind = .Int, intValue0 = 1}},
@@ -30,16 +29,19 @@ create_shaders_slang :: proc(self: ^Engine) -> bool {
 		structureSize            = size_of(sp.TargetDesc),
 		format                   = .SPIRV,
 		flags                    = {.GENERATE_SPIRV_DIRECTLY},
-		profile                  = self.slang_session->findProfile("sm_6_0"),
+		profile                  = self.slang_session->findProfile("spirv"),
 		compilerOptionEntries    = &compiler_option_entries[0],
 		compilerOptionEntryCount = u32(len(compiler_option_entries)),
 	}
 
+	search_paths := [1]cstring{"shaders"}
 	session_desc := sp.SessionDesc {
 		structureSize            = size_of(sp.SessionDesc),
 		targets                  = &target_desc,
 		targetCount              = 1,
 		defaultMatrixLayoutMode  = .COLUMN_MAJOR,
+		searchPaths              = &search_paths[0],
+		searchPathCount          = 1,
 		compilerOptionEntries    = &compiler_option_entries[0],
 		compilerOptionEntryCount = u32(len(compiler_option_entries)),
 	}
@@ -51,14 +53,10 @@ create_shaders_slang :: proc(self: ^Engine) -> bool {
 	}
 	defer session->release()
 
-	shader_path :: "shaders/shader.slang"
-	log.debug("Compiling shaders:", shader_path)
-
-	src := read_file(shader_path, context.temp_allocator)
-	src_cstr := strings.clone_to_cstring(src, context.temp_allocator)
+	log.debug("Compiling shaders")
 
 	diagnostics: ^sp.IBlob
-	module := session->loadModuleFromSourceString("shader", shader_path, src_cstr, &diagnostics)
+	module := session->loadModule("shader", &diagnostics)
 	if diagnostics != nil {
 		log.errorf("Slang: %s", cstring(diagnostics->getBufferPointer()))
 		diagnostics->release()
@@ -119,11 +117,5 @@ create_shaders_slang :: proc(self: ^Engine) -> bool {
 	vk_check(vk.CreateShaderModule(self.device, &module_info, nil, &self.shader_module))
 
 	return true
-}
-
-read_file :: proc(filepath: string, allocator := context.allocator) -> string {
-	buf, err := os.read_entire_file(filepath, allocator)
-	log.assertf(err == os.ERROR_NONE, "Failed to read file '%s': %v", filepath, err)
-	return string(buf)
 }
 

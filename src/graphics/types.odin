@@ -22,11 +22,6 @@ Quat :: quaternion128
 Mat4x4 :: matrix[4, 4]f32
 Mat4x3 :: matrix[4, 3]f32
 
-UniformBufferObject :: struct #align (16) {
-	view:      Mat4x4,
-	proj:      Mat4x4,
-	light_pos: Vec4,
-}
 
 g_ctx: runtime.Context
 
@@ -61,22 +56,16 @@ Engine :: struct {
 	swapchain_images:           []vk.Image,
 	swapchain_image_view:       []vk.ImageView,
 	require_swapchain_recreate: bool,
-	swapchain_width:            u32,
-	swapchain_height:           u32,
-	depth_image:                vk.Image,
-	depth_image_view:           vk.ImageView,
-	depth_image_allocation:     vma.Allocation,
-	color_image:                vk.Image,
-	color_image_view:           vk.ImageView,
-	color_image_allocation:     vma.Allocation,
+	swapchain_extent:           vk.Extent2D,
+	depth_image:                GpuImage,
+	color_image:                GpuImage,
 
 	// shaders
 	slang_session:              ^sp.IGlobalSession,
 	shader_module:              vk.ShaderModule,
 
 	// graphics pipeline
-	pipeline:                   vk.Pipeline,
-	pipeline_layout:            vk.PipelineLayout,
+	pipeline:                   Pipeline,
 	descriptor_pool:            vk.DescriptorPool,
 	descriptor_set_layout:      vk.DescriptorSetLayout,
 	descriptor_sets:            [MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
@@ -90,14 +79,8 @@ Engine :: struct {
 	// buffers
 	meshes:                     [dynamic]Mesh,
 	materials:                  [dynamic]Material,
-	material_buffer:            vk.Buffer,
-	material_buffer_allocation: vma.Allocation,
-	material_buffer_address:    vk.DeviceAddress,
-
-	// uniform buffers (one per frame in flight)
-	uniform_buffers:            [MAX_FRAMES_IN_FLIGHT]vk.Buffer,
-	uniform_buffer_allocations: [MAX_FRAMES_IN_FLIGHT]vma.Allocation,
-	uniform_buffers_mapped:     [MAX_FRAMES_IN_FLIGHT]rawptr,
+	material_buffer:            GpuBuffer,
+	scene_data_buffers:         [MAX_FRAMES_IN_FLIGHT]GpuBuffer,
 
 	// timers
 	start_time:                 time.Time,
@@ -112,6 +95,12 @@ Engine :: struct {
 	msaa_samples:               vk.SampleCountFlags,
 }
 
+SceneData :: struct #align (16) {
+	view:      Mat4x4,
+	proj:      Mat4x4,
+	light_pos: Vec4,
+}
+
 Vertex :: struct {
 	pos:       Vec3,
 	color:     Vec3,
@@ -119,9 +108,9 @@ Vertex :: struct {
 	tex_coord: Vec2,
 }
 
-
 PushConstants :: struct {
 	model:                   Mat4x4,
+	scene_data:              vk.DeviceAddress,
 	vertex_buffer_address:   vk.DeviceAddress,
 	material_buffer_address: vk.DeviceAddress,
 	material_index:          u32,
@@ -142,6 +131,7 @@ Material :: struct {
 Transform :: struct {
 	translation: Vec3,
 	rotation:    Quat,
+	scale:       Vec3,
 }
 
 Mesh :: struct {

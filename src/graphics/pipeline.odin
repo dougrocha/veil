@@ -1,14 +1,17 @@
 package graphics
 
-import "core:log"
-
 import vk "vendor:vulkan"
 
 VERTEX_ENTRY :: "vertex_main"
 FRAGMENT_MAIN :: "fragment_main"
 COMPUTE_MAIN :: "compute_main"
 
-create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
+Pipeline :: struct {
+	layout:   vk.PipelineLayout,
+	pipeline: vk.Pipeline,
+}
+
+create_graphics_pipeline :: proc(self: ^Engine) -> Pipeline {
 	push_constant_range := vk.PushConstantRange {
 		stageFlags = {.VERTEX, .FRAGMENT},
 		offset     = 0,
@@ -23,9 +26,8 @@ create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 		pPushConstantRanges    = &push_constant_range,
 	}
 
-	log.debug("Creating pipeline layout...")
-	vk_check(vk.CreatePipelineLayout(self.device, &pipeline_layout_info, nil, &self.pipeline_layout))
-	log.debug("Pipeline layout created")
+	pipeline: Pipeline
+	vk_check(vk.CreatePipelineLayout(self.device, &pipeline_layout_info, nil, &pipeline.layout))
 
 	shader_stages := [2]vk.PipelineShaderStageCreateInfo {
 		{
@@ -42,8 +44,6 @@ create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 		},
 	}
 
-	binding_description := vertex_binding_description()
-	attribute_descriptions := vertex_attribute_descriptions()
 	vertex_input_info := vk.PipelineVertexInputStateCreateInfo {
 		sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 	}
@@ -126,12 +126,10 @@ create_graphics_pipeline :: proc(self: ^Engine) -> vk.Pipeline {
 		pDepthStencilState  = &depth_stencil_info,
 		pColorBlendState    = &blend_info,
 		pDynamicState       = &dynamic_state_info,
-		layout              = self.pipeline_layout,
+		layout              = pipeline.layout,
 	}
 
-	log.debug("Creating graphics pipeline...")
-	pipeline: vk.Pipeline
-	vk_check(vk.CreateGraphicsPipelines(self.device, 0, 1, &pipeline_info, nil, &pipeline))
+	vk_check(vk.CreateGraphicsPipelines(self.device, 0, 1, &pipeline_info, nil, &pipeline.pipeline))
 
 	return pipeline
 }
