@@ -2,6 +2,7 @@ package graphics
 
 import "core:log"
 import "core:math/linalg"
+import "core:mem"
 import "core:time"
 
 import vma "shared:odin-vma"
@@ -41,6 +42,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	create_texture_system(engine, {max_textures_count = MAX_TEXTURES})
 	create_material_system(engine, {max_material_count = MAX_MATERIALS})
+	create_model_system(engine)
 	create_particle_buffer(engine)
 
 	return true
@@ -351,20 +353,28 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 			nil,
 		)
 
-		for &instance in engine.model_system.instances {
-			model := &engine.model_system.models[instance.model.handle]
+		transforms := (^Mat4x4)(engine.model_system.transforms_buffer.alloc_info.mapped_data)
+		for instance, i in engine.model_system.instances {
 			rot := linalg.matrix4_from_quaternion(instance.transform.rotation)
 			translation := linalg.matrix4_translate(instance.transform.translation)
 			scale := linalg.matrix4_scale(instance.transform.scale)
 
+			mem.ptr_offset(transforms, i)^ = translation * rot * scale
+		}
+
+		for &instance, i in engine.model_system.instances {
+			model := &engine.model_system.models[instance.model.handle]
+
 			for &mesh in model.meshes {
 				pc := PushConstants {
-					scene_data              = engine.scene_data_buffers[frame_res_index].ptr,
-					model                   = translation * rot * scale,
-					vertex_buffer_address   = mesh.vertex_address,
-					material_buffer_address = engine.material_system.buffer.ptr,
-					material_index          = u32(mesh.material_index),
+					scene_data       = engine.scene_data_buffers[frame_res_index].ptr,
+					vertex_buffer    = mesh.vertex_address,
+					material_buffer  = engine.material_system.buffer.ptr,
+					transform_buffer = engine.model_system.transforms_buffer.ptr,
+					material_index   = u32(mesh.material_index),
+					instance_index   = u32(i),
 				}
+
 				vk.CmdPushConstants(cmd, engine.pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &pc)
 				vk.CmdBindIndexBuffer(cmd, mesh.index_buffer, 0, .UINT32)
 				vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)

@@ -1,8 +1,8 @@
 struct Vertex {
     float3 pos;
+    float2 uv;
     float3 color;
     float3 normal;
-    float2 tex_coord;
 };
 
 struct SceneData {
@@ -31,11 +31,12 @@ struct Particle {
 }
 
 struct PushConstants {
-    float4x4 model;
     SceneData* scene_data;
     Vertex* vertex_buffer;
     Material* material_buffer;
+    float4x4* transform_buffer;
     uint material_index;
+    uint instance_index;
 };
 [[vk_push_constant]] PushConstants pc;
 
@@ -53,7 +54,7 @@ struct VSInput {
 struct VSOutput {
     float4 pos : SV_Position;
     float3 fragColor;
-    float2 fragTexCoord;
+    float2 fragUV;
     float3 fragNormal;
     float3 fragPos;
 };
@@ -61,17 +62,18 @@ struct VSOutput {
 [shader("vertex")]
 VSOutput vertex_main(VSInput input) {
     let v = pc.vertex_buffer[input.vertex_index];
+    let model = pc.transform_buffer[pc.instance_index];
 
     VSOutput output;
-    float4 worldPos = mul(pc.model, float4(v.pos, 1.0));
+    float4 worldPos = mul(model, float4(v.pos, 1.0));
     output.fragPos = worldPos.xyz;
 
     output.pos = mul(pc.scene_data.proj, mul(pc.scene_data.view, worldPos));
 
-    output.fragNormal = mul((float3x3)pc.model, v.normal);
+    output.fragNormal = mul((float3x3)model, v.normal);
 
     output.fragColor = v.color;
-    output.fragTexCoord = v.tex_coord;
+    output.fragUV = v.uv;
     return output;
 }
 
@@ -90,7 +92,7 @@ Sampler2D textures[];
 [shader("fragment")]
 float4 fragment_main(VSOutput vertIn) : SV_TARGET {
     let mat = pc.material_buffer[pc.material_index];
-    float4 texColor = textures[mat.base_color_texture].Sample(vertIn.fragTexCoord) * float4(vertIn.fragColor, 1.0) * mat.base_color;
+    float4 texColor = textures[mat.base_color_texture].Sample(vertIn.fragUV) * float4(vertIn.fragColor, 1.0) * mat.base_color;
 
     float3 norm = normalize(vertIn.fragNormal);
     float3 lightDir = normalize(pc.scene_data.light_pos.xyz - vertIn.fragPos);

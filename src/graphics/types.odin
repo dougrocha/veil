@@ -111,18 +111,19 @@ SceneData :: struct #align (16) {
 }
 
 Vertex :: struct {
-	pos:       Vec3,
-	color:     Vec3,
-	normal:    Vec3,
-	tex_coord: Vec2,
+	pos:    Vec3,
+	uv:     Vec2,
+	color:  Vec3,
+	normal: Vec3,
 }
 
 PushConstants :: struct {
-	model:                   Mat4x4,
 	scene_data:              vk.DeviceAddress,
-	vertex_buffer_address:   vk.DeviceAddress,
-	material_buffer_address: vk.DeviceAddress,
+	vertex_buffer:           vk.DeviceAddress,
+	material_buffer:         vk.DeviceAddress,
+	transform_buffer:        vk.DeviceAddress,
 	material_index:          u32,
+	instance_index:          u32,
 }
 
 ComputePushConstants :: struct {

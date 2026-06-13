@@ -32,10 +32,18 @@ ModelInstance :: struct {
 	transform: Transform,
 }
 
+MAX_MODEL_INSTANCES :: 1000
+
 ModelSystem :: struct {
-	models:    [dynamic]Model,
-	model_map: map[string]ModelHandle,
-	instances: [dynamic]ModelInstance,
+	models:           [dynamic]Model,
+	model_map:        map[string]ModelHandle,
+	instances:        [dynamic]ModelInstance,
+	transforms_buffer: GpuBuffer,
+}
+
+create_model_system :: proc(engine: ^Engine) {
+	total_size := vk.DeviceSize(size_of(Mat4x4) * MAX_MODEL_INSTANCES)
+	engine.model_system.transforms_buffer = create_buffer(engine, total_size, .MappedStorage)
 }
 
 destroy_model_system :: proc(engine: ^Engine) {
@@ -47,6 +55,7 @@ destroy_model_system :: proc(engine: ^Engine) {
 		}
 		delete(model.meshes)
 	}
+	destroy_buffer(engine, ms.transforms_buffer)
 	delete(ms.models)
 	delete(ms.model_map)
 	delete(ms.instances)
@@ -84,7 +93,7 @@ load_model :: proc(engine: ^Engine, path: string, texture: TextureHandle = INVAL
 					obj.attrib.vertices[3 * index.v_idx + 1],
 					obj.attrib.vertices[3 * index.v_idx + 2],
 				},
-				tex_coord = {
+				uv = {
 					obj.attrib.texcoords[2 * index.vt_idx + 0],
 					1.0 - obj.attrib.texcoords[2 * index.vt_idx + 1],
 				},
