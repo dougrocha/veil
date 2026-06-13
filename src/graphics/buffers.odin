@@ -23,6 +23,7 @@ Buffer_Flags :: struct {
 BufferKind :: enum {
 	Storage,
 	MappedUniform,
+	MappedStorage,
 	Index,
 	Staging,
 	ParticleSSBO,
@@ -31,6 +32,7 @@ BufferKind :: enum {
 BUFFER_FLAGS := [BufferKind]Buffer_Flags {
 	.Storage       = {{.TRANSFER_DST, .STORAGE_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},
 	.MappedUniform = {{.TRANSFER_DST, .UNIFORM_BUFFER, .SHADER_DEVICE_ADDRESS}, {.Mapped, .Host_Access_Random}},
+	.MappedStorage = {{.TRANSFER_DST, .STORAGE_BUFFER, .SHADER_DEVICE_ADDRESS}, {.Mapped, .Host_Access_Random}},
 	.Index         = {{.TRANSFER_DST, .INDEX_BUFFER}, {}},
 	.Staging       = {{.TRANSFER_SRC}, {.Mapped, .Host_Access_Sequential_Write}},
 	.ParticleSSBO  = {{.TRANSFER_DST, .STORAGE_BUFFER, .VERTEX_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},

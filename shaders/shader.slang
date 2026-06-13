@@ -14,14 +14,14 @@ struct SceneData {
 
 struct Material {
     float4 base_color;
-    float metallic;
-    float roughness;
-    float3 emissive;
-    int base_color_texture_index;
-    int metallic_texture_index;
-    int normal_texture_index;
-    int roughness_texture_index;
-    int emissive_texture_index;
+    // float metallic;
+    // float roughness;
+    // float3 emissive;
+    uint base_color_texture;
+    // uint metallic_texture;
+    // uint normal_texture;
+    // uint roughness_texture;
+    // uint emissive_texture;
 };
 
 struct Particle {
@@ -90,7 +90,7 @@ Sampler2D textures[];
 [shader("fragment")]
 float4 fragment_main(VSOutput vertIn) : SV_TARGET {
     let mat = pc.material_buffer[pc.material_index];
-    float4 texColor = textures[mat.base_color_texture_index].Sample(vertIn.fragTexCoord) * float4(vertIn.fragColor, 1.0) * mat.base_color;
+    float4 texColor = textures[mat.base_color_texture].Sample(vertIn.fragTexCoord) * float4(vertIn.fragColor, 1.0) * mat.base_color;
 
     float3 norm = normalize(vertIn.fragNormal);
     float3 lightDir = normalize(pc.scene_data.light_pos.xyz - vertIn.fragPos);

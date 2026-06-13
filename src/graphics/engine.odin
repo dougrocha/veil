@@ -39,8 +39,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_descriptor_pool(engine)
 	create_descriptor_sets(engine)
 
-	create_default_texture(engine)
-	create_default_material(engine)
+	create_texture_system(engine, {max_textures_count = MAX_TEXTURES})
+	create_material_system(engine, {max_material_count = MAX_MATERIALS})
 	create_particle_buffer(engine)
 
 	return true
@@ -49,19 +49,10 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 engine_shutdown :: proc(self: ^Engine) {
 	vk.DeviceWaitIdle(self.device)
 
-	for &t in self.textures {
-		vk.DestroySampler(self.device, t.sampler, nil)
-		vk.DestroyImageView(self.device, t.image_view, nil)
-		vma.destroy_image(self.vma_allocator, t.image, t.allocation)
-	}
-	delete(self.textures)
+	destroy_texture_system(self)
 
-	for &mesh in self.meshes {
-		vma.destroy_buffer(self.vma_allocator, mesh.vertex_buffer, mesh.vertex_allocation)
-		vma.destroy_buffer(self.vma_allocator, mesh.index_buffer, mesh.index_allocation)
-	}
-	delete(self.meshes)
-	destroy_buffer(self, self.material_buffer)
+	destroy_model_system(self)
+	destroy_material_system(self)
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
 		destroy_buffer(self, self.scene_data_buffers[i])
 		destroy_buffer(self, self.particle_buffers[i])
@@ -360,20 +351,24 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 			nil,
 		)
 
-		for &mesh in engine.meshes {
-			rot := linalg.matrix4_from_quaternion(mesh.transform.rotation)
-			translation := linalg.matrix4_translate(mesh.transform.translation)
-			scale := linalg.matrix4_scale(mesh.transform.scale)
-			pc := PushConstants {
-				scene_data              = engine.scene_data_buffers[frame_res_index].ptr,
-				model                   = translation * rot * scale,
-				vertex_buffer_address   = mesh.vertex_address,
-				material_buffer_address = engine.material_buffer.ptr,
-				material_index          = u32(mesh.material_index),
+		for &instance in engine.model_system.instances {
+			model := &engine.model_system.models[instance.model.handle]
+			rot := linalg.matrix4_from_quaternion(instance.transform.rotation)
+			translation := linalg.matrix4_translate(instance.transform.translation)
+			scale := linalg.matrix4_scale(instance.transform.scale)
+
+			for &mesh in model.meshes {
+				pc := PushConstants {
+					scene_data              = engine.scene_data_buffers[frame_res_index].ptr,
+					model                   = translation * rot * scale,
+					vertex_buffer_address   = mesh.vertex_address,
+					material_buffer_address = engine.material_system.buffer.ptr,
+					material_index          = u32(mesh.material_index),
+				}
+				vk.CmdPushConstants(cmd, engine.pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &pc)
+				vk.CmdBindIndexBuffer(cmd, mesh.index_buffer, 0, .UINT32)
+				vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)
 			}
-			vk.CmdPushConstants(cmd, engine.pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &pc)
-			vk.CmdBindIndexBuffer(cmd, mesh.index_buffer, 0, .UINT32)
-			vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)
 		}
 
 		// draw particles here (temp)

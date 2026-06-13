@@ -61,8 +61,12 @@ create_descriptor_sets :: proc(engine: ^Engine) {
 
 }
 
+// Uploads the texture using the index
+//
+// Uploads the texture memory into the larger GPU memory that gets sent
+// in shader, this is the TextureSample list
 update_texture_descriptor :: proc(engine: ^Engine, index: u32) {
-	t := &engine.textures[index]
+	t := &engine.texture_system.textures[index]
 	image_info := vk.DescriptorImageInfo {
 		sampler     = t.sampler,
 		imageView   = t.image_view,

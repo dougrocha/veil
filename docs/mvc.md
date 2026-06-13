@@ -52,5 +52,5 @@ glm::mat4 view = glm::lookAt(
 glm::mat4 model = glm::mat4(1.0f);
 
 // Our MVP is a result of this computation; order matters
-glm::mat4 mpv = projection * view * model;
+glm::mat4 mvp = projection * view * model;
 ```

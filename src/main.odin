@@ -1,6 +1,7 @@
 package main
 
 import "core:log"
+import "core:math/linalg"
 import "core:time"
 
 import sdl "vendor:sdl3"
@@ -40,8 +41,10 @@ main :: proc() {
 	}
 	defer gfx.engine_shutdown(&app.engine)
 
-	gfx.load_model(&app.engine, "models/viking_room.obj")
-	gfx.load_texture(&app.engine, "textures/viking_room.png")
+	viking_texture := gfx.load_texture(&app.engine, "textures/viking_room.png")
+	viking_model := gfx.load_model(&app.engine, "models/viking_room.obj", viking_texture)
+	correction := linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(-90)), gfx.Vec3{1, 0, 0})
+	gfx.create_model_instance(&app.engine, viking_model, gfx.Transform{translation = {0, 0, 0}, rotation = correction, scale = {1, 1, 1}})
 
 	main_loop: for {
 		ev: sdl.Event
@@ -65,6 +68,14 @@ main :: proc() {
 		now := time.now()
 		app.engine.delta_time = f32(time.duration_seconds(time.diff(app.engine.last_frame_time, now)))
 		app.engine.last_frame_time = now
+
+		app.engine.fps_frame_count += 1
+		app.engine.fps_timer += app.engine.delta_time
+		if app.engine.fps_timer >= 1.0 {
+			log.infof("FPS: %d", app.engine.fps_frame_count)
+			app.engine.fps_frame_count = 0
+			app.engine.fps_timer = 0
+		}
 
 		process_input(&app.engine)
 		gfx.engine_render(&app)

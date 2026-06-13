@@ -3,30 +3,111 @@ package graphics
 import "core:log"
 import "core:math"
 import "core:mem"
+import "core:strings"
 
 import vma "shared:odin-vma"
 import stbi "vendor:stb/image"
 import vk "vendor:vulkan"
 
-TextureHandle :: distinct u64
-INVALID_TEXTURE :: TextureHandle(max(u32))
+DEFAULT_TEXTURE_NAME :: "default"
+
+MAX_TEXTURES :: 100
+
+TextureHandle :: struct {
+	handle: u32,
+}
+
+INVALID_TEXTURE :: TextureHandle {
+	handle = max(u32),
+}
 
 Texture :: struct {
-	image:      vk.Image,
-	allocation: vma.Allocation,
-	image_view: vk.ImageView,
-	sampler:    vk.Sampler,
-	mip_levels: u32,
+	image:            vk.Image,
+	allocation:       vma.Allocation,
+	image_view:       vk.ImageView,
+	sampler:          vk.Sampler,
+	mip_levels:       u32,
+	width:            u32,
+	height:           u32,
+	channel_count:    u8,
+	has_transparency: bool,
 }
 
 TextureSystem :: struct {
-	textures: [dynamic]Texture,
+	textures:               [dynamic]Texture,
+	texture_map:            map[string]TextureHandle,
+	config:                 TextureSystemConfig,
+	default_texture_handle: TextureHandle,
 }
 
-// OLD TEXTURE STUFF BELOW
+TextureSystemConfig :: struct {
+	max_textures_count: u32,
+}
 
-upload_texture :: proc(engine: ^Engine, pixels: rawptr, width, height: u32) {
-	image_size := vk.DeviceSize(width * height * 4)
+create_texture_system :: proc(engine: ^Engine, config: TextureSystemConfig) {
+	engine.texture_system.config = config
+	create_default_texture(engine)
+}
+
+destroy_texture_system :: proc(engine: ^Engine) {
+	ts := &engine.texture_system
+	for &t in ts.textures {
+		vk.DestroySampler(engine.device, t.sampler, nil)
+		vk.DestroyImageView(engine.device, t.image_view, nil)
+		vma.destroy_image(engine.vma_allocator, t.image, t.allocation)
+	}
+	delete(ts.textures)
+	delete(ts.texture_map)
+}
+
+create_default_texture :: proc(engine: ^Engine) {
+	SIZE :: 16
+	pixels: [SIZE * SIZE * 4]u8
+	for y in 0 ..< SIZE {
+		for x in 0 ..< SIZE {
+			i := (y * SIZE + x) * 4
+			is_magenta := (x + y) % 2 == 0
+			pixels[i + 0] = 0xFF if is_magenta else 0x00
+			pixels[i + 1] = 0x00
+			pixels[i + 2] = 0xFF if is_magenta else 0x00
+			pixels[i + 3] = 0xFF
+		}
+	}
+	engine.texture_system.default_texture_handle = upload_texture(engine, DEFAULT_TEXTURE_NAME, &pixels, SIZE, SIZE, 4, false)
+}
+
+load_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
+	if handle, ok := engine.texture_system.texture_map[path]; ok {
+		return handle
+	}
+
+	c_path := strings.clone_to_cstring(path)
+	defer delete(c_path)
+
+	width, height, channels: i32
+	pixels := stbi.load(c_path, &width, &height, &channels, 4)
+	defer stbi.image_free(pixels)
+	if pixels == nil {
+		log.errorf("Failed to read image: %s", stbi.failure_reason())
+		return INVALID_TEXTURE
+	}
+
+	return upload_texture(engine, path, pixels, u32(width), u32(height), 4, false)
+}
+
+// Uploads a texture to the GPU buffer
+upload_texture :: proc(
+	engine: ^Engine,
+	name: string,
+	pixels: rawptr,
+	width, height, channels: u32,
+	has_transparency: bool,
+) -> TextureHandle {
+	if u32(len(engine.texture_system.textures)) >= engine.texture_system.config.max_textures_count {
+		log.errorf("Texture system is full (max: %d)", engine.texture_system.config.max_textures_count)
+		return INVALID_TEXTURE
+	}
+	image_size := vk.DeviceSize(width * height * channels)
 
 	staging := create_buffer(engine, image_size, .Staging)
 	defer destroy_buffer(engine, staging)
@@ -40,7 +121,6 @@ upload_texture :: proc(engine: ^Engine, pixels: rawptr, width, height: u32) {
 		{.TRANSFER_SRC, .TRANSFER_DST, .SAMPLED},
 		mip_levels = mip_levels,
 	)
-
 
 	cmd := begin_single_time_commands(engine)
 	transition_image_layout(
@@ -62,41 +142,24 @@ upload_texture :: proc(engine: ^Engine, pixels: rawptr, width, height: u32) {
 	generate_mipmaps(engine, &gpu_img.image, TEXTURE_FORMAT, width, height, mip_levels)
 
 	t := Texture {
-		image      = gpu_img.image,
-		allocation = gpu_img.alloc,
-		mip_levels = mip_levels,
+		image            = gpu_img.image,
+		allocation       = gpu_img.alloc,
+		mip_levels       = mip_levels,
+		width            = width,
+		height           = height,
+		channel_count    = 4, // set to four cause our TEXTURE_FORMAT is hard coded
+		has_transparency = has_transparency,
 	}
 	create_texture_image_view(engine, &t)
 	create_texture_sampler(engine, &t)
-	append(&engine.textures, t)
-	update_texture_descriptor(engine, u32(len(engine.textures)) - 1)
-}
 
-load_texture :: proc(engine: ^Engine, path: cstring) {
-	width, height, channels: i32
-	pixels := stbi.load(path, &width, &height, &channels, 4)
-	defer stbi.image_free(pixels)
-	if pixels == nil {
-		log.errorf("Failed to read image: %s", stbi.failure_reason())
-		return
+	index := u32(len(engine.texture_system.textures))
+	append(&engine.texture_system.textures, t)
+	engine.texture_system.texture_map[name] = TextureHandle {
+		handle = index,
 	}
-	upload_texture(engine, pixels, u32(width), u32(height))
-}
-
-create_default_texture :: proc(engine: ^Engine) {
-	SIZE :: 16
-	pixels: [SIZE * SIZE * 4]u8
-	for y in 0 ..< SIZE {
-		for x in 0 ..< SIZE {
-			i := (y * SIZE + x) * 4
-			is_magenta := (x + y) % 2 == 0
-			pixels[i + 0] = 0xFF if is_magenta else 0x00
-			pixels[i + 1] = 0x00
-			pixels[i + 2] = 0xFF if is_magenta else 0x00
-			pixels[i + 3] = 0xFF
-		}
-	}
-	upload_texture(engine, &pixels, SIZE, SIZE)
+	update_texture_descriptor(engine, index)
+	return TextureHandle{handle = index}
 }
 
 generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, width, height, mip_levels: u32) {

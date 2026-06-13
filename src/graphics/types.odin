@@ -14,7 +14,6 @@ TEXTURE_FORMAT :: vk.Format.R8G8B8A8_SRGB
 DRAW_FORMAT :: vk.Format.R16G16B16A16_SFLOAT
 
 MAX_FRAMES_IN_FLIGHT :: 2
-MAX_TEXTURES :: 1024
 
 PARTICLE_COUNT :: 8192
 
@@ -84,9 +83,8 @@ Engine :: struct {
 	next_signal_value:          u64,
 
 	// buffers
-	meshes:                     [dynamic]Mesh,
-	materials:                  [dynamic]Material,
-	material_buffer:            GpuBuffer,
+	model_system:               ModelSystem,
+	material_system:            MaterialSystem,
 	scene_data_buffers:         [MAX_FRAMES_IN_FLIGHT]GpuBuffer,
 	particle_buffers:           [MAX_FRAMES_IN_FLIGHT]GpuBuffer,
 
@@ -94,12 +92,14 @@ Engine :: struct {
 	start_time:                 time.Time,
 	last_frame_time:            time.Time,
 	delta_time:                 f32,
+	fps_timer:                  f32,
+	fps_frame_count:            u32,
 
 	// camera
 	camera:                     Camera,
 
 	// texture
-	textures:                   [dynamic]Texture,
+	texture_system:             TextureSystem,
 	msaa_samples:               vk.SampleCountFlags,
 }
 
@@ -131,18 +131,6 @@ ComputePushConstants :: struct {
 	particles_out: vk.DeviceAddress,
 }
 
-Material :: struct {
-	base_color:               Vec4,
-	metallic:                 f32,
-	roughness:                f32,
-	emissive:                 Vec3,
-	base_color_texture_index: i32,
-	metallic_texture_index:   i32,
-	normal_texture_index:     i32,
-	roughness_texture_index:  i32,
-	emissive_texture_index:   i32,
-}
-
 Transform :: struct {
 	translation: Vec3,
 	rotation:    Quat,
@@ -157,7 +145,6 @@ Mesh :: struct {
 	index_allocation:  vma.Allocation,
 	index_count:       u32,
 	material_index:    i32,
-	transform:         Transform,
 }
 
 Particle :: struct {
