@@ -6,6 +6,16 @@ import vma "shared:odin-vma"
 import "shared:tinyobj"
 import vk "vendor:vulkan"
 
+Mesh :: struct {
+	vertex_buffer:     vk.Buffer,
+	vertex_allocation: vma.Allocation,
+	vertex_address:    vk.DeviceAddress,
+	index_buffer:      vk.Buffer,
+	index_allocation:  vma.Allocation,
+	index_count:       u32,
+	material_index:    i32,
+}
+
 ModelHandle :: struct {
 	handle: u32,
 }
@@ -14,11 +24,11 @@ INVALID_MODEL :: ModelHandle {
 	handle = max(u32),
 }
 
-ModelInstanceHandle :: struct {
+InstanceHandle :: struct {
 	handle: u32,
 }
 
-INVALID_MODEL_INSTANCE :: ModelInstanceHandle {
+INVALID_INSTANCE :: InstanceHandle {
 	handle = max(u32),
 }
 
@@ -27,17 +37,17 @@ Model :: struct {
 	name:   string,
 }
 
-ModelInstance :: struct {
+Instance :: struct {
 	model:     ModelHandle,
 	transform: Transform,
 }
 
-MAX_MODEL_INSTANCES :: 1000
+MAX_MODEL_INSTANCES :: 4096
 
 ModelSystem :: struct {
-	models:           [dynamic]Model,
-	model_map:        map[string]ModelHandle,
-	instances:        [dynamic]ModelInstance,
+	models:            [dynamic]Model,
+	model_map:         map[string]ModelHandle,
+	instances:         [dynamic]Instance,
 	transforms_buffer: GpuBuffer,
 }
 
@@ -88,17 +98,17 @@ load_model :: proc(engine: ^Engine, path: string, texture: TextureHandle = INVAL
 			}
 
 			vertex := Vertex {
-				pos       = {
+				pos    = {
 					obj.attrib.vertices[3 * index.v_idx + 0],
 					obj.attrib.vertices[3 * index.v_idx + 1],
 					obj.attrib.vertices[3 * index.v_idx + 2],
 				},
-				uv = {
+				uv     = {
 					obj.attrib.texcoords[2 * index.vt_idx + 0],
 					1.0 - obj.attrib.texcoords[2 * index.vt_idx + 1],
 				},
-				color     = {1, 1, 1},
-				normal    = normal,
+				color  = {1, 1, 1},
+				normal = normal,
 			}
 
 			_, val, inserted, _ := map_entry(&unique_vertices, vertex)
@@ -110,14 +120,20 @@ load_model :: proc(engine: ^Engine, path: string, texture: TextureHandle = INVAL
 		}
 	}
 
-	vertex_size := vk.DeviceSize(size_of(Vertex) * len(vertices))
-	index_size := vk.DeviceSize(size_of(u32) * len(indices))
+	return register_model(engine, path, vertices[:], indices[:], texture)
+}
 
-	vertex_buf := upload_buffer(engine, raw_data(vertices[:]), vertex_size, .Storage)
-	index_buf := upload_buffer(engine, raw_data(indices[:]), index_size, .Index)
+register_model :: proc(
+	engine: ^Engine,
+	name: string,
+	vertices: []Vertex,
+	indices: []u32,
+	texture: TextureHandle,
+) -> ModelHandle {
+	vertex_buf := upload_buffer(engine, raw_data(vertices), vk.DeviceSize(size_of(Vertex) * len(vertices)), .Storage)
+	index_buf := upload_buffer(engine, raw_data(indices), vk.DeviceSize(size_of(u32) * len(indices)), .Index)
 
-	material_handle := create_material(engine, path, Material{base_color = {1, 1, 1, 1}, base_color_texture = texture})
-	material_index := i32(material_handle.handle)
+	material_handle := create_material(engine, name, Material{base_color = {1, 1, 1, 1}, base_color_texture = texture})
 
 	mesh := Mesh {
 		vertex_buffer     = vertex_buf.buffer,
@@ -126,25 +142,25 @@ load_model :: proc(engine: ^Engine, path: string, texture: TextureHandle = INVAL
 		index_buffer      = index_buf.buffer,
 		index_allocation  = index_buf.alloc,
 		index_count       = u32(len(indices)),
-		material_index    = material_index,
+		material_index    = i32(material_handle.handle),
 	}
 
 	model := Model {
-		name = path,
+		name = name,
 	}
 	append(&model.meshes, mesh)
 
 	index := u32(len(engine.model_system.models))
 	append(&engine.model_system.models, model)
-	engine.model_system.model_map[path] = ModelHandle {
+	engine.model_system.model_map[name] = ModelHandle {
 		handle = index,
 	}
 
 	return ModelHandle{handle = index}
 }
 
-create_model_instance :: proc(engine: ^Engine, model: ModelHandle, transform: Transform) -> ModelInstanceHandle {
+spawn_model :: proc(engine: ^Engine, model: ModelHandle, transform: Transform) -> InstanceHandle {
 	index := u32(len(engine.model_system.instances))
-	append(&engine.model_system.instances, ModelInstance{model = model, transform = transform})
-	return ModelInstanceHandle{handle = index}
+	append(&engine.model_system.instances, Instance{model = model, transform = transform})
+	return InstanceHandle{handle = index}
 }

@@ -40,6 +40,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_descriptor_pool(engine)
 	create_descriptor_sets(engine)
 
+	create_resource_system(engine)
 	create_texture_system(engine, {max_textures_count = MAX_TEXTURES})
 	create_material_system(engine, {max_material_count = MAX_MATERIALS})
 	create_model_system(engine)
@@ -51,8 +52,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 engine_shutdown :: proc(self: ^Engine) {
 	vk.DeviceWaitIdle(self.device)
 
+	destroy_resource_system(self)
 	destroy_texture_system(self)
-
 	destroy_model_system(self)
 	destroy_material_system(self)
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {

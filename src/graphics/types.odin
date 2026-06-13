@@ -1,6 +1,7 @@
 package graphics
 
 import "base:runtime"
+import "core:math/linalg"
 import "core:time"
 
 import sp "shared:odin-slang/slang"
@@ -83,6 +84,7 @@ Engine :: struct {
 	next_signal_value:          u64,
 
 	// buffers
+	resource_system:            ResourceSystem,
 	model_system:               ModelSystem,
 	material_system:            MaterialSystem,
 	scene_data_buffers:         [MAX_FRAMES_IN_FLIGHT]GpuBuffer,
@@ -118,12 +120,12 @@ Vertex :: struct {
 }
 
 PushConstants :: struct {
-	scene_data:              vk.DeviceAddress,
-	vertex_buffer:           vk.DeviceAddress,
-	material_buffer:         vk.DeviceAddress,
-	transform_buffer:        vk.DeviceAddress,
-	material_index:          u32,
-	instance_index:          u32,
+	scene_data:       vk.DeviceAddress,
+	vertex_buffer:    vk.DeviceAddress,
+	material_buffer:  vk.DeviceAddress,
+	transform_buffer: vk.DeviceAddress,
+	material_index:   u32,
+	instance_index:   u32,
 }
 
 ComputePushConstants :: struct {
@@ -138,14 +140,12 @@ Transform :: struct {
 	scale:       Vec3,
 }
 
-Mesh :: struct {
-	vertex_buffer:     vk.Buffer,
-	vertex_allocation: vma.Allocation,
-	vertex_address:    vk.DeviceAddress,
-	index_buffer:      vk.Buffer,
-	index_allocation:  vma.Allocation,
-	index_count:       u32,
-	material_index:    i32,
+transform_create :: proc(
+	translation: Vec3 = {},
+	rotation: Quat = linalg.QUATERNIONF32_IDENTITY,
+	scale: Vec3 = {1, 1, 1},
+) -> Transform {
+	return Transform{translation = translation, rotation = rotation, scale = scale}
 }
 
 Particle :: struct {

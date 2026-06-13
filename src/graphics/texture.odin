@@ -11,7 +11,7 @@ import vk "vendor:vulkan"
 
 DEFAULT_TEXTURE_NAME :: "default"
 
-MAX_TEXTURES :: 100
+MAX_TEXTURES :: 1024
 
 TextureHandle :: struct {
 	handle: u32,
@@ -73,7 +73,15 @@ create_default_texture :: proc(engine: ^Engine) {
 			pixels[i + 3] = 0xFF
 		}
 	}
-	engine.texture_system.default_texture_handle = upload_texture(engine, DEFAULT_TEXTURE_NAME, &pixels, SIZE, SIZE, 4, false)
+	engine.texture_system.default_texture_handle = upload_texture(
+		engine,
+		DEFAULT_TEXTURE_NAME,
+		&pixels,
+		SIZE,
+		SIZE,
+		4,
+		false,
+	)
 }
 
 load_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {

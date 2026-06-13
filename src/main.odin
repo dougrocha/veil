@@ -41,10 +41,21 @@ main :: proc() {
 	}
 	defer gfx.engine_shutdown(&app.engine)
 
-	viking_texture := gfx.load_texture(&app.engine, "textures/viking_room.png")
-	viking_model := gfx.load_model(&app.engine, "models/viking_room.obj", viking_texture)
-	correction := linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(-90)), gfx.Vec3{1, 0, 0})
-	gfx.create_model_instance(&app.engine, viking_model, gfx.Transform{translation = {0, 0, 0}, rotation = correction, scale = {1, 1, 1}})
+	devin_texture := gfx.load_texture(&app.engine, "assets/textures/devin.png")
+	plane_model := gfx.create_cube(&app.engine, "devin", devin_texture)
+	gfx.spawn_model(&app.engine, plane_model, gfx.transform_create())
+
+
+	// viking_texture := gfx.load_texture(&app.engine, "assets/textures/viking_room.png")
+	// viking_model := gfx.load_model(&app.engine, "assets/models/viking_room.obj", viking_texture)
+	// correction := linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(-90)), gfx.Vec3{1, 0, 0})
+	// // TODO: make the api so I can call draw on a Model Handle
+	// gfx.spawn_model(
+	// 	&app.engine,
+	// 	viking_model,
+	// 	gfx.Transform{translation = {0, 0, 0}, rotation = correction, scale = {1, 1, 1}},
+	// )
+
 
 	main_loop: for {
 		ev: sdl.Event

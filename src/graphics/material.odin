@@ -7,7 +7,7 @@ import vk "vendor:vulkan"
 
 DEFAULT_MATERIAL_NAME :: "default"
 
-MAX_MATERIALS :: 100
+MAX_MATERIALS :: 1024
 
 Material :: struct {
 	base_color:         Vec4,
