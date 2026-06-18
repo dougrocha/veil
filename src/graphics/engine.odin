@@ -13,7 +13,11 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	engine.start_time = time.now()
 	engine.last_frame_time = engine.start_time
-	engine.camera = camera_create({2, 2, 2}, yaw = -135, pitch = -35)
+	engine.camera = camera_create({2, 2, 4}, yaw = -90, pitch = -15)
+	engine.ambient_light = AmbientLight {
+		color      = {1, 1, 1, 1},
+		brightness = 0.15,
+	}
 
 	create_vulkan_instance(engine)
 	app.engine.surface = create_vulkan_surface(app) or_return
@@ -28,11 +32,15 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_depth_resources(engine)
 	create_draw_image(engine)
 
-	slang_init(engine) or_return
-	create_shaders_slang(engine) or_return
+	create_shader_system(engine) or_return
+	load_shader(engine, "mesh", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
+	load_shader(engine, "particle", {VERTEX_ENTRY, FRAGMENT_MAIN, COMPUTE_MAIN}) or_return
 	create_descriptor_set_layout(engine)
-	engine.pipeline = create_graphics_pipeline(engine)
-	engine.compute_pipeline = create_compute_pipeline(engine)
+	mesh_module := get_shader(engine, "mesh")
+	particle_module := get_shader(engine, "particle")
+	engine.pipeline = create_graphics_pipeline(engine, mesh_module)
+	engine.particle_draw_pipeline = create_particle_draw_pipeline(engine, particle_module)
+	engine.particle_pipeline = create_particle_pipeline(engine, particle_module)
 
 	create_sync_resources(engine)
 	create_command_buffers(engine)
@@ -40,7 +48,6 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_descriptor_pool(engine)
 	create_descriptor_sets(engine)
 
-	create_resource_system(engine)
 	create_texture_system(engine, {max_textures_count = MAX_TEXTURES})
 	create_material_system(engine, {max_material_count = MAX_MATERIALS})
 	create_model_system(engine)
@@ -52,7 +59,6 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 engine_shutdown :: proc(self: ^Engine) {
 	vk.DeviceWaitIdle(self.device)
 
-	destroy_resource_system(self)
 	destroy_texture_system(self)
 	destroy_model_system(self)
 	destroy_material_system(self)
@@ -61,8 +67,10 @@ engine_shutdown :: proc(self: ^Engine) {
 		destroy_buffer(self, self.particle_buffers[i])
 	}
 
-	vk.DestroyPipeline(self.device, self.compute_pipeline.pipeline, nil)
-	vk.DestroyPipelineLayout(self.device, self.compute_pipeline.layout, nil)
+	vk.DestroyPipeline(self.device, self.particle_draw_pipeline.pipeline, nil)
+	vk.DestroyPipelineLayout(self.device, self.particle_draw_pipeline.layout, nil)
+	vk.DestroyPipeline(self.device, self.particle_pipeline.pipeline, nil)
+	vk.DestroyPipelineLayout(self.device, self.particle_pipeline.layout, nil)
 
 	vk.DestroyDescriptorPool(self.device, self.descriptor_pool, nil)
 	vk.DestroyDescriptorSetLayout(self.device, self.descriptor_set_layout, nil)
@@ -70,8 +78,7 @@ engine_shutdown :: proc(self: ^Engine) {
 	vk.DestroyPipeline(self.device, self.pipeline.pipeline, nil)
 	vk.DestroyPipelineLayout(self.device, self.pipeline.layout, nil)
 
-	vk.DestroyShaderModule(self.device, self.shader_module, nil)
-	slang_cleanup(self)
+	destroy_shader_system(self)
 
 	vk.DestroySemaphore(self.device, self.timeline_semaphore, nil)
 	for &res in self.frame_resources {
@@ -221,43 +228,40 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 	}
 	vk_check(vk.BeginCommandBuffer(cmd, &begin_info))
 
-	// currently disabled, because we dont have a proper shader system for this yet
-	// compute pass, do it here since we use the same command buffer
-	// otherwise we need to handle some compute semaphores for timing
-	{
-		vk.CmdBindPipeline(cmd, .COMPUTE, engine.compute_pipeline.pipeline)
-
-		last_frame := (frame_res_index + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT
-		compute_pc := ComputePushConstants {
-			delta_time    = engine.delta_time * 1000.0,
-			particles_in  = engine.particle_buffers[last_frame].ptr,
-			particles_out = engine.particle_buffers[frame_res_index].ptr,
-		}
-		vk.CmdPushConstants(
-			cmd,
-			engine.compute_pipeline.layout,
-			{.COMPUTE},
-			0,
-			size_of(ComputePushConstants),
-			&compute_pc,
-		)
-
-		vk.CmdDispatch(cmd, PARTICLE_COUNT / 256, 1, 1)
-
-		barrier := vk.MemoryBarrier2 {
-			sType         = .MEMORY_BARRIER_2,
-			srcStageMask  = {.COMPUTE_SHADER},
-			srcAccessMask = {.SHADER_WRITE},
-			dstStageMask  = {.VERTEX_SHADER},
-			dstAccessMask = {.SHADER_READ},
-		}
-		dep_info := vk.DependencyInfo {
-			sType              = .DEPENDENCY_INFO,
-			memoryBarrierCount = 1,
-			pMemoryBarriers    = &barrier,
-		}
-		vk.CmdPipelineBarrier2(cmd, &dep_info)
-	}
+	// {
+	// 	vk.CmdBindPipeline(cmd, .COMPUTE, engine.particle_pipeline.pipeline)
+	//
+	// 	last_frame := (frame_res_index + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT
+	// 	compute_pc := ParticlePushConstants {
+	// 		particles_in  = engine.particle_buffers[last_frame].ptr,
+	// 		particles_out = engine.particle_buffers[frame_res_index].ptr,
+	// 		delta_time    = engine.delta_time,
+	// 	}
+	// 	vk.CmdPushConstants(
+	// 		cmd,
+	// 		engine.particle_pipeline.layout,
+	// 		{.COMPUTE},
+	// 		0,
+	// 		size_of(ParticlePushConstants),
+	// 		&compute_pc,
+	// 	)
+	//
+	// 	vk.CmdDispatch(cmd, PARTICLE_COUNT / 256, 1, 1)
+	//
+	// 	barrier := vk.MemoryBarrier2 {
+	// 		sType         = .MEMORY_BARRIER_2,
+	// 		srcStageMask  = {.COMPUTE_SHADER},
+	// 		srcAccessMask = {.SHADER_WRITE},
+	// 		dstStageMask  = {.VERTEX_SHADER},
+	// 		dstAccessMask = {.SHADER_READ},
+	// 	}
+	// 	dep_info := vk.DependencyInfo {
+	// 		sType              = .DEPENDENCY_INFO,
+	// 		memoryBarrierCount = 1,
+	// 		pMemoryBarriers    = &barrier,
+	// 	}
+	// 	vk.CmdPipelineBarrier2(cmd, &dep_info)
+	// }
 
 	transition_image_layout(
 		cmd,
@@ -382,13 +386,13 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 			}
 		}
 
-		// draw particles here (temp)
 		// {
-		// 	particle_pc := PushConstants {
-		// 		scene_data      = engine.scene_data_buffers[frame_res_index].ptr,
-		// 		particle_buffer = engine.particle_buffers[frame_res_index].ptr,
+		// 	particle_pc := ParticlePushConstants {
+		// 		scene_data    = engine.scene_data_buffers[frame_res_index].ptr,
+		// 		particles_out = engine.particle_buffers[frame_res_index].ptr,
 		// 	}
-		// 	vk.CmdPushConstants(cmd, engine.pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &particle_pc)
+		// 	vk.CmdBindPipeline(cmd, .GRAPHICS, engine.particle_draw_pipeline.pipeline)
+		// 	vk.CmdPushConstants(cmd, engine.particle_draw_pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(ParticlePushConstants), &particle_pc)
 		// 	vk.CmdDraw(cmd, PARTICLE_COUNT, 1, 0, 0)
 		// }
 	}

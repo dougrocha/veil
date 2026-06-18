@@ -22,13 +22,16 @@ INVALID_TEXTURE :: TextureHandle {
 }
 
 Texture :: struct {
+	// vulkan internals
 	image:            vk.Image,
 	allocation:       vma.Allocation,
 	image_view:       vk.ImageView,
 	sampler:          vk.Sampler,
-	mip_levels:       u32,
+
+	// Texture metadata
 	width:            u32,
 	height:           u32,
+	mip_levels:       u32,
 	channel_count:    u8,
 	has_transparency: bool,
 }
@@ -46,7 +49,7 @@ TextureSystemConfig :: struct {
 
 create_texture_system :: proc(engine: ^Engine, config: TextureSystemConfig) {
 	engine.texture_system.config = config
-	create_default_texture(engine)
+	create_builtin_textures(engine)
 }
 
 destroy_texture_system :: proc(engine: ^Engine) {
@@ -60,33 +63,20 @@ destroy_texture_system :: proc(engine: ^Engine) {
 	delete(ts.texture_map)
 }
 
-create_default_texture :: proc(engine: ^Engine) {
-	SIZE :: 16
-	pixels: [SIZE * SIZE * 4]u8
-	for y in 0 ..< SIZE {
-		for x in 0 ..< SIZE {
-			i := (y * SIZE + x) * 4
-			is_magenta := (x + y) % 2 == 0
-			pixels[i + 0] = 0xFF if is_magenta else 0x00
-			pixels[i + 1] = 0x00
-			pixels[i + 2] = 0xFF if is_magenta else 0x00
-			pixels[i + 3] = 0xFF
-		}
-	}
-	engine.texture_system.default_texture_handle = upload_texture(
-		engine,
-		DEFAULT_TEXTURE_NAME,
-		&pixels,
-		SIZE,
-		SIZE,
-		4,
-		false,
-	)
+create_builtin_textures :: proc(engine: ^Engine) {
+	white: [4]u8 = {0xFF, 0xFF, 0xFF, 0xFF}
+	engine.texture_system.default_texture_handle = upload_texture(engine, DEFAULT_TEXTURE_NAME, &white, 1, 1, 4, false)
 }
 
 load_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	if handle, ok := engine.texture_system.texture_map[path]; ok {
 		return handle
+	}
+
+	ts := &engine.texture_system
+	if u32(len(ts.textures)) >= ts.config.max_textures_count {
+		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
+		return ts.default_texture_handle
 	}
 
 	c_path := strings.clone_to_cstring(path)
@@ -97,7 +87,7 @@ load_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	defer stbi.image_free(pixels)
 	if pixels == nil {
 		log.errorf("Failed to read image: %s", stbi.failure_reason())
-		return INVALID_TEXTURE
+		return engine.texture_system.default_texture_handle
 	}
 
 	return upload_texture(engine, path, pixels, u32(width), u32(height), 4, false)
@@ -111,10 +101,7 @@ upload_texture :: proc(
 	width, height, channels: u32,
 	has_transparency: bool,
 ) -> TextureHandle {
-	if u32(len(engine.texture_system.textures)) >= engine.texture_system.config.max_textures_count {
-		log.errorf("Texture system is full (max: %d)", engine.texture_system.config.max_textures_count)
-		return INVALID_TEXTURE
-	}
+	ts := &engine.texture_system
 	image_size := vk.DeviceSize(width * height * channels)
 
 	staging := create_buffer(engine, image_size, .Staging)
@@ -147,7 +134,7 @@ upload_texture :: proc(
 	end_single_time_commands(engine, &cmd)
 	// transitioned to SHADER_READ_ONLY_OPTIMAL while generating mipmaps
 
-	generate_mipmaps(engine, &gpu_img.image, TEXTURE_FORMAT, width, height, mip_levels)
+	generate_mipmaps(engine, gpu_img.image, TEXTURE_FORMAT, width, height, mip_levels)
 
 	t := Texture {
 		image            = gpu_img.image,
@@ -170,7 +157,11 @@ upload_texture :: proc(
 	return TextureHandle{handle = index}
 }
 
-generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, width, height, mip_levels: u32) {
+get_default_texture :: proc(engine: ^Engine) -> TextureHandle {
+	return engine.texture_system.default_texture_handle
+}
+
+generate_mipmaps :: proc(engine: ^Engine, image: vk.Image, format: vk.Format, width, height, mip_levels: u32) {
 	format_props: vk.FormatProperties
 	vk.GetPhysicalDeviceFormatProperties(engine.physical_device, format, &format_props)
 
@@ -184,7 +175,7 @@ generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, w
 	for i in 1 ..< mip_levels {
 		transition_image_layout(
 			cmd,
-			image^,
+			image,
 			.TRANSFER_DST_OPTIMAL,
 			.TRANSFER_SRC_OPTIMAL,
 			{.TRANSFER_WRITE},
@@ -205,9 +196,9 @@ generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, w
 		}
 		blit_info := vk.BlitImageInfo2 {
 			sType          = .BLIT_IMAGE_INFO_2,
-			srcImage       = image^,
+			srcImage       = image,
 			srcImageLayout = .TRANSFER_SRC_OPTIMAL,
-			dstImage       = image^,
+			dstImage       = image,
 			dstImageLayout = .TRANSFER_DST_OPTIMAL,
 			regionCount    = 1,
 			pRegions       = &blit,
@@ -217,7 +208,7 @@ generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, w
 
 		transition_image_layout(
 			cmd,
-			image^,
+			image,
 			.TRANSFER_SRC_OPTIMAL,
 			.SHADER_READ_ONLY_OPTIMAL,
 			{.TRANSFER_READ},
@@ -236,7 +227,7 @@ generate_mipmaps :: proc(engine: ^Engine, image: ^vk.Image, format: vk.Format, w
 	// transition the last mip level which was never used as a blit source
 	transition_image_layout(
 		cmd,
-		image^,
+		image,
 		.TRANSFER_DST_OPTIMAL,
 		.SHADER_READ_ONLY_OPTIMAL,
 		{.TRANSFER_WRITE},

@@ -4,7 +4,6 @@ import "base:runtime"
 import "core:math/linalg"
 import "core:time"
 
-import sp "shared:odin-slang/slang"
 import vma "shared:odin-vma"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
@@ -25,6 +24,8 @@ Quat :: quaternion128
 
 Mat4x4 :: matrix[4, 4]f32
 Mat4x3 :: matrix[4, 3]f32
+
+vec3_splat :: proc(v: f32) -> Vec3 {return {v, v, v}}
 
 
 g_ctx: runtime.Context
@@ -67,15 +68,15 @@ Engine :: struct {
 	draw_image:                 GpuImage,
 
 	// shaders
-	slang_session:              ^sp.IGlobalSession,
-	shader_module:              vk.ShaderModule,
+	shader_system:              ShaderSystem,
 
 	// graphics pipeline
 	pipeline:                   Pipeline,
+	particle_draw_pipeline:     Pipeline,
 	descriptor_pool:            vk.DescriptorPool,
 	descriptor_set_layout:      vk.DescriptorSetLayout,
 	descriptor_sets:            [MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	compute_pipeline:           Pipeline,
+	particle_pipeline:          Pipeline,
 
 	// frame and sync resources
 	timeline_semaphore:         vk.Semaphore,
@@ -84,7 +85,6 @@ Engine :: struct {
 	next_signal_value:          u64,
 
 	// buffers
-	resource_system:            ResourceSystem,
 	model_system:               ModelSystem,
 	material_system:            MaterialSystem,
 	scene_data_buffers:         [MAX_FRAMES_IN_FLIGHT]GpuBuffer,
@@ -99,17 +99,30 @@ Engine :: struct {
 
 	// camera
 	camera:                     Camera,
+	ambient_light:              AmbientLight,
 
 	// texture
 	texture_system:             TextureSystem,
 	msaa_samples:               vk.SampleCountFlags,
 }
 
-SceneData :: struct #align (16) {
-	view:       Mat4x4,
-	proj:       Mat4x4,
-	light_pos:  Vec4,
-	delta_time: f32,
+PointLight :: struct {
+	pos:   Vec3,
+	color: Vec3,
+}
+
+AmbientLight :: struct {
+	color:      Vec4,
+	brightness: f32,
+}
+
+SceneData :: struct {
+	view:          Mat4x4,
+	proj:          Mat4x4,
+	point_light:   PointLight,
+	cam_pos:       Vec3,
+	delta_time:    f32,
+	ambient_light: AmbientLight,
 }
 
 Vertex :: struct {
@@ -128,10 +141,11 @@ PushConstants :: struct {
 	instance_index:   u32,
 }
 
-ComputePushConstants :: struct {
-	delta_time:    f32,
+ParticlePushConstants :: struct {
+	scene_data:    vk.DeviceAddress,
 	particles_in:  vk.DeviceAddress,
 	particles_out: vk.DeviceAddress,
+	delta_time:    f32,
 }
 
 Transform :: struct {
@@ -149,7 +163,7 @@ transform_create :: proc(
 }
 
 Particle :: struct {
-	position: Vec2,
-	velocity: Vec2,
+	position: Vec4,
+	velocity: Vec4,
 	color:    Vec4,
 }

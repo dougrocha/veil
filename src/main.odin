@@ -41,21 +41,40 @@ main :: proc() {
 	}
 	defer gfx.engine_shutdown(&app.engine)
 
-	devin_texture := gfx.load_texture(&app.engine, "assets/textures/devin.png")
-	plane_model := gfx.create_cube(&app.engine, "devin", devin_texture)
-	gfx.spawn_model(&app.engine, plane_model, gfx.transform_create())
-
-
 	// viking_texture := gfx.load_texture(&app.engine, "assets/textures/viking_room.png")
 	// viking_model := gfx.load_model(&app.engine, "assets/models/viking_room.obj", viking_texture)
 	// correction := linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(-90)), gfx.Vec3{1, 0, 0})
-	// // TODO: make the api so I can call draw on a Model Handle
 	// gfx.spawn_model(
 	// 	&app.engine,
 	// 	viking_model,
 	// 	gfx.Transform{translation = {0, 0, 0}, rotation = correction, scale = {1, 1, 1}},
 	// )
 
+	orange_mat := gfx.create_material(
+		&app.engine,
+		"orange",
+		gfx.Material{base_color = {1, 0.5, 0, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
+	)
+	cube_model := gfx.create_cube(&app.engine, "cube", orange_mat)
+	cube_instance := gfx.spawn_model(&app.engine, cube_model, gfx.transform_create())
+
+	light_mat := gfx.create_material(
+		&app.engine,
+		"light",
+		gfx.Material{base_color = {1, 1, 0, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
+	)
+	light_cube_model := gfx.create_cube(&app.engine, "light_cube", light_mat, half_size = {0.1, 0.1, 0.1})
+	gfx.spawn_model(&app.engine, light_cube_model, gfx.transform_create(translation = {1.0, 2.0, -4.0}))
+
+	plane_mat := gfx.create_material(
+		&app.engine,
+		"plane_mat",
+		gfx.Material{base_color = {0.25, 0.25, 0.25, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
+	)
+	plane_model := gfx.create_plane(&app.engine, "plane", plane_mat, half_size = {1, 1})
+	gfx.spawn_model(&app.engine, plane_model, gfx.transform_create(translation = {2, 0, 0}))
+
+	angle: f32 = 0
 
 	main_loop: for {
 		ev: sdl.Event
@@ -88,19 +107,25 @@ main :: proc() {
 			app.engine.fps_timer = 0
 		}
 
-		process_input(&app.engine)
+		angle += app.engine.delta_time * 30
+		app.engine.model_system.instances[cube_instance.handle].transform.rotation = linalg.quaternion_angle_axis_f32(
+			linalg.to_radians(angle),
+			gfx.Vec3{0, 1, 0},
+		)
+
+		process_input(&app.engine, app.engine.delta_time)
 		gfx.engine_render(&app)
 	}
 }
 
-process_input :: proc(engine: ^gfx.Engine) {
+process_input :: proc(engine: ^gfx.Engine, dt: f32) {
 	keys := sdl.GetKeyboardState(nil)
 
-	if keys[sdl.Scancode.W] do gfx.camera_process_keyboard(&engine.camera, .Forward, engine.delta_time)
-	if keys[sdl.Scancode.S] do gfx.camera_process_keyboard(&engine.camera, .Backward, engine.delta_time)
-	if keys[sdl.Scancode.A] do gfx.camera_process_keyboard(&engine.camera, .Left, engine.delta_time)
-	if keys[sdl.Scancode.D] do gfx.camera_process_keyboard(&engine.camera, .Right, engine.delta_time)
-	if keys[sdl.Scancode.SPACE] do gfx.camera_process_keyboard(&engine.camera, .Up, engine.delta_time)
-	if keys[sdl.Scancode.LCTRL] do gfx.camera_process_keyboard(&engine.camera, .Down, engine.delta_time)
+	if keys[sdl.Scancode.W] do gfx.camera_process_keyboard(&engine.camera, .Forward, dt)
+	if keys[sdl.Scancode.S] do gfx.camera_process_keyboard(&engine.camera, .Backward, dt)
+	if keys[sdl.Scancode.A] do gfx.camera_process_keyboard(&engine.camera, .Left, dt)
+	if keys[sdl.Scancode.D] do gfx.camera_process_keyboard(&engine.camera, .Right, dt)
+	if keys[sdl.Scancode.SPACE] do gfx.camera_process_keyboard(&engine.camera, .Up, dt)
+	if keys[sdl.Scancode.LCTRL] do gfx.camera_process_keyboard(&engine.camera, .Down, dt)
 }
 

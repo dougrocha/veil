@@ -3,6 +3,10 @@ package graphics
 import vk "vendor:vulkan"
 
 create_descriptor_set_layout :: proc(self: ^Engine) {
+	// NOTE: since we only use one sampler for now, we could add a immutable
+	// sampler in the set layouts, but all this does is save on memory
+	// and give performance boost, not worth the mental overhead right now
+
 	bindings := []vk.DescriptorSetLayoutBinding {
 		{
 			binding = 0,
@@ -38,7 +42,11 @@ create_descriptor_pool :: proc(engine: ^Engine) {
 
 	pool_info := vk.DescriptorPoolCreateInfo {
 		sType         = .DESCRIPTOR_POOL_CREATE_INFO,
-		flags         = {.FREE_DESCRIPTOR_SET, .UPDATE_AFTER_BIND},
+		// NOTE: FREE_DESCRIPTOR_SET forces the driver into a dynamic allocator with fragmentation overhead
+		// We never free individual sets (only reset the whole pool), so not adding it keeps the pool
+		// as a simple linear bump allocator in the GPU
+		// from: amds VulkanFastPaths
+		flags         = {.UPDATE_AFTER_BIND},
 		maxSets       = MAX_FRAMES_IN_FLIGHT,
 		poolSizeCount = u32(len(pool_sizes)),
 		pPoolSizes    = raw_data(pool_sizes),
@@ -58,7 +66,6 @@ create_descriptor_sets :: proc(engine: ^Engine) {
 	}
 
 	vk_check(vk.AllocateDescriptorSets(engine.device, &alloc_info, raw_data(engine.descriptor_sets[:])))
-
 }
 
 // Uploads the texture using the index

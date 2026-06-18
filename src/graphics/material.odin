@@ -42,6 +42,7 @@ MaterialSystem :: struct {
 
 create_material_system :: proc(engine: ^Engine, config: MaterialSystemConfig) {
 	engine.material_system.config = config
+
 	total_size := vk.DeviceSize(size_of(Material) * u64(config.max_material_count))
 	engine.material_system.buffer = create_buffer(engine, total_size, .MappedStorage)
 
@@ -80,10 +81,14 @@ destroy_material_system :: proc(engine: ^Engine) {
 	delete(ms.material_map)
 }
 
+get_default_material :: proc(engine: ^Engine) -> MaterialHandle {
+	return engine.material_system.material_map[DEFAULT_MATERIAL_NAME]
+}
+
 create_default_material :: proc(engine: ^Engine) {
 	create_material(
 		engine,
 		DEFAULT_MATERIAL_NAME,
-		Material{base_color = {1, 1, 1, 1}, base_color_texture = {handle = 0}},
+		Material{base_color = {1, 1, 1, 1}, base_color_texture = get_default_texture(engine)},
 	)
 }

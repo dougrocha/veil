@@ -71,7 +71,7 @@ destroy_model_system :: proc(engine: ^Engine) {
 	delete(ms.instances)
 }
 
-load_model :: proc(engine: ^Engine, path: string, texture: TextureHandle = INVALID_TEXTURE) -> ModelHandle {
+load_model :: proc(engine: ^Engine, path: string, material: MaterialHandle = INVALID_MATERIAL) -> ModelHandle {
 	if handle, ok := engine.model_system.model_map[path]; ok {
 		return handle
 	}
@@ -120,7 +120,7 @@ load_model :: proc(engine: ^Engine, path: string, texture: TextureHandle = INVAL
 		}
 	}
 
-	return register_model(engine, path, vertices[:], indices[:], texture)
+	return register_model(engine, path, vertices[:], indices[:], material)
 }
 
 register_model :: proc(
@@ -128,12 +128,12 @@ register_model :: proc(
 	name: string,
 	vertices: []Vertex,
 	indices: []u32,
-	texture: TextureHandle,
+	material: MaterialHandle = INVALID_MATERIAL,
 ) -> ModelHandle {
 	vertex_buf := upload_buffer(engine, raw_data(vertices), vk.DeviceSize(size_of(Vertex) * len(vertices)), .Storage)
 	index_buf := upload_buffer(engine, raw_data(indices), vk.DeviceSize(size_of(u32) * len(indices)), .Index)
 
-	material_handle := create_material(engine, name, Material{base_color = {1, 1, 1, 1}, base_color_texture = texture})
+	material_handle := get_default_material(engine) if material == INVALID_MATERIAL else material
 
 	mesh := Mesh {
 		vertex_buffer     = vertex_buf.buffer,

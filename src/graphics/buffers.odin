@@ -100,15 +100,13 @@ create_particle_buffer :: proc(engine: ^Engine) {
 	aspect_ratio := f32(engine.swapchain_extent.height) / f32(engine.swapchain_extent.width)
 
 	for &p in particles {
-		r := 0.25 * math.sqrt(rand.float32())
-		theta := rand.float32() * math.TAU
-
-		x := r * math.cos(theta) * aspect_ratio
-		y := r * math.sin(theta)
-
-		p.position = {x, y}
-		p.velocity = linalg.normalize([2]f32{x, y}) * 0.00025
-		p.color = {rand.float32(), rand.float32(), rand.float32(), 1.0}
+		x := rand.float32() * 20.0 - 10.0
+		y := rand.float32() * 15.0
+		z := rand.float32() * 20.0 - 10.0
+		p.position = {x, y, z, 1.0}
+		p.velocity = {0, -(rand.float32() * 4.0 + 3.0), 0, 0}
+		brightness := rand.float32() * 0.3 + 0.7
+		p.color = {brightness * 0.6, brightness * 0.8, brightness, 0.8}
 	}
 
 	size := vk.DeviceSize(size_of(Particle) * len(particles))
@@ -124,7 +122,9 @@ update_scene_data_buffer :: proc(engine: ^Engine, frame_index: u64) {
 			engine.camera,
 			f32(engine.swapchain_extent.width) / f32(engine.swapchain_extent.height),
 		),
-		light_pos = {2.0, 4.0, 3.0, 0.0},
+		point_light   = {pos = {1.0, 2.0, -4.0}, color = {1.0, 1.0, 1.0}},
+		cam_pos       = engine.camera.position,
+		ambient_light = engine.ambient_light,
 	}
 	scene.proj[1][1] *= -1.0
 	scene.delta_time = engine.delta_time

@@ -5,19 +5,32 @@ struct Vertex {
     float3 normal;
 };
 
+struct AmbientLight {
+    float4 color;
+    float brightness;
+};
+
+struct PointLight {
+    float3 pos;
+    float3 color;
+};
+
 struct SceneData {
     float4x4 view;
     float4x4 proj;
-    float4 light_pos;
+    PointLight point_light;
+    float3 cam_pos;
     float delta_time;
-}
+    AmbientLight ambient_light;
+};
 
 struct Material {
     float4 base_color;
+    uint base_color_texture;
+    // for PBR RENDERING LATER, we are doing phong for now
     // float metallic;
     // float roughness;
     // float3 emissive;
-    uint base_color_texture;
     // uint metallic_texture;
     // uint normal_texture;
     // uint roughness_texture;
@@ -28,7 +41,7 @@ struct Particle {
     float2 position;
     float2 velocity;
     float4 color;
-}
+};
 
 struct PushConstants {
     SceneData* scene_data;
@@ -39,13 +52,6 @@ struct PushConstants {
     uint instance_index;
 };
 [[vk_push_constant]] PushConstants pc;
-
-struct ComputePushConstants {
-    float delta_time;
-    Particle* particles_in;
-    Particle* particles_out;
-}
-[[vk_push_constant]] ComputePushConstants compute_pc;
 
 struct VSInput {
     uint vertex_index : SV_VertexID;
@@ -77,56 +83,30 @@ VSOutput vertex_main(VSInput input) {
     return output;
 }
 
-// [shader("vertex")] particle version (temp)
-// VSOutput vertex_main(VSInput input) {
-//     let p = pc.particle_buffer[input.vertex_index];
-//     VSOutput output;
-//     output.pointSize = 14.0;
-//     output.pos = float4(p.position, 0.0, 1.0);
-//     output.fragColor = p.color.rgb;
-//     return output;
-// }
-
 Sampler2D textures[];
 
 [shader("fragment")]
 float4 fragment_main(VSOutput vertIn) : SV_TARGET {
+    // material
     let mat = pc.material_buffer[pc.material_index];
     float4 texColor = textures[mat.base_color_texture].Sample(vertIn.fragUV) * float4(vertIn.fragColor, 1.0) * mat.base_color;
 
+    // ambient
+    float3 ambient = pc.scene_data.ambient_light.color.rgb * pc.scene_data.ambient_light.brightness;
+
+    // diffuse
     float3 norm = normalize(vertIn.fragNormal);
-    float3 lightDir = normalize(pc.scene_data.light_pos.xyz - vertIn.fragPos);
-
+    float3 lightDir = normalize(pc.scene_data.point_light.pos - vertIn.fragPos);
     float diff = max(dot(norm, lightDir), 0.0);
-    float ambient = 0.15;
 
-    float3 finalLight = ambient + diff;
+    // specular
+    float3 viewDir = normalize(pc.scene_data.cam_pos - vertIn.fragPos);
+    float3 reflectDir = reflect(-lightDir, norm);
+    float shininess = 128;
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
+    float3 specular = 0.1 * spec * pc.scene_data.point_light.color;
 
-    return float4(texColor.rgb * finalLight, texColor.a);
-}
+    float3 finalLight = (ambient + diff * pc.scene_data.point_light.color) * texColor.rgb + specular;
 
-// [shader("fragment")] particle version (temp)
-// float4 fragment_main(PSInput input) : SV_TARGET {
-//     float2 coord = input.pointCoord - float2(0.5);
-//     return float4(input.fragColor, 0.5 - length(coord));
-// }
-
-[shader("compute")]
-[numthreads(256,1,1)]
-void compute_main(uint3 threadId : SV_DispatchThreadID)
-{
-    uint index = threadId.x;
-
-    Particle p = compute_pc.particles_in[index];
-
-    p.position += p.velocity * compute_pc.delta_time;
-
-    if (p.position.x <= -1.0 || p.position.x >= 1.0) {
-        p.velocity.x = -p.velocity.x;
-    }
-    if (p.position.y <= -1.0 || p.position.y >= 1.0) {
-        p.velocity.y = -p.velocity.y;
-    }
-
-    compute_pc.particles_out[index] = p;
+    return float4(finalLight, texColor.a);
 }
