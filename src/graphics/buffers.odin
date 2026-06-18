@@ -122,9 +122,18 @@ update_scene_data_buffer :: proc(engine: ^Engine, frame_index: u64) {
 			engine.camera,
 			f32(engine.swapchain_extent.width) / f32(engine.swapchain_extent.height),
 		),
-		point_light   = {pos = {1.0, 2.0, -4.0}, color = {1.0, 1.0, 1.0}},
-		cam_pos       = engine.camera.position,
-		ambient_light = engine.ambient_light,
+		point_lights             = {
+			0 = {pos = {1.0, 2.0, -4.0}, color = {1.0, 1.0, 1.0}, constant = 1.0, linear = 0.09, quadratic = 0.032},
+			1 = {pos = {-2.0, 1.0, 0.0}, color = {1.0, 0.0, 0.0}, constant = 1.0, linear = 0.09, quadratic = 0.032},
+			2 = {pos = {0.0, 1.0, 2.0},  color = {0.0, 0.0, 1.0}, constant = 1.0, linear = 0.09, quadratic = 0.032},
+		},
+		directional_lights       = {0 = {direction = {1.0, -1.0, 0.5}, color = {1.0, 1.0, 0.0}}},
+		spot_lights              = {0 = {pos = engine.camera.position, direction = engine.camera.front, color = {1.0, 1.0, 1.0}, inner_cutoff = math.cos(math.to_radians(f32(12.5))), outer_cutoff = math.cos(math.to_radians(f32(17.5))), constant = 1.0, linear = 0.09, quadratic = 0.032}},
+		cam_pos                  = engine.camera.position,
+		ambient_light            = engine.ambient_light,
+		point_light_count        = 3,
+		directional_light_count  = 1,
+		spot_light_count         = 1,
 	}
 	scene.proj[1][1] *= -1.0
 	scene.delta_time = engine.delta_time

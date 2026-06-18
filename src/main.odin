@@ -61,10 +61,26 @@ main :: proc() {
 	light_mat := gfx.create_material(
 		&app.engine,
 		"light",
-		gfx.Material{base_color = {1, 1, 0, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
+		gfx.Material{base_color = {1, 1, 1, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
 	)
 	light_cube_model := gfx.create_cube(&app.engine, "light_cube", light_mat, half_size = {0.1, 0.1, 0.1})
 	gfx.spawn_model(&app.engine, light_cube_model, gfx.transform_create(translation = {1.0, 2.0, -4.0}))
+
+	red_light_mat := gfx.create_material(
+		&app.engine,
+		"red_light",
+		gfx.Material{base_color = {1, 0, 0, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
+	)
+	red_light_cube_model := gfx.create_cube(&app.engine, "red_light_cube", red_light_mat, half_size = {0.1, 0.1, 0.1})
+	gfx.spawn_model(&app.engine, red_light_cube_model, gfx.transform_create(translation = {-2.0, 1.0, 0.0}))
+
+	blue_light_mat := gfx.create_material(
+		&app.engine,
+		"blue_light",
+		gfx.Material{base_color = {0, 0, 1, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
+	)
+	blue_light_cube_model := gfx.create_cube(&app.engine, "blue_light_cube", blue_light_mat, half_size = {0.1, 0.1, 0.1})
+	gfx.spawn_model(&app.engine, blue_light_cube_model, gfx.transform_create(translation = {0.0, 1.0, 2.0}))
 
 	plane_mat := gfx.create_material(
 		&app.engine,

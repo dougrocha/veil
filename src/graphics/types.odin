@@ -107,8 +107,27 @@ Engine :: struct {
 }
 
 PointLight :: struct {
-	pos:   Vec3,
-	color: Vec3,
+	pos:       Vec3,
+	constant:  f32,
+	color:     Vec3,
+	linear:    f32,
+	quadratic: f32,
+}
+
+DirectionalLight :: struct {
+	direction: Vec3,
+	color:     Vec3,
+}
+
+SpotLight :: struct {
+	pos:          Vec3,
+	inner_cutoff: f32,
+	direction:    Vec3,
+	outer_cutoff: f32,
+	color:        Vec3,
+	constant:     f32,
+	linear:       f32,
+	quadratic:    f32,
 }
 
 AmbientLight :: struct {
@@ -117,12 +136,17 @@ AmbientLight :: struct {
 }
 
 SceneData :: struct {
-	view:          Mat4x4,
-	proj:          Mat4x4,
-	point_light:   PointLight,
-	cam_pos:       Vec3,
-	delta_time:    f32,
-	ambient_light: AmbientLight,
+	view:                    Mat4x4,
+	proj:                    Mat4x4,
+	point_lights:            [16]PointLight,
+	directional_lights:      [4]DirectionalLight,
+	spot_lights:             [4]SpotLight,
+	cam_pos:                 Vec3,
+	delta_time:              f32,
+	ambient_light:           AmbientLight,
+	point_light_count:       u32,
+	directional_light_count: u32,
+	spot_light_count:        u32,
 }
 
 Vertex :: struct {
