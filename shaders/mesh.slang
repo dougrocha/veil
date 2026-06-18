@@ -1,77 +1,10 @@
-struct Vertex {
-    float3 pos;
-    float2 uv;
-    float3 color;
-    float3 normal;
-};
-
-struct AmbientLight {
-    float4 color;
-    float brightness;
-};
-
-struct PointLight {
-    float3 pos;
-    float constant;
-    float3 color;
-    float linear;
-    float quadratic;
-};
-
-struct DirectionalLight {
-    float3 direction;
-    float3 color;
-};
-
-struct SpotLight {
-    float3 pos;
-    float inner_cutoff;
-    float3 direction;
-    float outer_cutoff;
-    float3 color;
-    float constant;
-    float linear;
-    float quadratic;
-};
-
-struct SceneData {
-    float4x4 view;
-    float4x4 proj;
-    PointLight point_lights[16];
-    DirectionalLight directional_lights[4];
-    SpotLight spot_lights[4];
-    float3 cam_pos;
-    float delta_time;
-    AmbientLight ambient_light;
-    uint point_light_count;
-    uint directional_light_count;
-    uint spot_light_count;
-};
-
-struct Material {
-    float4 base_color;
-    uint base_color_texture;
-    // for PBR RENDERING LATER, we are doing phong for now
-    // float metallic;
-    // float roughness;
-    // float3 emissive;
-    // uint metallic_texture;
-    // uint normal_texture;
-    // uint roughness_texture;
-    // uint emissive_texture;
-};
-
-struct Particle {
-    float2 position;
-    float2 velocity;
-    float4 color;
-};
+import types;
 
 struct PushConstants {
     SceneData* scene_data;
     Vertex* vertex_buffer;
     Material* material_buffer;
-    float4x4* transform_buffer;
+    Transform* transform_buffer;
     uint material_index;
     uint instance_index;
 };
@@ -92,15 +25,15 @@ struct VSOutput {
 [shader("vertex")]
 VSOutput vertex_main(VSInput input) {
     let v = pc.vertex_buffer[input.vertex_index];
-    let model = pc.transform_buffer[pc.instance_index];
+    let transform = pc.transform_buffer[pc.instance_index];
 
     VSOutput output;
-    float4 worldPos = mul(model, float4(v.pos, 1.0));
+    float4 worldPos = mul(transform.model, float4(v.pos, 1.0));
     output.fragPos = worldPos.xyz;
 
     output.pos = mul(pc.scene_data.proj, mul(pc.scene_data.view, worldPos));
 
-    output.fragNormal = mul((float3x3)model, v.normal);
+    output.fragNormal = mul((float3x3)transform.normal_matrix, v.normal);
 
     output.fragColor = v.color;
     output.fragUV = v.uv;
@@ -159,5 +92,6 @@ float4 fragment_main(VSOutput vertIn) : SV_TARGET {
     for (uint i = 0; i < pc.scene_data.spot_light_count; i++)
         result += calc_spot_light(pc.scene_data.spot_lights[i], norm, viewDir, vertIn.fragPos);
 
+    if (texColor.a < 0.1) discard;
     return float4(result * texColor.rgb, texColor.a);
 }

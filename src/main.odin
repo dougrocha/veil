@@ -79,16 +79,106 @@ main :: proc() {
 		"blue_light",
 		gfx.Material{base_color = {0, 0, 1, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
 	)
-	blue_light_cube_model := gfx.create_cube(&app.engine, "blue_light_cube", blue_light_mat, half_size = {0.1, 0.1, 0.1})
+	blue_light_cube_model := gfx.create_cube(
+		&app.engine,
+		"blue_light_cube",
+		blue_light_mat,
+		half_size = {0.1, 0.1, 0.1},
+	)
 	gfx.spawn_model(&app.engine, blue_light_cube_model, gfx.transform_create(translation = {0.0, 1.0, 2.0}))
 
+	wood_floor := gfx.load_texture(&app.engine, "assets/textures/wood_floor.png")
 	plane_mat := gfx.create_material(
 		&app.engine,
 		"plane_mat",
-		gfx.Material{base_color = {0.25, 0.25, 0.25, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
+		gfx.Material{base_color = {0.25, 0.25, 0.25, 1}, base_color_texture = wood_floor},
 	)
 	plane_model := gfx.create_plane(&app.engine, "plane", plane_mat, half_size = {1, 1})
 	gfx.spawn_model(&app.engine, plane_model, gfx.transform_create(translation = {2, 0, 0}))
+
+	grass_texture := gfx.load_texture(&app.engine, "assets/textures/grass.png")
+	grass_mat := gfx.create_material(
+		&app.engine,
+		"grass_mat",
+		gfx.Material{base_color = {1, 1, 1, 1}, base_color_texture = grass_texture, alpha_mode = .Mask},
+	)
+	grass_plane_model := gfx.create_plane(&app.engine, "grass_plane", grass_mat, half_size = {1, 1})
+	grass_rotation := linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(90)), gfx.Vec3{1, 0, 0})
+
+	transparent_mat := gfx.create_material(
+		&app.engine,
+		"transparent_mat",
+		gfx.Material {
+			base_color = {0.2, 0.6, 1.0, 0.4},
+			base_color_texture = gfx.get_default_texture(&app.engine),
+			alpha_mode = .Blend,
+		},
+	)
+	transparent_plane_model := gfx.create_plane(&app.engine, "transparent_plane", transparent_mat, half_size = {1, 1})
+	gfx.spawn_model(
+		&app.engine,
+		transparent_plane_model,
+		gfx.transform_create(translation = {2, 1, 1}, rotation = grass_rotation),
+	)
+
+	transparent_red_mat := gfx.create_material(
+		&app.engine,
+		"transparent_red_mat",
+		gfx.Material {
+			base_color = {1.0, 0.2, 0.2, 0.4},
+			base_color_texture = gfx.get_default_texture(&app.engine),
+			alpha_mode = .Blend,
+		},
+	)
+	transparent_red_plane := gfx.create_plane(
+		&app.engine,
+		"transparent_red_plane",
+		transparent_red_mat,
+		half_size = {1, 1},
+	)
+	gfx.spawn_model(
+		&app.engine,
+		transparent_red_plane,
+		gfx.transform_create(translation = {2, 1, 1.5}, rotation = grass_rotation),
+	)
+
+	transparent_green_mat := gfx.create_material(
+		&app.engine,
+		"transparent_green_mat",
+		gfx.Material {
+			base_color = {0.2, 1.0, 0.2, 0.4},
+			base_color_texture = gfx.get_default_texture(&app.engine),
+			alpha_mode = .Blend,
+		},
+	)
+	transparent_green_plane := gfx.create_plane(
+		&app.engine,
+		"transparent_green_plane",
+		transparent_green_mat,
+		half_size = {1, 1},
+	)
+	gfx.spawn_model(
+		&app.engine,
+		transparent_green_plane,
+		gfx.transform_create(translation = {2, 1, 2}, rotation = grass_rotation),
+	)
+
+	gfx.spawn_model(
+		&app.engine,
+		grass_plane_model,
+		gfx.transform_create(translation = {2, 1, 0}, rotation = grass_rotation),
+	)
+	gfx.spawn_model(
+		&app.engine,
+		grass_plane_model,
+		gfx.transform_create(translation = {2.25, 1, 0.001}, rotation = grass_rotation),
+	)
+	gfx.spawn_model(
+		&app.engine,
+		grass_plane_model,
+		gfx.transform_create(translation = {1.75, 1, -0.001}, rotation = grass_rotation),
+	)
+
 
 	angle: f32 = 0
 

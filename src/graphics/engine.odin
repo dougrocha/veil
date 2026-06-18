@@ -3,6 +3,7 @@ package graphics
 import "core:log"
 import "core:math/linalg"
 import "core:mem"
+import "core:slice"
 import "core:time"
 
 import vma "shared:odin-vma"
@@ -39,6 +40,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	mesh_module := get_shader(engine, "mesh")
 	particle_module := get_shader(engine, "particle")
 	engine.pipeline = create_graphics_pipeline(engine, mesh_module)
+
 	engine.particle_draw_pipeline = create_particle_draw_pipeline(engine, particle_module)
 	engine.particle_pipeline = create_particle_pipeline(engine, particle_module)
 
@@ -291,7 +293,7 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 		.UNDEFINED,
 		.DEPTH_ATTACHMENT_OPTIMAL,
 		{},
-		{.DEPTH_STENCIL_ATTACHMENT_WRITE},
+		{.DEPTH_ATTACHMENT_WRITE},
 		{.EARLY_FRAGMENT_TESTS},
 		{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
 		{.DEPTH},
@@ -310,21 +312,21 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 	}
 
 	depth_attach_info := vk.RenderingAttachmentInfo {
-		sType = .RENDERING_ATTACHMENT_INFO,
-		imageView = engine.depth_image.image_view,
+		sType       = .RENDERING_ATTACHMENT_INFO,
+		imageView   = engine.depth_image.image_view,
 		imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
-		loadOp = .CLEAR,
-		storeOp = .DONT_CARE,
-		clearValue = {depthStencil = {depth = 1}},
+		loadOp      = .CLEAR,
+		storeOp     = .DONT_CARE,
+		clearValue  = {depthStencil = {depth = 1, stencil = 0}},
 	}
 
 	rendering_info := vk.RenderingInfo {
-		sType = .RENDERING_INFO,
-		renderArea = {offset = {0, 0}, extent = engine.swapchain_extent},
-		layerCount = 1,
+		sType                = .RENDERING_INFO,
+		renderArea           = {offset = {0, 0}, extent = engine.swapchain_extent},
+		layerCount           = 1,
 		colorAttachmentCount = 1,
-		pColorAttachments = &color_attach_info,
-		pDepthAttachment = &depth_attach_info,
+		pColorAttachments    = &color_attach_info,
+		pDepthAttachment     = &depth_attach_info,
 	}
 
 	vk.CmdBeginRendering(cmd, &rendering_info)
@@ -358,18 +360,23 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 			nil,
 		)
 
-		transforms := (^Mat4x4)(engine.model_system.transforms_buffer.alloc_info.mapped_data)
+		transforms := (^GpuTransform)(engine.model_system.transforms_buffer.alloc_info.mapped_data)
 		for instance, i in engine.model_system.instances {
 			rot := linalg.matrix4_from_quaternion(instance.transform.rotation)
 			translation := linalg.matrix4_translate(instance.transform.translation)
 			scale := linalg.matrix4_scale(instance.transform.scale)
+			model := translation * rot * scale
+			normal := linalg.transpose(linalg.inverse(model))
 
-			mem.ptr_offset(transforms, i)^ = translation * rot * scale
+			mem.ptr_offset(transforms, i)^ = GpuTransform {
+				model         = model,
+				normal_matrix = normal,
+			}
 		}
 
-		for &instance, i in engine.model_system.instances {
+		draw_instance :: proc(engine: ^Engine, cmd: vk.CommandBuffer, frame_res_index: u64, i: int) {
+			instance := &engine.model_system.instances[i]
 			model := &engine.model_system.models[instance.model.handle]
-
 			for &mesh in model.meshes {
 				pc := PushConstants {
 					scene_data       = engine.scene_data_buffers[frame_res_index].ptr,
@@ -379,11 +386,44 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 					material_index   = u32(mesh.material_index),
 					instance_index   = u32(i),
 				}
-
 				vk.CmdPushConstants(cmd, engine.pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &pc)
 				vk.CmdBindIndexBuffer(cmd, mesh.index_buffer, 0, .UINT32)
 				vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)
 			}
+		}
+
+		// opaque + mask pass
+		for &instance, i in engine.model_system.instances {
+			model := &engine.model_system.models[instance.model.handle]
+			for &mesh in model.meshes {
+				mat := &engine.material_system.materials[mesh.material_index]
+				if mat.alpha_mode == .Blend do continue
+				draw_instance(engine, cmd, frame_res_index, i)
+				break
+			}
+		}
+
+		// transparent pass — collect and sort back-to-front
+		TransparentEntry :: struct {
+			index: int,
+			dist:  f32,
+		}
+		transparent := make([dynamic]TransparentEntry, context.temp_allocator)
+		for &instance, i in engine.model_system.instances {
+			model := &engine.model_system.models[instance.model.handle]
+			for &mesh in model.meshes {
+				mat := &engine.material_system.materials[mesh.material_index]
+				if mat.alpha_mode != .Blend do continue
+				pos := instance.transform.translation
+				cam := engine.camera.position
+				dist := linalg.length(pos - cam)
+				append(&transparent, TransparentEntry{index = i, dist = dist})
+				break
+			}
+		}
+		slice.sort_by(transparent[:], proc(a, b: TransparentEntry) -> bool {return a.dist > b.dist})
+		for entry in transparent {
+			draw_instance(engine, cmd, frame_res_index, entry.index)
 		}
 
 		// {

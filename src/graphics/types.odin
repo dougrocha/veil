@@ -130,6 +130,12 @@ SpotLight :: struct {
 	quadratic:    f32,
 }
 
+AlphaMode :: enum {
+	Opaque,
+	Mask,
+	Blend,
+}
+
 AmbientLight :: struct {
 	color:      Vec4,
 	brightness: f32,
@@ -176,6 +182,11 @@ Transform :: struct {
 	translation: Vec3,
 	rotation:    Quat,
 	scale:       Vec3,
+}
+
+GpuTransform :: struct {
+	model:         Mat4x4,
+	normal_matrix: Mat4x4,
 }
 
 transform_create :: proc(

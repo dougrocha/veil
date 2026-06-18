@@ -9,7 +9,7 @@ DEFAULT_MATERIAL_NAME :: "default"
 
 MAX_MATERIALS :: 1024
 
-Material :: struct {
+GpuMaterial :: struct {
 	base_color:         Vec4,
 	// metallic:                 f32,
 	// roughness:                f32,
@@ -19,6 +19,11 @@ Material :: struct {
 	// normal_texture:        TextureHandle,
 	// roughness_texture:     TextureHandle,
 	// emissive_texture:      TextureHandle,
+}
+
+Material :: struct {
+	using gpu:  GpuMaterial,
+	alpha_mode: AlphaMode,
 }
 
 MaterialHandle :: struct {
@@ -43,7 +48,7 @@ MaterialSystem :: struct {
 create_material_system :: proc(engine: ^Engine, config: MaterialSystemConfig) {
 	engine.material_system.config = config
 
-	total_size := vk.DeviceSize(size_of(Material) * u64(config.max_material_count))
+	total_size := vk.DeviceSize(size_of(GpuMaterial) * u64(config.max_material_count))
 	engine.material_system.buffer = create_buffer(engine, total_size, .MappedStorage)
 
 	create_default_material(engine)
@@ -65,11 +70,10 @@ create_material :: proc(engine: ^Engine, name: string, material: Material) -> Ma
 		handle = index,
 	}
 
-	offset := uintptr(index) * size_of(Material)
+	offset := uintptr(index) * size_of(GpuMaterial)
 	dst := uintptr(engine.material_system.buffer.alloc_info.mapped_data) + offset
-	// cannot take addresses of proc args, so gotta do this
-	mat := material
-	mem.copy(rawptr(dst), &mat, size_of(Material))
+	mat := material.gpu
+	mem.copy(rawptr(dst), &mat, size_of(GpuMaterial))
 
 	return MaterialHandle{handle = index}
 }

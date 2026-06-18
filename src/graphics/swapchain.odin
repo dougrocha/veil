@@ -73,10 +73,15 @@ create_depth_resources :: proc(engine: ^Engine) {
 		engine,
 		{engine.swapchain_extent.width, engine.swapchain_extent.height, 1},
 		DEPTH_FORMAT,
-		{.DEPTH_STENCIL_ATTACHMENT},
+		{.DEPTH_ATTACHMENT},
 		samples = engine.msaa_samples,
 	)
-	engine.depth_image.image_view = create_image_view(engine, engine.depth_image.image, DEPTH_FORMAT, {.DEPTH})
+	engine.depth_image.image_view = create_image_view(
+		engine,
+		engine.depth_image.image,
+		DEPTH_FORMAT,
+		{.DEPTH},
+	)
 }
 
 create_draw_image :: proc(engine: ^Engine) {

@@ -52,7 +52,7 @@ ModelSystem :: struct {
 }
 
 create_model_system :: proc(engine: ^Engine) {
-	total_size := vk.DeviceSize(size_of(Mat4x4) * MAX_MODEL_INSTANCES)
+	total_size := vk.DeviceSize(size_of(GpuTransform) * MAX_MODEL_INSTANCES)
 	engine.model_system.transforms_buffer = create_buffer(engine, total_size, .MappedStorage)
 }
 
@@ -157,6 +157,10 @@ register_model :: proc(
 	}
 
 	return ModelHandle{handle = index}
+}
+
+get_instance :: proc(engine: ^Engine, handle: InstanceHandle) -> ^Instance {
+	return &engine.model_system.instances[handle.handle]
 }
 
 spawn_model :: proc(engine: ^Engine, model: ModelHandle, transform: Transform) -> InstanceHandle {

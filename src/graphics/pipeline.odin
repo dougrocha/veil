@@ -46,12 +46,10 @@ create_graphics_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderModule) 
 	}
 
 	depth_stencil_info := vk.PipelineDepthStencilStateCreateInfo {
-		sType                 = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-		depthTestEnable       = true,
-		depthWriteEnable      = true,
-		depthCompareOp        = .LESS,
-		stencilTestEnable     = false,
-		depthBoundsTestEnable = false,
+		sType            = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+		depthTestEnable  = true,
+		depthWriteEnable = true,
+		depthCompareOp   = .LESS,
 	}
 
 	viewport_info := vk.PipelineViewportStateCreateInfo {
@@ -79,8 +77,14 @@ create_graphics_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderModule) 
 	}
 
 	color_blend_attach_state := vk.PipelineColorBlendAttachmentState {
-		blendEnable    = false,
-		colorWriteMask = {.R, .G, .B, .A},
+		blendEnable         = true,
+		colorWriteMask      = {.R, .G, .B, .A},
+		colorBlendOp        = .ADD,
+		srcColorBlendFactor = .SRC_ALPHA,
+		dstColorBlendFactor = .ONE_MINUS_SRC_ALPHA,
+		alphaBlendOp        = .ADD,
+		srcAlphaBlendFactor = .ONE,
+		dstAlphaBlendFactor = .ZERO,
 	}
 
 	blend_info := vk.PipelineColorBlendStateCreateInfo {
@@ -126,7 +130,6 @@ create_graphics_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderModule) 
 	return pipeline
 }
 
-
 create_particle_draw_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderModule) -> Pipeline {
 	push_constant_range := vk.PushConstantRange {
 		stageFlags = {.VERTEX, .FRAGMENT},
@@ -145,7 +148,12 @@ create_particle_draw_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderMod
 
 	shader_stages := [2]vk.PipelineShaderStageCreateInfo {
 		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.VERTEX}, module = shader_module, pName = VERTEX_ENTRY},
-		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.FRAGMENT}, module = shader_module, pName = FRAGMENT_MAIN},
+		{
+			sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+			stage = {.FRAGMENT},
+			module = shader_module,
+			pName = FRAGMENT_MAIN,
+		},
 	}
 
 	vertex_input_info := vk.PipelineVertexInputStateCreateInfo {
@@ -170,7 +178,7 @@ create_particle_draw_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderMod
 	}
 
 	raster_info := vk.PipelineRasterizationStateCreateInfo {
-		sType     = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+		sType       = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 		polygonMode = .FILL,
 		cullMode    = {},
 		frontFace   = .COUNTER_CLOCKWISE,
@@ -234,7 +242,6 @@ create_particle_draw_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderMod
 
 	return pipeline
 }
-
 
 create_particle_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderModule) -> Pipeline {
 	push_constant_range := vk.PushConstantRange {
