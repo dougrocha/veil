@@ -20,13 +20,14 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 		brightness = 0.15,
 	}
 
-	create_vulkan_instance(engine)
-	app.engine.surface = create_vulkan_surface(app) or_return
-	engine.physical_device = find_physical_device(engine) or_return
-	engine.msaa_samples = get_max_usable_sample_count(engine)
-	find_graphics_queue(engine) or_return
-	create_logical_device(engine) or_return
-	initialize_vma(engine)
+	create_vulkan_instance(&engine.vk_ctx)
+	engine.vk_ctx.surface = create_vulkan_surface(app) or_return
+	engine.vk_ctx.physical_device = find_physical_device(&engine.vk_ctx) or_return
+	engine.vk_ctx.msaa_samples = get_max_usable_sample_count(&engine.vk_ctx)
+	find_graphics_queue(&engine.vk_ctx) or_return
+	create_logical_device(&engine.vk_ctx) or_return
+	initialize_vma(&engine.vk_ctx)
+	create_upload_pool(&engine.vk_ctx)
 
 	create_swapchain(engine, app.width, app.height)
 	create_color_resources(engine)
@@ -39,10 +40,14 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_descriptor_set_layout(engine)
 	mesh_module := get_shader(engine, "mesh")
 	particle_module := get_shader(engine, "particle")
-	engine.pipeline = create_graphics_pipeline(engine, mesh_module)
+	register_pipeline(&engine.pipeline_registry, "mesh", create_graphics_pipeline(engine, mesh_module))
 
-	engine.particle_draw_pipeline = create_particle_draw_pipeline(engine, particle_module)
-	engine.particle_pipeline = create_particle_pipeline(engine, particle_module)
+	register_pipeline(
+		&engine.pipeline_registry,
+		"particle_draw",
+		create_particle_draw_pipeline(engine, particle_module),
+	)
+	register_pipeline(&engine.pipeline_registry, "particle", create_particle_pipeline(engine, particle_module))
 
 	create_sync_resources(engine)
 	create_command_buffers(engine)
@@ -59,48 +64,47 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 }
 
 engine_shutdown :: proc(self: ^Engine) {
-	vk.DeviceWaitIdle(self.device)
+	vk.DeviceWaitIdle(self.vk_ctx.device)
 
 	destroy_texture_system(self)
 	destroy_model_system(self)
 	destroy_material_system(self)
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		destroy_buffer(self, self.scene_data_buffers[i])
-		destroy_buffer(self, self.particle_buffers[i])
+		destroy_buffer(&self.vk_ctx, self.scene_data_buffers[i])
+		destroy_buffer(&self.vk_ctx, self.particle_buffers[i])
 	}
 
-	vk.DestroyPipeline(self.device, self.particle_draw_pipeline.pipeline, nil)
-	vk.DestroyPipelineLayout(self.device, self.particle_draw_pipeline.layout, nil)
-	vk.DestroyPipeline(self.device, self.particle_pipeline.pipeline, nil)
-	vk.DestroyPipelineLayout(self.device, self.particle_pipeline.layout, nil)
+	vk.DestroyDescriptorPool(self.vk_ctx.device, self.descriptor_pool, nil)
+	vk.DestroyDescriptorSetLayout(self.vk_ctx.device, self.descriptor_set_layout, nil)
 
-	vk.DestroyDescriptorPool(self.device, self.descriptor_pool, nil)
-	vk.DestroyDescriptorSetLayout(self.device, self.descriptor_set_layout, nil)
-
-	vk.DestroyPipeline(self.device, self.pipeline.pipeline, nil)
-	vk.DestroyPipelineLayout(self.device, self.pipeline.layout, nil)
+	destroy_pipeline_registry(self.vk_ctx.device, &self.pipeline_registry)
 
 	destroy_shader_system(self)
 
-	vk.DestroySemaphore(self.device, self.timeline_semaphore, nil)
+	vk.DestroySemaphore(self.vk_ctx.device, self.timeline_semaphore, nil)
 	for &res in self.frame_resources {
-		vk.DestroySemaphore(self.device, res.image_acquired_semaphore, nil)
-		vk.DestroySemaphore(self.device, res.render_complete_semaphore, nil)
-		vk.DestroyCommandPool(self.device, res.command_pool, nil)
+		vk.DestroySemaphore(self.vk_ctx.device, res.image_acquired_semaphore, nil)
+		vk.DestroySemaphore(self.vk_ctx.device, res.render_complete_semaphore, nil)
+		vk.DestroyCommandPool(self.vk_ctx.device, res.command_pool, nil)
 		delete(res.deletion_queue.deletors)
 	}
 	cleanup_swapchain(self)
-	vma.destroy_allocator(self.vma_allocator)
 
-	vk.DestroyDevice(self.device, nil)
-	vk.DestroySurfaceKHR(self.instance, self.surface, nil)
-	vk.DestroyInstance(self.instance, nil)
+	destroy_vulkan_context(&self.vk_ctx)
+}
+
+destroy_vulkan_context :: proc(ctx: ^VulkanContext) {
+	vk.DestroyCommandPool(ctx.device, ctx.upload_pool, nil)
+	vma.destroy_allocator(ctx.vma_allocator)
+	vk.DestroyDevice(ctx.device, nil)
+	vk.DestroySurfaceKHR(ctx.instance, ctx.surface, nil)
+	vk.DestroyInstance(ctx.instance, nil)
 }
 
 engine_render :: proc(app: ^App) {
 	// recreate swapchain
 	if app.engine.require_swapchain_recreate {
-		vk.DeviceWaitIdle(app.engine.device)
+		vk.DeviceWaitIdle(app.engine.vk_ctx.device)
 		cleanup_swapchain(&app.engine)
 		create_swapchain(&app.engine, app.width, app.height)
 		create_color_resources(&app.engine)
@@ -118,7 +122,7 @@ engine_render :: proc(app: ^App) {
 			pSemaphores    = &app.engine.timeline_semaphore,
 			pValues        = &wait_value,
 		}
-		vk_check(vk.WaitSemaphores(app.engine.device, &wait_info, max(u64)))
+		vk_check(vk.WaitSemaphores(app.engine.vk_ctx.device, &wait_info, max(u64)))
 	}
 
 	frame_res_index := app.engine.frame_index % MAX_FRAMES_IN_FLIGHT
@@ -131,7 +135,7 @@ engine_render :: proc(app: ^App) {
 	// in our case, it was chance they are both two.
 	image_index: u32
 	acquire_result := vk.AcquireNextImageKHR(
-		app.engine.device,
+		app.engine.vk_ctx.device,
 		app.engine.swapchain,
 		max(u64),
 		current_frame_res.image_acquired_semaphore,
@@ -196,7 +200,7 @@ engine_render :: proc(app: ^App) {
 	}
 
 	// this point, everything is submitted to GPU
-	vk_check(vk.QueueSubmit2(app.engine.graphics_queue, 1, &submit_info, 0))
+	vk_check(vk.QueueSubmit2(app.engine.vk_ctx.graphics_queue, 1, &submit_info, 0))
 
 	present_info := vk.PresentInfoKHR {
 		sType              = .PRESENT_INFO_KHR,
@@ -207,7 +211,7 @@ engine_render :: proc(app: ^App) {
 		pImageIndices      = &image_index,
 	}
 
-	present_result := vk.QueuePresentKHR(app.engine.graphics_queue, &present_info)
+	present_result := vk.QueuePresentKHR(app.engine.vk_ctx.graphics_queue, &present_info)
 	if present_result == .ERROR_OUT_OF_DATE_KHR {
 		app.engine.require_swapchain_recreate = true
 	} else if present_result == .SUBOPTIMAL_KHR {
@@ -220,7 +224,7 @@ engine_render :: proc(app: ^App) {
 record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index: u64) {
 	current_frame_res := &engine.frame_resources[frame_res_index]
 
-	vk.ResetCommandPool(engine.device, current_frame_res.command_pool, {})
+	vk.ResetCommandPool(engine.vk_ctx.device, current_frame_res.command_pool, {})
 
 	cmd := current_frame_res.command_buffer
 
@@ -293,7 +297,7 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 		.UNDEFINED,
 		.DEPTH_ATTACHMENT_OPTIMAL,
 		{},
-		{.DEPTH_ATTACHMENT_WRITE},
+		{.DEPTH_STENCIL_ATTACHMENT_WRITE},
 		{.EARLY_FRAGMENT_TESTS},
 		{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
 		{.DEPTH},
@@ -312,21 +316,21 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 	}
 
 	depth_attach_info := vk.RenderingAttachmentInfo {
-		sType       = .RENDERING_ATTACHMENT_INFO,
-		imageView   = engine.depth_image.image_view,
+		sType = .RENDERING_ATTACHMENT_INFO,
+		imageView = engine.depth_image.image_view,
 		imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
-		loadOp      = .CLEAR,
-		storeOp     = .DONT_CARE,
-		clearValue  = {depthStencil = {depth = 1, stencil = 0}},
+		loadOp = .CLEAR,
+		storeOp = .DONT_CARE,
+		clearValue = {depthStencil = {depth = 1}},
 	}
 
 	rendering_info := vk.RenderingInfo {
-		sType                = .RENDERING_INFO,
-		renderArea           = {offset = {0, 0}, extent = engine.swapchain_extent},
-		layerCount           = 1,
+		sType = .RENDERING_INFO,
+		renderArea = {offset = {0, 0}, extent = engine.swapchain_extent},
+		layerCount = 1,
 		colorAttachmentCount = 1,
-		pColorAttachments    = &color_attach_info,
-		pDepthAttachment     = &depth_attach_info,
+		pColorAttachments = &color_attach_info,
+		pDepthAttachment = &depth_attach_info,
 	}
 
 	vk.CmdBeginRendering(cmd, &rendering_info)
@@ -347,12 +351,13 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 		}
 		vk.CmdSetScissor(cmd, 0, 1, &scissor)
 
-		vk.CmdBindPipeline(cmd, .GRAPHICS, engine.pipeline.pipeline)
+		mesh_pipeline := get_pipeline(&engine.pipeline_registry, "mesh")
+		vk.CmdBindPipeline(cmd, .GRAPHICS, mesh_pipeline.pipeline)
 
 		vk.CmdBindDescriptorSets(
 			cmd,
 			.GRAPHICS,
-			engine.pipeline.layout,
+			mesh_pipeline.layout,
 			0,
 			1,
 			&engine.descriptor_sets[frame_res_index],
@@ -386,7 +391,14 @@ record_command_buffer :: proc(engine: ^Engine, image_index: u32, frame_res_index
 					material_index   = u32(mesh.material_index),
 					instance_index   = u32(i),
 				}
-				vk.CmdPushConstants(cmd, engine.pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(PushConstants), &pc)
+				vk.CmdPushConstants(
+					cmd,
+					get_pipeline(&engine.pipeline_registry, "mesh").layout,
+					{.VERTEX, .FRAGMENT},
+					0,
+					size_of(PushConstants),
+					&pc,
+				)
 				vk.CmdBindIndexBuffer(cmd, mesh.index_buffer, 0, .UINT32)
 				vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)
 			}

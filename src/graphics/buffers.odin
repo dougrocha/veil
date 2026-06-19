@@ -1,7 +1,6 @@
 package graphics
 
 import "core:math"
-import "core:math/linalg"
 import "core:math/rand"
 import "core:mem"
 
@@ -38,13 +37,13 @@ BUFFER_FLAGS := [BufferKind]Buffer_Flags {
 	.ParticleSSBO  = {{.TRANSFER_DST, .STORAGE_BUFFER, .VERTEX_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},
 }
 
-create_buffer :: proc(engine: ^Engine, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
+create_buffer :: proc(ctx: ^VulkanContext, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
 	buffer_flags := BUFFER_FLAGS[kind]
 
 	gpu_buf: GpuBuffer
 	vk_check(
 		vma.create_buffer(
-			engine.vma_allocator,
+			ctx.vma_allocator,
 			vk.BufferCreateInfo{sType = .BUFFER_CREATE_INFO, size = size, usage = buffer_flags.usage},
 			vma.Allocation_Create_Info{usage = .Auto, flags = buffer_flags.alloc},
 			&gpu_buf.buffer,
@@ -58,40 +57,40 @@ create_buffer :: proc(engine: ^Engine, size: vk.DeviceSize, kind: BufferKind) ->
 			sType  = .BUFFER_DEVICE_ADDRESS_INFO,
 			buffer = gpu_buf.buffer,
 		}
-		gpu_buf.ptr = vk.GetBufferDeviceAddress(engine.device, &addr_info)
+		gpu_buf.ptr = vk.GetBufferDeviceAddress(ctx.device, &addr_info)
 	}
 
 	return gpu_buf
 }
 
-destroy_buffer :: proc(engine: ^Engine, buffer: GpuBuffer) {
-	vma.destroy_buffer(engine.vma_allocator, buffer.buffer, buffer.alloc)
+destroy_buffer :: proc(ctx: ^VulkanContext, buffer: GpuBuffer) {
+	vma.destroy_buffer(ctx.vma_allocator, buffer.buffer, buffer.alloc)
 }
 
-upload_buffer :: proc(engine: ^Engine, data: rawptr, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
-	staging := create_buffer(engine, size, .Staging)
-	defer destroy_buffer(engine, staging)
+upload_buffer :: proc(ctx: ^VulkanContext, data: rawptr, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
+	staging := create_buffer(ctx, size, .Staging)
+	defer destroy_buffer(ctx, staging)
 
 	mem.copy(staging.alloc_info.mapped_data, data, int(size))
 
-	dest := create_buffer(engine, size, kind)
-	copy_buffer(engine, staging.buffer, dest.buffer, size)
+	dest := create_buffer(ctx, size, kind)
+	copy_buffer(ctx, staging.buffer, dest.buffer, size)
 	return dest
 }
 
-copy_buffer :: proc(engine: ^Engine, src, dst: vk.Buffer, size: vk.DeviceSize) {
-	cmd := begin_single_time_commands(engine)
+copy_buffer :: proc(ctx: ^VulkanContext, src, dst: vk.Buffer, size: vk.DeviceSize) {
+	cmd := begin_single_time_commands(ctx)
 	region := vk.BufferCopy {
 		size = size,
 	}
 	vk.CmdCopyBuffer(cmd, src, dst, 1, &region)
-	end_single_time_commands(engine, &cmd)
+	end_single_time_commands(ctx, &cmd)
 }
 
 create_scene_data_buffer :: proc(engine: ^Engine) {
 	size := vk.DeviceSize(size_of(SceneData))
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.scene_data_buffers[i] = create_buffer(engine, size, .MappedUniform)
+		engine.scene_data_buffers[i] = create_buffer(&engine.vk_ctx, size, .MappedUniform)
 	}
 }
 
@@ -111,29 +110,40 @@ create_particle_buffer :: proc(engine: ^Engine) {
 
 	size := vk.DeviceSize(size_of(Particle) * len(particles))
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.particle_buffers[i] = upload_buffer(engine, raw_data(particles), size, .ParticleSSBO)
+		engine.particle_buffers[i] = upload_buffer(&engine.vk_ctx, raw_data(particles), size, .ParticleSSBO)
 	}
 }
 
 update_scene_data_buffer :: proc(engine: ^Engine, frame_index: u64) {
 	scene := SceneData {
-		view      = camera_get_view_matrix(engine.camera),
-		proj      = camera_get_projection_matrix(
+		view = camera_get_view_matrix(engine.camera),
+		proj = camera_get_projection_matrix(
 			engine.camera,
 			f32(engine.swapchain_extent.width) / f32(engine.swapchain_extent.height),
 		),
-		point_lights             = {
+		point_lights = {
 			0 = {pos = {1.0, 2.0, -4.0}, color = {1.0, 1.0, 1.0}, constant = 1.0, linear = 0.09, quadratic = 0.032},
 			1 = {pos = {-2.0, 1.0, 0.0}, color = {1.0, 0.0, 0.0}, constant = 1.0, linear = 0.09, quadratic = 0.032},
-			2 = {pos = {0.0, 1.0, 2.0},  color = {0.0, 0.0, 1.0}, constant = 1.0, linear = 0.09, quadratic = 0.032},
+			2 = {pos = {0.0, 1.0, 2.0}, color = {0.0, 0.0, 1.0}, constant = 1.0, linear = 0.09, quadratic = 0.032},
 		},
-		directional_lights       = {0 = {direction = {1.0, -1.0, 0.5}, color = {1.0, 1.0, 0.0}}},
-		spot_lights              = {0 = {pos = {2.0, 2.0, 4.0}, direction = {0.0, -0.26, -1.0}, color = {1.0, 1.0, 1.0}, inner_cutoff = math.cos(math.to_radians(f32(12.5))), outer_cutoff = math.cos(math.to_radians(f32(17.5))), constant = 1.0, linear = 0.09, quadratic = 0.032}},
-		cam_pos                  = engine.camera.position,
-		ambient_light            = engine.ambient_light,
-		point_light_count        = 3,
-		directional_light_count  = 1,
-		spot_light_count         = 0,
+		directional_lights = {0 = {direction = {1.0, -1.0, 0.5}, color = {1.0, 1.0, 0.0}}},
+		spot_lights = {
+			0 = {
+				pos = {2.0, 2.0, 4.0},
+				direction = {0.0, -0.26, -1.0},
+				color = {1.0, 1.0, 1.0},
+				inner_cutoff = math.cos(math.to_radians(f32(12.5))),
+				outer_cutoff = math.cos(math.to_radians(f32(17.5))),
+				constant = 1.0,
+				linear = 0.09,
+				quadratic = 0.032,
+			},
+		},
+		cam_pos = engine.camera.position,
+		ambient_light = engine.ambient_light,
+		point_light_count = 3,
+		directional_light_count = 1,
+		spot_light_count = 0,
 	}
 	scene.proj[1][1] *= -1.0
 	scene.delta_time = engine.delta_time

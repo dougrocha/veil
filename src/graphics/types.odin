@@ -27,7 +27,6 @@ Mat4x3 :: matrix[4, 3]f32
 
 vec3_splat :: proc(v: f32) -> Vec3 {return {v, v, v}}
 
-
 g_ctx: runtime.Context
 
 FrameResources :: struct {
@@ -45,17 +44,23 @@ App :: struct {
 	engine: Engine,
 }
 
-Engine :: struct {
+VulkanContext :: struct {
 	// core
-	instance:                   vk.Instance,
-	surface:                    vk.SurfaceKHR,
-	physical_device:            vk.PhysicalDevice,
-	device:                     vk.Device,
-	vma_allocator:              vma.Allocator,
+	instance:          vk.Instance,
+	surface:           vk.SurfaceKHR,
+	physical_device:   vk.PhysicalDevice,
+	device:            vk.Device,
+	vma_allocator:     vma.Allocator,
 
 	// queue
-	gfx_queue_fam_idx:          u32,
-	graphics_queue:             vk.Queue,
+	gfx_queue_fam_idx: u32,
+	graphics_queue:    vk.Queue,
+	msaa_samples:      vk.SampleCountFlags,
+	upload_pool:       vk.CommandPool,
+}
+
+Engine :: struct {
+	vk_ctx:                     VulkanContext,
 
 	// swapchain
 	swapchain:                  vk.SwapchainKHR,
@@ -71,12 +76,10 @@ Engine :: struct {
 	shader_system:              ShaderSystem,
 
 	// graphics pipeline
-	pipeline:                   Pipeline,
-	particle_draw_pipeline:     Pipeline,
+	pipeline_registry:          PipelineRegistry,
 	descriptor_pool:            vk.DescriptorPool,
 	descriptor_set_layout:      vk.DescriptorSetLayout,
 	descriptor_sets:            [MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	particle_pipeline:          Pipeline,
 
 	// frame and sync resources
 	timeline_semaphore:         vk.Semaphore,
@@ -103,7 +106,6 @@ Engine :: struct {
 
 	// texture
 	texture_system:             TextureSystem,
-	msaa_samples:               vk.SampleCountFlags,
 }
 
 PointLight :: struct {

@@ -7,6 +7,26 @@ Pipeline :: struct {
 	pipeline: vk.Pipeline,
 }
 
+PipelineRegistry :: struct {
+	entries: map[string]Pipeline,
+}
+
+register_pipeline :: proc(reg: ^PipelineRegistry, name: string, pipeline: Pipeline) {
+	reg.entries[name] = pipeline
+}
+
+get_pipeline :: proc(reg: ^PipelineRegistry, name: string) -> Pipeline {
+	return reg.entries[name]
+}
+
+destroy_pipeline_registry :: proc(device: vk.Device, reg: ^PipelineRegistry) {
+	for _, pipeline in reg.entries {
+		vk.DestroyPipeline(device, pipeline.pipeline, nil)
+		vk.DestroyPipelineLayout(device, pipeline.layout, nil)
+	}
+	delete(reg.entries)
+}
+
 create_graphics_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderModule) -> Pipeline {
 	push_constant_range := vk.PushConstantRange {
 		stageFlags = {.VERTEX, .FRAGMENT},
@@ -23,7 +43,7 @@ create_graphics_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderModule) 
 	}
 
 	pipeline: Pipeline
-	vk_check(vk.CreatePipelineLayout(self.device, &pipeline_layout_info, nil, &pipeline.layout))
+	vk_check(vk.CreatePipelineLayout(self.vk_ctx.device, &pipeline_layout_info, nil, &pipeline.layout))
 
 	shader_stages := [2]vk.PipelineShaderStageCreateInfo {
 		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.VERTEX}, module = shader_module, pName = VERTEX_ENTRY},
@@ -72,7 +92,7 @@ create_graphics_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderModule) 
 
 	multisample_info := vk.PipelineMultisampleStateCreateInfo {
 		sType                = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-		rasterizationSamples = self.msaa_samples,
+		rasterizationSamples = self.vk_ctx.msaa_samples,
 		sampleShadingEnable  = false,
 	}
 
@@ -125,7 +145,7 @@ create_graphics_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderModule) 
 		layout              = pipeline.layout,
 	}
 
-	vk_check(vk.CreateGraphicsPipelines(self.device, 0, 1, &pipeline_info, nil, &pipeline.pipeline))
+	vk_check(vk.CreateGraphicsPipelines(self.vk_ctx.device, 0, 1, &pipeline_info, nil, &pipeline.pipeline))
 
 	return pipeline
 }
@@ -144,7 +164,7 @@ create_particle_draw_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderMod
 	}
 
 	pipeline: Pipeline
-	vk_check(vk.CreatePipelineLayout(self.device, &pipeline_layout_info, nil, &pipeline.layout))
+	vk_check(vk.CreatePipelineLayout(self.vk_ctx.device, &pipeline_layout_info, nil, &pipeline.layout))
 
 	shader_stages := [2]vk.PipelineShaderStageCreateInfo {
 		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.VERTEX}, module = shader_module, pName = VERTEX_ENTRY},
@@ -187,7 +207,7 @@ create_particle_draw_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderMod
 
 	multisample_info := vk.PipelineMultisampleStateCreateInfo {
 		sType                = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-		rasterizationSamples = self.msaa_samples,
+		rasterizationSamples = self.vk_ctx.msaa_samples,
 	}
 
 	color_blend_attach := vk.PipelineColorBlendAttachmentState {
@@ -238,7 +258,7 @@ create_particle_draw_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderMod
 		layout              = pipeline.layout,
 	}
 
-	vk_check(vk.CreateGraphicsPipelines(self.device, 0, 1, &pipeline_info, nil, &pipeline.pipeline))
+	vk_check(vk.CreateGraphicsPipelines(self.vk_ctx.device, 0, 1, &pipeline_info, nil, &pipeline.pipeline))
 
 	return pipeline
 }
@@ -257,7 +277,7 @@ create_particle_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderModule) 
 	}
 
 	pipeline: Pipeline
-	vk_check(vk.CreatePipelineLayout(self.device, &pipeline_layout_info, nil, &pipeline.layout))
+	vk_check(vk.CreatePipelineLayout(self.vk_ctx.device, &pipeline_layout_info, nil, &pipeline.layout))
 	stage := vk.PipelineShaderStageCreateInfo {
 		sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
 		stage  = {.COMPUTE},
@@ -271,7 +291,7 @@ create_particle_pipeline :: proc(self: ^Engine, shader_module: vk.ShaderModule) 
 		layout = pipeline.layout,
 	}
 
-	vk_check(vk.CreateComputePipelines(self.device, 0, 1, &compute_info, nil, &pipeline.pipeline))
+	vk_check(vk.CreateComputePipelines(self.vk_ctx.device, 0, 1, &compute_info, nil, &pipeline.pipeline))
 
 	return pipeline
 }

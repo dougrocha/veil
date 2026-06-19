@@ -17,7 +17,7 @@ GpuImage :: struct {
 }
 
 create_image :: proc(
-	engine: ^Engine,
+	ctx: ^VulkanContext,
 	extent: vk.Extent3D,
 	format: vk.Format,
 	image_usage_flags: vk.ImageUsageFlags,
@@ -55,7 +55,7 @@ create_image :: proc(
 
 	vk_check(
 		vma.create_image(
-			engine.vma_allocator,
+			ctx.vma_allocator,
 			image_info,
 			vma.Allocation_Create_Info{usage = .Auto, required_flags = {.DEVICE_LOCAL}, flags = alloc_flags},
 			&gpu_img.image,
@@ -67,13 +67,13 @@ create_image :: proc(
 	return gpu_img
 }
 
-destroy_image :: proc(engine: ^Engine, img: GpuImage) {
-	vk.DestroyImageView(engine.device, img.image_view, nil)
-	vma.destroy_image(engine.vma_allocator, img.image, img.alloc)
+destroy_image :: proc(ctx: ^VulkanContext, img: GpuImage) {
+	vk.DestroyImageView(ctx.device, img.image_view, nil)
+	vma.destroy_image(ctx.vma_allocator, img.image, img.alloc)
 }
 
 create_image_view :: proc(
-	engine: ^Engine,
+	ctx: ^VulkanContext,
 	img: vk.Image,
 	format: vk.Format,
 	aspect: vk.ImageAspectFlags,
@@ -97,7 +97,7 @@ create_image_view :: proc(
 		},
 	}
 	view: vk.ImageView
-	vk_check(vk.CreateImageView(engine.device, &info, nil, &view))
+	vk_check(vk.CreateImageView(ctx.device, &info, nil, &view))
 	return view
 }
 

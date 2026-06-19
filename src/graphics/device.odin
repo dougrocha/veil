@@ -10,7 +10,7 @@ import vk "vendor:vulkan"
 
 VALIDATION_LAYER_NAME :: "VK_LAYER_KHRONOS_validation"
 
-create_vulkan_instance :: proc(self: ^Engine) {
+create_vulkan_instance :: proc(ctx: ^VulkanContext) {
 	vk.load_proc_addresses_global(rawptr(sdl.Vulkan_GetVkGetInstanceProcAddr()))
 	assert(vk.CreateInstance != nil, "vulkan function pointers not loaded")
 
@@ -48,21 +48,21 @@ create_vulkan_instance :: proc(self: ^Engine) {
 		ppEnabledExtensionNames = raw_data(extensions),
 	}
 
-	vk_check(vk.CreateInstance(&create_info, nil, &self.instance))
+	vk_check(vk.CreateInstance(&create_info, nil, &ctx.instance))
 
-	vk.load_proc_addresses_instance(self.instance)
+	vk.load_proc_addresses_instance(ctx.instance)
 }
 
 create_vulkan_surface :: proc(app: ^App) -> (vk.SurfaceKHR, bool) {
 	surface: vk.SurfaceKHR
-	if !sdl.Vulkan_CreateSurface(app.window, app.engine.instance, nil, &surface) {
+	if !sdl.Vulkan_CreateSurface(app.window, app.engine.vk_ctx.instance, nil, &surface) {
 		log.errorf("Failed to create vulkan surface: %s", sdl.GetError())
 		return {}, false
 	}
 	return surface, true
 }
 
-find_physical_device :: proc(self: ^Engine) -> (vk.PhysicalDevice, bool) {
+find_physical_device :: proc(self: ^VulkanContext) -> (vk.PhysicalDevice, bool) {
 	device_count: u32 = 0
 	vk.EnumeratePhysicalDevices(self.instance, &device_count, nil)
 	if device_count == 0 {
@@ -104,22 +104,22 @@ find_physical_device :: proc(self: ^Engine) -> (vk.PhysicalDevice, bool) {
 	return physical_device, true
 }
 
-find_graphics_queue :: proc(self: ^Engine) -> bool {
+find_graphics_queue :: proc(ctx: ^VulkanContext) -> bool {
 	queue_fam_count: u32 = 0
-	vk.GetPhysicalDeviceQueueFamilyProperties2(self.physical_device, &queue_fam_count, nil)
+	vk.GetPhysicalDeviceQueueFamilyProperties2(ctx.physical_device, &queue_fam_count, nil)
 	queue_fam_props := make([]vk.QueueFamilyProperties2, queue_fam_count, context.temp_allocator)
 	for &p in queue_fam_props {p.sType = .QUEUE_FAMILY_PROPERTIES_2}
-	vk.GetPhysicalDeviceQueueFamilyProperties2(self.physical_device, &queue_fam_count, raw_data(queue_fam_props))
+	vk.GetPhysicalDeviceQueueFamilyProperties2(ctx.physical_device, &queue_fam_count, raw_data(queue_fam_props))
 
 	for i in 0 ..< queue_fam_count {
 		has_present_support: b32
-		vk.GetPhysicalDeviceSurfaceSupportKHR(self.physical_device, i, self.surface, &has_present_support)
+		vk.GetPhysicalDeviceSurfaceSupportKHR(ctx.physical_device, i, ctx.surface, &has_present_support)
 
 		props := queue_fam_props[i]
 		if .GRAPHICS in props.queueFamilyProperties.queueFlags &&
 		   .COMPUTE in props.queueFamilyProperties.queueFlags &&
 		   has_present_support {
-			self.gfx_queue_fam_idx = i
+			ctx.gfx_queue_fam_idx = i
 			return true
 		}
 	}
@@ -128,7 +128,7 @@ find_graphics_queue :: proc(self: ^Engine) -> bool {
 	return false
 }
 
-create_logical_device :: proc(self: ^Engine) -> bool {
+create_logical_device :: proc(ctx: ^VulkanContext) -> bool {
 	features_14 := vk.PhysicalDeviceVulkan14Features {
 		sType = .PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
 	}
@@ -148,7 +148,7 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 		sType = .PHYSICAL_DEVICE_FEATURES_2,
 		pNext = &features_11,
 	}
-	vk.GetPhysicalDeviceFeatures2(self.physical_device, &supported_features)
+	vk.GetPhysicalDeviceFeatures2(ctx.physical_device, &supported_features)
 
 	if !features_13.dynamicRendering ||
 	   !features_13.synchronization2 ||
@@ -198,7 +198,7 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 	queue_priorities := []f32{1.0}
 	gfx_queue_info := vk.DeviceQueueCreateInfo {
 		sType            = .DEVICE_QUEUE_CREATE_INFO,
-		queueFamilyIndex = self.gfx_queue_fam_idx,
+		queueFamilyIndex = ctx.gfx_queue_fam_idx,
 		queueCount       = 1,
 		pQueuePriorities = raw_data(queue_priorities),
 	}
@@ -215,11 +215,11 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 		pEnabledFeatures        = nil,
 	}
 
-	vk_check(vk.CreateDevice(self.physical_device, &dev_create_info, nil, &self.device))
+	vk_check(vk.CreateDevice(ctx.physical_device, &dev_create_info, nil, &ctx.device))
 
-	vk.load_proc_addresses_device(self.device)
-	vk.GetDeviceQueue(self.device, self.gfx_queue_fam_idx, 0, &self.graphics_queue)
-	if self.graphics_queue == nil {
+	vk.load_proc_addresses_device(ctx.device)
+	vk.GetDeviceQueue(ctx.device, ctx.gfx_queue_fam_idx, 0, &ctx.graphics_queue)
+	if ctx.graphics_queue == nil {
 		log.errorf("Could not get graphics queue")
 		return false
 	}
@@ -227,19 +227,19 @@ create_logical_device :: proc(self: ^Engine) -> bool {
 	return true
 }
 
-initialize_vma :: proc(self: ^Engine) {
+initialize_vma :: proc(ctx: ^VulkanContext) {
 	vulkan_functions := vma.create_vulkan_functions()
 
 	create_info := vma.Allocator_Create_Info {
 		flags              = {.Buffer_Device_Address},
-		instance           = self.instance,
-		physical_device    = self.physical_device,
-		device             = self.device,
+		instance           = ctx.instance,
+		physical_device    = ctx.physical_device,
+		device             = ctx.device,
 		vulkan_api_version = vk.API_VERSION_1_4,
 		vulkan_functions   = &vulkan_functions,
 	}
 
-	vk_check(vma.create_allocator(create_info, &self.vma_allocator))
+	vk_check(vma.create_allocator(create_info, &ctx.vma_allocator))
 }
 
 vk_messenger_callback :: proc "system" (

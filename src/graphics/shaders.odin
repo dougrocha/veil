@@ -29,7 +29,7 @@ create_shader_system :: proc(self: ^Engine) -> bool {
 destroy_shader_system :: proc(self: ^Engine) {
 	ss := &self.shader_system
 	for _, module in ss.modules {
-		vk.DestroyShaderModule(self.device, module, nil)
+		vk.DestroyShaderModule(self.vk_ctx.device, module, nil)
 	}
 	delete(ss.modules)
 	ss.global_session->release()
@@ -136,7 +136,7 @@ load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	}
 
 	vk_module: vk.ShaderModule
-	vk_check(vk.CreateShaderModule(self.device, &module_info, nil, &vk_module))
+	vk_check(vk.CreateShaderModule(self.vk_ctx.device, &module_info, nil, &vk_module))
 	ss.modules[module_name] = vk_module
 
 	return true

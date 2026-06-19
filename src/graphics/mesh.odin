@@ -53,19 +53,19 @@ ModelSystem :: struct {
 
 create_model_system :: proc(engine: ^Engine) {
 	total_size := vk.DeviceSize(size_of(GpuTransform) * MAX_MODEL_INSTANCES)
-	engine.model_system.transforms_buffer = create_buffer(engine, total_size, .MappedStorage)
+	engine.model_system.transforms_buffer = create_buffer(&engine.vk_ctx, total_size, .MappedStorage)
 }
 
 destroy_model_system :: proc(engine: ^Engine) {
 	ms := &engine.model_system
 	for &model in ms.models {
 		for &mesh in model.meshes {
-			vma.destroy_buffer(engine.vma_allocator, mesh.vertex_buffer, mesh.vertex_allocation)
-			vma.destroy_buffer(engine.vma_allocator, mesh.index_buffer, mesh.index_allocation)
+			vma.destroy_buffer(engine.vk_ctx.vma_allocator, mesh.vertex_buffer, mesh.vertex_allocation)
+			vma.destroy_buffer(engine.vk_ctx.vma_allocator, mesh.index_buffer, mesh.index_allocation)
 		}
 		delete(model.meshes)
 	}
-	destroy_buffer(engine, ms.transforms_buffer)
+	destroy_buffer(&engine.vk_ctx, ms.transforms_buffer)
 	delete(ms.models)
 	delete(ms.model_map)
 	delete(ms.instances)
@@ -130,8 +130,13 @@ register_model :: proc(
 	indices: []u32,
 	material: MaterialHandle = INVALID_MATERIAL,
 ) -> ModelHandle {
-	vertex_buf := upload_buffer(engine, raw_data(vertices), vk.DeviceSize(size_of(Vertex) * len(vertices)), .Storage)
-	index_buf := upload_buffer(engine, raw_data(indices), vk.DeviceSize(size_of(u32) * len(indices)), .Index)
+	vertex_buf := upload_buffer(
+		&engine.vk_ctx,
+		raw_data(vertices),
+		vk.DeviceSize(size_of(Vertex) * len(vertices)),
+		.Storage,
+	)
+	index_buf := upload_buffer(&engine.vk_ctx, raw_data(indices), vk.DeviceSize(size_of(u32) * len(indices)), .Index)
 
 	material_handle := get_default_material(engine) if material == INVALID_MATERIAL else material
 

@@ -55,9 +55,9 @@ create_texture_system :: proc(engine: ^Engine, config: TextureSystemConfig) {
 destroy_texture_system :: proc(engine: ^Engine) {
 	ts := &engine.texture_system
 	for &t in ts.textures {
-		vk.DestroySampler(engine.device, t.sampler, nil)
-		vk.DestroyImageView(engine.device, t.image_view, nil)
-		vma.destroy_image(engine.vma_allocator, t.image, t.allocation)
+		vk.DestroySampler(engine.vk_ctx.device, t.sampler, nil)
+		vk.DestroyImageView(engine.vk_ctx.device, t.image_view, nil)
+		vma.destroy_image(engine.vk_ctx.vma_allocator, t.image, t.allocation)
 	}
 	delete(ts.textures)
 	delete(ts.texture_map)
@@ -104,20 +104,20 @@ upload_texture :: proc(
 	ts := &engine.texture_system
 	image_size := vk.DeviceSize(width * height * channels)
 
-	staging := create_buffer(engine, image_size, .Staging)
-	defer destroy_buffer(engine, staging)
+	staging := create_buffer(&engine.vk_ctx, image_size, .Staging)
+	defer destroy_buffer(&engine.vk_ctx, staging)
 	mem.copy(staging.alloc_info.mapped_data, pixels, int(image_size))
 
 	mip_levels := u32(math.floor(math.log2(f32(max(width, height)))) + 1)
 	gpu_img := create_image(
-		engine,
+		&engine.vk_ctx,
 		{width, height, 1},
 		TEXTURE_FORMAT,
 		{.TRANSFER_SRC, .TRANSFER_DST, .SAMPLED},
 		mip_levels = mip_levels,
 	)
 
-	cmd := begin_single_time_commands(engine)
+	cmd := begin_single_time_commands(&engine.vk_ctx)
 	transition_image_layout(
 		cmd,
 		gpu_img.image,
@@ -131,7 +131,7 @@ upload_texture :: proc(
 		mip_levels,
 	)
 	copy_buffer_to_image(cmd, staging.buffer, gpu_img.image, width, height)
-	end_single_time_commands(engine, &cmd)
+	end_single_time_commands(&engine.vk_ctx, &cmd)
 	// transitioned to SHADER_READ_ONLY_OPTIMAL while generating mipmaps
 
 	generate_mipmaps(engine, gpu_img.image, TEXTURE_FORMAT, width, height, mip_levels)
@@ -145,8 +145,8 @@ upload_texture :: proc(
 		channel_count    = 4, // set to four cause our TEXTURE_FORMAT is hard coded
 		has_transparency = has_transparency,
 	}
-	create_texture_image_view(engine, &t)
-	create_texture_sampler(engine, &t)
+	create_texture_image_view(&engine.vk_ctx, &t)
+	create_texture_sampler(&engine.vk_ctx, &t)
 
 	index := u32(len(engine.texture_system.textures))
 	append(&engine.texture_system.textures, t)
@@ -163,13 +163,13 @@ get_default_texture :: proc(engine: ^Engine) -> TextureHandle {
 
 generate_mipmaps :: proc(engine: ^Engine, image: vk.Image, format: vk.Format, width, height, mip_levels: u32) {
 	format_props: vk.FormatProperties
-	vk.GetPhysicalDeviceFormatProperties(engine.physical_device, format, &format_props)
+	vk.GetPhysicalDeviceFormatProperties(engine.vk_ctx.physical_device, format, &format_props)
 
 	if .SAMPLED_IMAGE_FILTER_LINEAR not_in format_props.optimalTilingFeatures {
 		log.panicf("Texture image format does not support linear blitting")
 	}
 
-	cmd := begin_single_time_commands(engine)
+	cmd := begin_single_time_commands(&engine.vk_ctx)
 
 	mip_width, mip_height := width, height
 	for i in 1 ..< mip_levels {
@@ -238,11 +238,11 @@ generate_mipmaps :: proc(engine: ^Engine, image: vk.Image, format: vk.Format, wi
 		1,
 		mip_levels - 1,
 	)
-	end_single_time_commands(engine, &cmd)
+	end_single_time_commands(&engine.vk_ctx, &cmd)
 }
 
-get_max_usable_sample_count :: proc(engine: ^Engine) -> vk.SampleCountFlags {
-	properties := get_physical_device_properties(engine)
+get_max_usable_sample_count :: proc(ctx: ^VulkanContext) -> vk.SampleCountFlags {
+	properties := get_physical_device_properties(ctx)
 
 	counts := properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts
 
@@ -256,12 +256,12 @@ get_max_usable_sample_count :: proc(engine: ^Engine) -> vk.SampleCountFlags {
 	return {._1}
 }
 
-create_texture_image_view :: proc(engine: ^Engine, t: ^Texture) {
-	t.image_view = create_image_view(engine, t.image, TEXTURE_FORMAT, {.COLOR}, mip_levels = t.mip_levels)
+create_texture_image_view :: proc(ctx: ^VulkanContext, t: ^Texture) {
+	t.image_view = create_image_view(ctx, t.image, TEXTURE_FORMAT, {.COLOR}, mip_levels = t.mip_levels)
 }
 
-create_texture_sampler :: proc(engine: ^Engine, t: ^Texture) {
-	properties := get_physical_device_properties(engine)
+create_texture_sampler :: proc(ctx: ^VulkanContext, t: ^Texture) {
+	properties := get_physical_device_properties(ctx)
 
 	sampler_info := vk.SamplerCreateInfo {
 		sType                   = .SAMPLER_CREATE_INFO,
@@ -282,6 +282,6 @@ create_texture_sampler :: proc(engine: ^Engine, t: ^Texture) {
 		unnormalizedCoordinates = false,
 	}
 
-	vk_check(vk.CreateSampler(engine.device, &sampler_info, nil, &t.sampler))
+	vk_check(vk.CreateSampler(ctx.device, &sampler_info, nil, &t.sampler))
 }
 

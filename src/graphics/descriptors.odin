@@ -32,7 +32,7 @@ create_descriptor_set_layout :: proc(self: ^Engine) {
 		pBindings    = raw_data(bindings[:]),
 	}
 
-	vk_check(vk.CreateDescriptorSetLayout(self.device, &layout_info, nil, &self.descriptor_set_layout))
+	vk_check(vk.CreateDescriptorSetLayout(self.vk_ctx.device, &layout_info, nil, &self.descriptor_set_layout))
 }
 
 create_descriptor_pool :: proc(engine: ^Engine) {
@@ -52,7 +52,7 @@ create_descriptor_pool :: proc(engine: ^Engine) {
 		pPoolSizes    = raw_data(pool_sizes),
 	}
 
-	vk_check(vk.CreateDescriptorPool(engine.device, &pool_info, nil, &engine.descriptor_pool))
+	vk_check(vk.CreateDescriptorPool(engine.vk_ctx.device, &pool_info, nil, &engine.descriptor_pool))
 }
 
 create_descriptor_sets :: proc(engine: ^Engine) {
@@ -65,7 +65,7 @@ create_descriptor_sets :: proc(engine: ^Engine) {
 		pSetLayouts        = raw_data(layouts[:]),
 	}
 
-	vk_check(vk.AllocateDescriptorSets(engine.device, &alloc_info, raw_data(engine.descriptor_sets[:])))
+	vk_check(vk.AllocateDescriptorSets(engine.vk_ctx.device, &alloc_info, raw_data(engine.descriptor_sets[:])))
 }
 
 // Uploads the texture using the index
@@ -90,6 +90,6 @@ update_texture_descriptor :: proc(engine: ^Engine, index: u32) {
 			descriptorType  = .COMBINED_IMAGE_SAMPLER,
 			pImageInfo      = &image_info,
 		}
-		vk.UpdateDescriptorSets(engine.device, 1, &descriptor_write, 0, nil)
+		vk.UpdateDescriptorSets(engine.vk_ctx.device, 1, &descriptor_write, 0, nil)
 	}
 }
