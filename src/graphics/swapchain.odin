@@ -3,7 +3,7 @@ package graphics
 import vk "vendor:vulkan"
 
 create_swapchain :: proc(self: ^Engine, width, height: u32) {
-	self.swapchain_extent = {width, height}
+	self.swapchain.extent = {width, height}
 
 	surface_caps: vk.SurfaceCapabilitiesKHR
 	vk_check(
@@ -21,7 +21,7 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 		minImageCount    = u32(requested_image_count),
 		imageFormat      = SWAPCHAIN_FORMAT,
 		imageColorSpace  = .SRGB_NONLINEAR,
-		imageExtent      = self.swapchain_extent,
+		imageExtent      = self.swapchain.extent,
 		imageArrayLayers = 1,
 		imageUsage       = {.COLOR_ATTACHMENT, .TRANSFER_DST},
 		imageSharingMode = .EXCLUSIVE,
@@ -31,18 +31,18 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 		clipped          = true,
 	}
 
-	vk_check(vk.CreateSwapchainKHR(self.vk_ctx.device, &swapchain_create_info, nil, &self.swapchain))
+	vk_check(vk.CreateSwapchainKHR(self.vk_ctx.device, &swapchain_create_info, nil, &self.swapchain.handle))
 
 	image_count: u32 = 0
-	vk.GetSwapchainImagesKHR(self.vk_ctx.device, self.swapchain, &image_count, nil)
-	self.swapchain_images = make([]vk.Image, image_count)
-	vk.GetSwapchainImagesKHR(self.vk_ctx.device, self.swapchain, &image_count, raw_data(self.swapchain_images))
-	self.swapchain_image_view = make([]vk.ImageView, image_count)
+	vk.GetSwapchainImagesKHR(self.vk_ctx.device, self.swapchain.handle, &image_count, nil)
+	self.swapchain.images = make([]vk.Image, image_count)
+	vk.GetSwapchainImagesKHR(self.vk_ctx.device, self.swapchain.handle, &image_count, raw_data(self.swapchain.images))
+	self.swapchain.image_views = make([]vk.ImageView, image_count)
 
-	for i in 0 ..< len(self.swapchain_images) {
-		self.swapchain_image_view[i] = create_image_view(
+	for i in 0 ..< len(self.swapchain.images) {
+		self.swapchain.image_views[i] = create_image_view(
 			&self.vk_ctx,
-			self.swapchain_images[i],
+			self.swapchain.images[i],
 			SWAPCHAIN_FORMAT,
 			{.COLOR},
 		)
@@ -51,48 +51,62 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 }
 
 cleanup_swapchain :: proc(self: ^Engine) {
-	destroy_image(&self.vk_ctx, self.color_image)
-	destroy_image(&self.vk_ctx, self.depth_image)
-	destroy_image(&self.vk_ctx, self.draw_image)
+	destroy_image(&self.vk_ctx, self.swapchain.color_image)
+	destroy_image(&self.vk_ctx, self.swapchain.depth_image)
+	destroy_image(&self.vk_ctx, self.swapchain.draw_image)
 
-	for view in self.swapchain_image_view {
+	for view in self.swapchain.image_views {
 		vk.DestroyImageView(self.vk_ctx.device, view, nil)
 	}
-	delete(self.swapchain_images)
-	delete(self.swapchain_image_view)
+	delete(self.swapchain.images)
+	delete(self.swapchain.image_views)
 
-	vk.DestroySwapchainKHR(self.vk_ctx.device, self.swapchain, nil)
+	vk.DestroySwapchainKHR(self.vk_ctx.device, self.swapchain.handle, nil)
 }
 
 create_color_resources :: proc(engine: ^Engine) {
-	engine.color_image = create_image(
+	engine.swapchain.color_image = create_image(
 		&engine.vk_ctx,
-		{engine.swapchain_extent.width, engine.swapchain_extent.height, 1},
+		{engine.swapchain.extent.width, engine.swapchain.extent.height, 1},
 		DRAW_FORMAT,
 		{.TRANSIENT_ATTACHMENT, .COLOR_ATTACHMENT},
 		samples = engine.vk_ctx.msaa_samples,
 	)
-	engine.color_image.image_view = create_image_view(&engine.vk_ctx, engine.color_image.image, DRAW_FORMAT, {.COLOR})
+	engine.swapchain.color_image.image_view = create_image_view(
+		&engine.vk_ctx,
+		engine.swapchain.color_image.image,
+		DRAW_FORMAT,
+		{.COLOR},
+	)
 }
 
 create_depth_resources :: proc(engine: ^Engine) {
-	engine.depth_image = create_image(
+	engine.swapchain.depth_image = create_image(
 		&engine.vk_ctx,
-		{engine.swapchain_extent.width, engine.swapchain_extent.height, 1},
+		{engine.swapchain.extent.width, engine.swapchain.extent.height, 1},
 		DEPTH_FORMAT,
 		{.DEPTH_STENCIL_ATTACHMENT},
 		samples = engine.vk_ctx.msaa_samples,
 	)
-	engine.depth_image.image_view = create_image_view(&engine.vk_ctx, engine.depth_image.image, DEPTH_FORMAT, {.DEPTH})
+	engine.swapchain.depth_image.image_view = create_image_view(
+		&engine.vk_ctx,
+		engine.swapchain.depth_image.image,
+		DEPTH_FORMAT,
+		{.DEPTH},
+	)
 }
 
 create_draw_image :: proc(engine: ^Engine) {
-	engine.draw_image = create_image(
+	engine.swapchain.draw_image = create_image(
 		&engine.vk_ctx,
-		{engine.swapchain_extent.width, engine.swapchain_extent.height, 1},
+		{engine.swapchain.extent.width, engine.swapchain.extent.height, 1},
 		DRAW_FORMAT,
 		{.COLOR_ATTACHMENT, .TRANSFER_SRC, .TRANSFER_DST, .STORAGE},
 	)
-	engine.draw_image.image_view = create_image_view(&engine.vk_ctx, engine.draw_image.image, DRAW_FORMAT, {.COLOR})
+	engine.swapchain.draw_image.image_view = create_image_view(
+		&engine.vk_ctx,
+		engine.swapchain.draw_image.image,
+		DRAW_FORMAT,
+		{.COLOR},
+	)
 }
-

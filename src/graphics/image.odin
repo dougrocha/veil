@@ -112,6 +112,7 @@ transition_image_layout :: proc(
 	aspect: vk.ImageAspectFlags,
 	mip_levels: u32 = 1,
 	base_mip_level: u32 = 0,
+	layer_count: u32 = 1,
 ) {
 	barrier := vk.ImageMemoryBarrier2 {
 		sType = .IMAGE_MEMORY_BARRIER_2,
@@ -129,7 +130,7 @@ transition_image_layout :: proc(
 			baseMipLevel = base_mip_level,
 			levelCount = mip_levels,
 			baseArrayLayer = 0,
-			layerCount = 1,
+			layerCount = layer_count,
 		},
 	}
 

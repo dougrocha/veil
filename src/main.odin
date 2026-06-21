@@ -1,7 +1,7 @@
 package main
 
 import "core:log"
-import "core:math/linalg"
+import "core:math"
 import "core:time"
 
 import sdl "vendor:sdl3"
@@ -41,146 +41,72 @@ main :: proc() {
 	}
 	defer gfx.engine_shutdown(&app.engine)
 
-	// viking_texture := gfx.load_texture(&app.engine, "assets/textures/viking_room.png")
-	// viking_model := gfx.load_model(&app.engine, "assets/models/viking_room.obj", viking_texture)
-	// correction := linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(-90)), gfx.Vec3{1, 0, 0})
-	// gfx.spawn_model(
-	// 	&app.engine,
-	// 	viking_model,
-	// 	gfx.Transform{translation = {0, 0, 0}, rotation = correction, scale = {1, 1, 1}},
-	// )
-
-	orange_mat := gfx.create_material(
-		&app.engine,
-		"orange",
-		gfx.Material{base_color = {1, 0.5, 0, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
-	)
-	cube_model := gfx.create_cube(&app.engine, "cube", orange_mat)
-	cube_instance := gfx.spawn_model(&app.engine, cube_model, gfx.transform_create())
-
-	light_mat := gfx.create_material(
-		&app.engine,
-		"light",
-		gfx.Material{base_color = {1, 1, 1, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
-	)
-	light_cube_model := gfx.create_cube(&app.engine, "light_cube", light_mat, half_size = {0.1, 0.1, 0.1})
-	gfx.spawn_model(&app.engine, light_cube_model, gfx.transform_create(translation = {1.0, 2.0, -4.0}))
-
-	red_light_mat := gfx.create_material(
-		&app.engine,
-		"red_light",
-		gfx.Material{base_color = {1, 0, 0, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
-	)
-	red_light_cube_model := gfx.create_cube(&app.engine, "red_light_cube", red_light_mat, half_size = {0.1, 0.1, 0.1})
-	gfx.spawn_model(&app.engine, red_light_cube_model, gfx.transform_create(translation = {-2.0, 1.0, 0.0}))
-
-	blue_light_mat := gfx.create_material(
-		&app.engine,
-		"blue_light",
-		gfx.Material{base_color = {0, 0, 1, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
-	)
-	blue_light_cube_model := gfx.create_cube(
-		&app.engine,
-		"blue_light_cube",
-		blue_light_mat,
-		half_size = {0.1, 0.1, 0.1},
-	)
-	gfx.spawn_model(&app.engine, blue_light_cube_model, gfx.transform_create(translation = {0.0, 1.0, 2.0}))
-
 	wood_floor := gfx.load_texture(&app.engine, "assets/textures/wood_floor.png")
-	plane_mat := gfx.create_material(
+	wood_floor_mat := gfx.create_material(
 		&app.engine,
 		"plane_mat",
-		gfx.Material{base_color = {0.25, 0.25, 0.25, 1}, base_color_texture = wood_floor},
+		gfx.Material{base_color = {1, 1, 1, 1}, base_color_texture = wood_floor},
 	)
-	plane_model := gfx.create_plane(&app.engine, "plane", plane_mat, half_size = {1, 1})
-	gfx.spawn_model(&app.engine, plane_model, gfx.transform_create(translation = {2, 0, 0}))
+	wood_floor_model := gfx.create_plane(&app.engine, "wood_floor", wood_floor_mat, half_size = {5, 5})
+	gfx.spawn(&app.engine, wood_floor_model, gfx.transform_create(translation = {0, 0, 0}))
 
-	grass_texture := gfx.load_texture(&app.engine, "assets/textures/grass.png")
-	grass_mat := gfx.create_material(
-		&app.engine,
-		"grass_mat",
-		gfx.Material{base_color = {1, 1, 1, 1}, base_color_texture = grass_texture, alpha_mode = .Mask},
-	)
-	grass_plane_model := gfx.create_plane(&app.engine, "grass_plane", grass_mat, half_size = {1, 1})
-	grass_rotation := linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(90)), gfx.Vec3{1, 0, 0})
+	space_skybox_tex := gfx.load_cubemap_texture(&app.engine, "assets/textures/StandardCubeMap.png")
+	gfx.set_skybox_texture(&app.engine, space_skybox_tex)
 
-	transparent_mat := gfx.create_material(
+	gfx.spawn_point_light(
 		&app.engine,
-		"transparent_mat",
-		gfx.Material {
-			base_color = {0.2, 0.6, 1.0, 0.4},
-			base_color_texture = gfx.get_default_texture(&app.engine),
-			alpha_mode = .Blend,
+		gfx.PointLight {
+			pos = {1, 2, -4},
+			color = {1, 1, 1},
+			constant = 1,
+			linear = 0.09,
+			quadratic = 0.032,
+			diffuse_intensity = 1.0,
+			specular_intensity = 0.5,
 		},
 	)
-	transparent_plane_model := gfx.create_plane(&app.engine, "transparent_plane", transparent_mat, half_size = {1, 1})
-	gfx.spawn_model(
+	gfx.spawn_point_light(
 		&app.engine,
-		transparent_plane_model,
-		gfx.transform_create(translation = {2, 1, 1}, rotation = grass_rotation),
-	)
-
-	transparent_red_mat := gfx.create_material(
-		&app.engine,
-		"transparent_red_mat",
-		gfx.Material {
-			base_color = {1.0, 0.2, 0.2, 0.4},
-			base_color_texture = gfx.get_default_texture(&app.engine),
-			alpha_mode = .Blend,
+		gfx.PointLight {
+			pos = {-2, 1, 0},
+			color = {1, 0, 0},
+			constant = 1,
+			linear = 0.09,
+			quadratic = 0.032,
+			diffuse_intensity = 1.0,
+			specular_intensity = 0.5,
 		},
 	)
-	transparent_red_plane := gfx.create_plane(
+	gfx.spawn_point_light(
 		&app.engine,
-		"transparent_red_plane",
-		transparent_red_mat,
-		half_size = {1, 1},
-	)
-	gfx.spawn_model(
-		&app.engine,
-		transparent_red_plane,
-		gfx.transform_create(translation = {2, 1, 1.5}, rotation = grass_rotation),
-	)
-
-	transparent_green_mat := gfx.create_material(
-		&app.engine,
-		"transparent_green_mat",
-		gfx.Material {
-			base_color = {0.2, 1.0, 0.2, 0.4},
-			base_color_texture = gfx.get_default_texture(&app.engine),
-			alpha_mode = .Blend,
+		gfx.PointLight {
+			pos = {0, 1, 2},
+			color = {0, 0, 1},
+			constant = 1,
+			linear = 0.09,
+			quadratic = 0.032,
+			diffuse_intensity = 1.0,
+			specular_intensity = 0.5,
 		},
 	)
-	transparent_green_plane := gfx.create_plane(
+	gfx.spawn_spot_light(
 		&app.engine,
-		"transparent_green_plane",
-		transparent_green_mat,
-		half_size = {1, 1},
-	)
-	gfx.spawn_model(
-		&app.engine,
-		transparent_green_plane,
-		gfx.transform_create(translation = {2, 1, 2}, rotation = grass_rotation),
-	)
-
-	gfx.spawn_model(
-		&app.engine,
-		grass_plane_model,
-		gfx.transform_create(translation = {2, 1, 0}, rotation = grass_rotation),
-	)
-	gfx.spawn_model(
-		&app.engine,
-		grass_plane_model,
-		gfx.transform_create(translation = {2.25, 1, 0.001}, rotation = grass_rotation),
-	)
-	gfx.spawn_model(
-		&app.engine,
-		grass_plane_model,
-		gfx.transform_create(translation = {1.75, 1, -0.001}, rotation = grass_rotation),
+		gfx.SpotLight {
+			pos = {2, 2, 4},
+			direction = {0, -0.26, -1},
+			color = {0.4, 0.5, 0.7},
+			inner_cutoff = math.cos(math.to_radians(f32(12.5))),
+			outer_cutoff = math.cos(math.to_radians(f32(22.5))),
+			constant = 1,
+			linear = 0.09,
+			quadratic = 0.032,
+			diffuse_intensity = 1.0,
+			specular_intensity = 1.0,
+		},
 	)
 
-
-	angle: f32 = 0
+	sphere_model := gfx.create_sphere(&app.engine, "sphere")
+	sphere := gfx.spawn(&app.engine, sphere_model, gfx.transform_create(translation = {0, 2.5, 0}))
 
 	main_loop: for {
 		ev: sdl.Event
@@ -197,29 +123,26 @@ main :: proc() {
 			case .WINDOW_PIXEL_SIZE_CHANGED:
 				app.width = u32(ev.window.data1)
 				app.height = u32(ev.window.data2)
-				app.engine.require_swapchain_recreate = true
+				app.engine.swapchain.require_recreate = true
 			}
 		}
 
 		now := time.now()
-		app.engine.delta_time = f32(time.duration_seconds(time.diff(app.engine.last_frame_time, now)))
-		app.engine.last_frame_time = now
+		app.engine.clock.delta_time = f32(time.duration_seconds(time.diff(app.engine.clock.last_frame_time, now)))
+		app.engine.clock.last_frame_time = now
 
-		app.engine.fps_frame_count += 1
-		app.engine.fps_timer += app.engine.delta_time
-		if app.engine.fps_timer >= 1.0 {
-			log.infof("FPS: %d", app.engine.fps_frame_count)
-			app.engine.fps_frame_count = 0
-			app.engine.fps_timer = 0
+		app.engine.clock.fps_frame_count += 1
+		app.engine.clock.fps_timer += app.engine.clock.delta_time
+		if app.engine.clock.fps_timer >= 1.0 {
+			log.infof("FPS: %d", app.engine.clock.fps_frame_count)
+			app.engine.clock.fps_frame_count = 0
+			app.engine.clock.fps_timer = 0
 		}
 
-		angle += app.engine.delta_time * 30
-		app.engine.model_system.instances[cube_instance.handle].transform.rotation = linalg.quaternion_angle_axis_f32(
-			linalg.to_radians(angle),
-			gfx.Vec3{0, 1, 0},
-		)
+		elapsed := f32(time.duration_seconds(time.diff(app.engine.clock.start_time, now)))
+		gfx.get_instance(&app.engine, sphere).transform.translation.x = math.sin(elapsed)
 
-		process_input(&app.engine, app.engine.delta_time)
+		process_input(&app.engine, app.engine.clock.delta_time)
 		gfx.engine_render(&app)
 	}
 }

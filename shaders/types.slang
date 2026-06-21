@@ -16,11 +16,15 @@ struct PointLight {
     float3 color;
     float linear;
     float quadratic;
+    float diffuse_intensity;
+    float specular_intensity;
 };
 
 struct DirectionalLight {
     float3 direction;
     float3 color;
+    float diffuse_intensity;
+    float specular_intensity;
 };
 
 struct SpotLight {
@@ -32,6 +36,8 @@ struct SpotLight {
     float constant;
     float linear;
     float quadratic;
+    float diffuse_intensity;
+    float specular_intensity;
 };
 
 struct SceneData {

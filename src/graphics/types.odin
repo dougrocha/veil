@@ -35,6 +35,27 @@ FrameResources :: struct {
 	image_acquired_semaphore:  vk.Semaphore,
 	render_complete_semaphore: vk.Semaphore,
 	deletion_queue:            DeletionQueue,
+	scene_data_buffer:         GpuBuffer,
+	particle_buffer:           GpuBuffer,
+}
+
+Swapchain :: struct {
+	handle:           vk.SwapchainKHR,
+	images:           []vk.Image,
+	image_views:      []vk.ImageView,
+	require_recreate: bool,
+	extent:           vk.Extent2D,
+	depth_image:      GpuImage,
+	color_image:      GpuImage,
+	draw_image:       GpuImage,
+}
+
+Clock :: struct {
+	start_time:      time.Time,
+	last_frame_time: time.Time,
+	delta_time:      f32,
+	fps_timer:       f32,
+	fps_frame_count: u32,
 }
 
 App :: struct {
@@ -60,76 +81,78 @@ VulkanContext :: struct {
 }
 
 Engine :: struct {
-	vk_ctx:                     VulkanContext,
+	vk_ctx:              VulkanContext,
 
 	// swapchain
-	swapchain:                  vk.SwapchainKHR,
-	swapchain_images:           []vk.Image,
-	swapchain_image_view:       []vk.ImageView,
-	require_swapchain_recreate: bool,
-	swapchain_extent:           vk.Extent2D,
-	depth_image:                GpuImage,
-	color_image:                GpuImage,
-	draw_image:                 GpuImage,
+	swapchain:           Swapchain,
 
 	// shaders
-	shader_system:              ShaderSystem,
+	shader_system:       ShaderSystem,
 
 	// graphics pipeline
-	pipeline_registry:          PipelineRegistry,
-	descriptor_pool:            vk.DescriptorPool,
-	descriptor_set_layout:      vk.DescriptorSetLayout,
-	descriptor_sets:            [MAX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	pipeline_registry:   PipelineRegistry,
 
 	// frame and sync resources
-	timeline_semaphore:         vk.Semaphore,
-	frame_resources:            [MAX_FRAMES_IN_FLIGHT]FrameResources,
-	frame_index:                u64,
-	next_signal_value:          u64,
+	timeline_semaphore:  vk.Semaphore,
+	frame_resources:     [MAX_FRAMES_IN_FLIGHT]FrameResources,
+	frame_index:         u64,
+	current_image_index: u32,
+	next_signal_value:   u64,
 
 	// buffers
-	model_system:               ModelSystem,
-	material_system:            MaterialSystem,
-	scene_data_buffers:         [MAX_FRAMES_IN_FLIGHT]GpuBuffer,
-	particle_buffers:           [MAX_FRAMES_IN_FLIGHT]GpuBuffer,
+	model_system:        ModelSystem,
+	material_system:     MaterialSystem,
 
 	// timers
-	start_time:                 time.Time,
-	last_frame_time:            time.Time,
-	delta_time:                 f32,
-	fps_timer:                  f32,
-	fps_frame_count:            u32,
+	clock:               Clock,
 
 	// camera
-	camera:                     Camera,
-	ambient_light:              AmbientLight,
+	camera:              Camera,
+	ambient_light:       AmbientLight,
+
+	// lights
+	point_lights:            [16]PointLight,
+	point_light_count:       u32,
+	directional_lights:      [4]DirectionalLight,
+	directional_light_count: u32,
+	spot_lights:             [4]SpotLight,
+	spot_light_count:        u32,
 
 	// texture
-	texture_system:             TextureSystem,
+	texture_system:      TextureSystem,
+
+	// skybox
+	skybox_descriptor:   DescriptorSet,
 }
 
 PointLight :: struct {
-	pos:       Vec3,
-	constant:  f32,
-	color:     Vec3,
-	linear:    f32,
-	quadratic: f32,
+	pos:              Vec3,
+	constant:         f32,
+	color:            Vec3,
+	linear:           f32,
+	quadratic:        f32,
+	diffuse_intensity: f32,
+	specular_intensity: f32,
 }
 
 DirectionalLight :: struct {
-	direction: Vec3,
-	color:     Vec3,
+	direction:         Vec3,
+	color:             Vec3,
+	diffuse_intensity:  f32,
+	specular_intensity: f32,
 }
 
 SpotLight :: struct {
-	pos:          Vec3,
-	inner_cutoff: f32,
-	direction:    Vec3,
-	outer_cutoff: f32,
-	color:        Vec3,
-	constant:     f32,
-	linear:       f32,
-	quadratic:    f32,
+	pos:               Vec3,
+	inner_cutoff:      f32,
+	direction:         Vec3,
+	outer_cutoff:      f32,
+	color:             Vec3,
+	constant:          f32,
+	linear:            f32,
+	quadratic:         f32,
+	diffuse_intensity:  f32,
+	specular_intensity: f32,
 }
 
 AlphaMode :: enum {
@@ -173,6 +196,10 @@ PushConstants :: struct {
 	instance_index:   u32,
 }
 
+SkyboxPushConstants :: struct {
+	scene_data: vk.DeviceAddress,
+}
+
 ParticlePushConstants :: struct {
 	scene_data:    vk.DeviceAddress,
 	particles_in:  vk.DeviceAddress,
@@ -192,9 +219,9 @@ GpuTransform :: struct {
 }
 
 transform_create :: proc(
-	translation: Vec3 = {},
+	translation: Vec3 = {0.0, 0.0, 0.0},
 	rotation: Quat = linalg.QUATERNIONF32_IDENTITY,
-	scale: Vec3 = {1, 1, 1},
+	scale: Vec3 = {1.0, 1.0, 1.0},
 ) -> Transform {
 	return Transform{translation = translation, rotation = rotation, scale = scale}
 }

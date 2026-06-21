@@ -1,5 +1,7 @@
 package graphics
 
+import "core:math"
+
 create_plane :: proc(
 	engine: ^Engine,
 	name: string,
@@ -136,4 +138,79 @@ create_cube :: proc(
 	}
 
 	return register_model(engine, name, vertices, indices, material)
+}
+
+create_sphere :: proc(
+	engine: ^Engine,
+	name: string,
+	material: MaterialHandle = INVALID_MATERIAL,
+	radius: f32 = 0.5,
+	sectors: u32 = 32, // number of longitudinal sectors, horizontal resolution
+	stacks: u32 = 18, // number of latitudinal stacks, vertical resolution
+) -> ModelHandle {
+	// from bevy: https://www.songho.ca/opengl/gl_sphere.html#sphere
+	if handle, ok := engine.model_system.model_map[name]; ok {
+		return handle
+	}
+
+	vertices_count := stacks * sectors
+	vertices := make([dynamic]Vertex, 0, vertices_count, context.temp_allocator)
+	indices := make([dynamic]u32, 0, vertices_count * 6, context.temp_allocator)
+
+	length_inv := 1.0 / radius
+	sector_step := 2 * math.PI / f32(sectors)
+	stack_step := math.PI / f32(stacks)
+
+	for i in 0 ..= stacks {
+		stack_angle := math.PI / 2 - f32(i) * stack_step
+
+		xy := radius * math.cos(stack_angle)
+		z := radius * math.sin(stack_angle)
+
+		for j in 0 ..= sectors {
+			sector_angle := f32(j) * sector_step
+
+			x := xy * math.cos(sector_angle)
+			y := xy * math.sin(sector_angle)
+
+			nx := x * length_inv
+			ny := y * length_inv
+			nz := z * length_inv
+
+			s := f32(j) / f32(sectors)
+			t := f32(i) / f32(stacks)
+
+			append(&vertices, Vertex{pos = {x, y, z}, uv = {s, t}, normal = {nx, ny, nz}, color = {1, 1, 1}})
+		}
+	}
+
+	// indices
+	//  k1--k1+1
+	//  |  / |
+	//  | /  |
+	//  k2--k2+1
+	for i in 0 ..< stacks {
+		k1 := i * (sectors + 1) // beginning of the current stack
+		k2 := k1 + sectors + 1 // beginning of the next stack
+
+		for _ in 0 ..< sectors {
+			if i != 0 {
+				append(&indices, k1)
+				append(&indices, k2)
+				append(&indices, k1 + 1)
+			}
+
+			if i != stacks - 1 {
+				append(&indices, k1 + 1)
+				append(&indices, k2)
+				append(&indices, k2 + 1)
+			}
+
+			k1 += 1
+			k2 += 1
+
+		}
+	}
+
+	return register_model(engine, name, vertices[:], indices[:], material)
 }

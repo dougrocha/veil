@@ -13,13 +13,9 @@ DEFAULT_TEXTURE_NAME :: "default"
 
 MAX_TEXTURES :: 1024
 
-TextureHandle :: struct {
-	handle: u32,
-}
+TextureHandle :: Handle(Texture)
 
-INVALID_TEXTURE :: TextureHandle {
-	handle = max(u32),
-}
+INVALID_TEXTURE :: TextureHandle{}
 
 Texture :: struct {
 	// vulkan internals
@@ -37,10 +33,11 @@ Texture :: struct {
 }
 
 TextureSystem :: struct {
-	textures:               [dynamic]Texture,
+	textures:               Pool(Texture),
 	texture_map:            map[string]TextureHandle,
 	config:                 TextureSystemConfig,
 	default_texture_handle: TextureHandle,
+	descriptor:             DescriptorSet,
 }
 
 TextureSystemConfig :: struct {
@@ -48,19 +45,42 @@ TextureSystemConfig :: struct {
 }
 
 create_texture_system :: proc(engine: ^Engine, config: TextureSystemConfig) {
-	engine.texture_system.config = config
+	ts := &engine.texture_system
+	ts.config = config
+	ts.textures = pool_init(config.max_textures_count, Texture)
+	ts.texture_map = make(map[string]TextureHandle)
+
+	ts.descriptor = create_descriptor_set(
+		engine,
+		{
+			{
+				binding = 0,
+				descriptorType = .COMBINED_IMAGE_SAMPLER,
+				descriptorCount = MAX_TEXTURES,
+				stageFlags = {.FRAGMENT},
+			},
+		},
+		count = MAX_FRAMES_IN_FLIGHT,
+		binding_flags = {[]vk.DescriptorBindingFlags{{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND}}[0]},
+		layout_flags = {.UPDATE_AFTER_BIND_POOL},
+		pool_flags = {.UPDATE_AFTER_BIND},
+	)
+
 	create_builtin_textures(engine)
 }
 
 destroy_texture_system :: proc(engine: ^Engine) {
 	ts := &engine.texture_system
-	for &t in ts.textures {
-		vk.DestroySampler(engine.vk_ctx.device, t.sampler, nil)
-		vk.DestroyImageView(engine.vk_ctx.device, t.image_view, nil)
-		vma.destroy_image(engine.vk_ctx.vma_allocator, t.image, t.allocation)
+	for &slot in ts.textures.slots {
+		if slot.alive {
+			vk.DestroySampler(engine.vk_ctx.device, slot.value.sampler, nil)
+			vk.DestroyImageView(engine.vk_ctx.device, slot.value.image_view, nil)
+			vma.destroy_image(engine.vk_ctx.vma_allocator, slot.value.image, slot.value.allocation)
+		}
 	}
-	delete(ts.textures)
+	pool_destroy(&ts.textures)
 	delete(ts.texture_map)
+	destroy_descriptor_set(engine, &ts.descriptor)
 }
 
 create_builtin_textures :: proc(engine: ^Engine) {
@@ -74,7 +94,7 @@ load_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	}
 
 	ts := &engine.texture_system
-	if u32(len(ts.textures)) >= ts.config.max_textures_count {
+	if ts.textures.count >= ts.config.max_textures_count {
 		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
 		return ts.default_texture_handle
 	}
@@ -148,17 +168,158 @@ upload_texture :: proc(
 	create_texture_image_view(&engine.vk_ctx, &t)
 	create_texture_sampler(&engine.vk_ctx, &t)
 
-	index := u32(len(engine.texture_system.textures))
-	append(&engine.texture_system.textures, t)
-	engine.texture_system.texture_map[name] = TextureHandle {
-		handle = index,
-	}
-	update_texture_descriptor(engine, index)
-	return TextureHandle{handle = index}
+	handle := pool_alloc(&engine.texture_system.textures, t)
+	engine.texture_system.texture_map[name] = handle
+	write_descriptor_texture(engine, &engine.texture_system.descriptor, 0, handle, handle.index)
+	return handle
 }
 
 get_default_texture :: proc(engine: ^Engine) -> TextureHandle {
 	return engine.texture_system.default_texture_handle
+}
+
+load_cubemap_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
+	if handle, ok := engine.texture_system.texture_map[path]; ok {
+		return handle
+	}
+
+	ts := &engine.texture_system
+	if ts.textures.count >= ts.config.max_textures_count {
+		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
+		return ts.default_texture_handle
+	}
+
+	c_path := strings.clone_to_cstring(path)
+	defer delete(c_path)
+
+	width, height, channels: i32
+	pixels := stbi.load(c_path, &width, &height, &channels, 4)
+	defer stbi.image_free(pixels)
+	if pixels == nil {
+		log.errorf("Failed to read cubemap image: %s", stbi.failure_reason())
+		return ts.default_texture_handle
+	}
+
+	face_w := u32(width) / 4
+	face_h := u32(height) / 3
+	face_size := vk.DeviceSize(face_w * face_h * 4)
+
+	// Vulkan cubemap face order: +X, -X, +Y, -Y, +Z, -Z
+	// Horizontal cross layout (col, row):
+	face_positions := [6][2]u32 {
+		{2, 1}, // +X
+		{0, 1}, // -X
+		{1, 0}, // +Y
+		{1, 2}, // -Y
+		{1, 1}, // +Z
+		{3, 1}, // -Z
+	}
+
+	staging := create_buffer(&engine.vk_ctx, face_size * 6, .Staging)
+	defer destroy_buffer(&engine.vk_ctx, staging)
+
+	src := ([^]u8)(pixels)
+	dst := ([^]u8)(staging.alloc_info.mapped_data)
+
+	for face, i in face_positions {
+		col := face[0]
+		row := face[1]
+		for y in 0 ..< face_h {
+			src_offset := ((row * face_h + y) * u32(width) + col * face_w) * 4
+			dst_offset := u32(i) * u32(face_size) + y * face_w * 4
+			mem.copy(&dst[dst_offset], &src[src_offset], int(face_w * 4))
+		}
+	}
+
+	gpu_img := create_image(
+		&engine.vk_ctx,
+		{face_w, face_h, 1},
+		TEXTURE_FORMAT,
+		{.TRANSFER_DST, .SAMPLED},
+		array_layers = 6,
+		image_flags = {.CUBE_COMPATIBLE},
+	)
+
+	cmd := begin_single_time_commands(&engine.vk_ctx)
+	transition_image_layout(
+		cmd,
+		gpu_img.image,
+		.UNDEFINED,
+		.TRANSFER_DST_OPTIMAL,
+		{},
+		{.TRANSFER_WRITE},
+		{.TOP_OF_PIPE},
+		{.TRANSFER},
+		{.COLOR},
+		layer_count = 6,
+	)
+	copy_buffer_to_cubemap(cmd, staging.buffer, gpu_img.image, face_w, face_h, face_size)
+	transition_image_layout(
+		cmd,
+		gpu_img.image,
+		.TRANSFER_DST_OPTIMAL,
+		.SHADER_READ_ONLY_OPTIMAL,
+		{.TRANSFER_WRITE},
+		{.SHADER_READ},
+		{.TRANSFER},
+		{.FRAGMENT_SHADER},
+		{.COLOR},
+		layer_count = 6,
+	)
+	end_single_time_commands(&engine.vk_ctx, &cmd)
+
+	t := Texture {
+		image         = gpu_img.image,
+		allocation    = gpu_img.alloc,
+		mip_levels    = 1,
+		width         = face_w,
+		height        = face_h,
+		channel_count = 4,
+	}
+	t.image_view = create_image_view(
+		&engine.vk_ctx,
+		t.image,
+		TEXTURE_FORMAT,
+		{.COLOR},
+		view_type = .CUBE,
+		array_layers = 6,
+	)
+	create_texture_sampler(&engine.vk_ctx, &t)
+
+	handle := pool_alloc(&ts.textures, t)
+	ts.texture_map[path] = handle
+	write_descriptor_texture(engine, &engine.texture_system.descriptor, 0, handle, handle.index)
+	return handle
+}
+
+copy_buffer_to_cubemap :: proc(
+	cmd: vk.CommandBuffer,
+	buffer: vk.Buffer,
+	img: vk.Image,
+	face_w, face_h: u32,
+	face_size: vk.DeviceSize,
+) {
+	regions: [6]vk.BufferImageCopy2
+	for i in 0 ..< 6 {
+		regions[i] = vk.BufferImageCopy2 {
+			sType = .BUFFER_IMAGE_COPY_2,
+			bufferOffset = vk.DeviceSize(i) * face_size,
+			imageSubresource = {aspectMask = {.COLOR}, mipLevel = 0, baseArrayLayer = u32(i), layerCount = 1},
+			imageExtent = {face_w, face_h, 1},
+		}
+	}
+
+	vk.CmdCopyBufferToImage2(
+		cmd,
+		&vk.CopyBufferToImageInfo2 {
+			sType = .COPY_BUFFER_TO_IMAGE_INFO_2,
+			srcBuffer = buffer,
+			dstImage = img,
+			dstImageLayout = .TRANSFER_DST_OPTIMAL,
+			regionCount = 6,
+			pRegions = &regions[0],
+		},
+	)
 }
 
 generate_mipmaps :: proc(engine: ^Engine, image: vk.Image, format: vk.Format, width, height, mip_levels: u32) {

@@ -43,7 +43,7 @@ camera_create :: proc(
 		world_up          = world_up,
 		yaw               = yaw,
 		pitch             = pitch,
-		movement_speed    = 2.5,
+		movement_speed    = 5,
 		mouse_sensitivity = 0.1,
 		zoom              = 45,
 	}

@@ -3,6 +3,7 @@ package graphics
 import "core:log"
 import "core:slice"
 import "core:strings"
+import linux "core:sys/linux"
 
 import sp "shared:odin-slang/slang"
 import vk "vendor:vulkan"
@@ -11,9 +12,16 @@ VERTEX_ENTRY :: "vertex_main"
 FRAGMENT_MAIN :: "fragment_main"
 COMPUTE_MAIN :: "compute_main"
 
+ShaderHandle :: Handle(vk.ShaderModule)
+
+INVALID_SHADER_HANDLE :: ShaderHandle{}
+
 ShaderSystem :: struct {
 	global_session: ^sp.IGlobalSession,
-	modules:        map[string]vk.ShaderModule,
+	modules:        Pool(vk.ShaderModule),
+	name_to_handle: map[string]ShaderHandle,
+	inotify_fd:     linux.Fd,
+	watch_fd:       linux.Wd,
 }
 
 create_shader_system :: proc(self: ^Engine) -> bool {
@@ -22,22 +30,46 @@ create_shader_system :: proc(self: ^Engine) -> bool {
 		log.errorf("Could not create Slang global session")
 		return false
 	}
-	ss.modules = make(map[string]vk.ShaderModule)
+	ss.modules = pool_init(256, vk.ShaderModule)
+	ss.name_to_handle = make(map[string]ShaderHandle)
+
+	ifd, errno := linux.inotify_init1({.NONBLOCK})
+	if errno != .NONE {
+		log.warnf("inotify_init1 failed (%v), hot reload disabled", errno)
+		ss.inotify_fd = linux.Fd(-1)
+	} else {
+		wfd, werr := linux.inotify_add_watch(ifd, "shaders", {.CLOSE_WRITE})
+		if werr != .NONE {
+			log.warnf("inotify_add_watch failed (%v), hot reload disabled", werr)
+			linux.close(ifd)
+			ss.inotify_fd = linux.Fd(-1)
+		} else {
+			ss.inotify_fd = ifd
+			ss.watch_fd = wfd
+		}
+	}
+
 	return true
 }
 
 destroy_shader_system :: proc(self: ^Engine) {
 	ss := &self.shader_system
-	for _, module in ss.modules {
-		vk.DestroyShaderModule(self.vk_ctx.device, module, nil)
+	for &slot in ss.modules.slots {
+		if slot.alive {
+			vk.DestroyShaderModule(self.vk_ctx.device, slot.value, nil)
+		}
 	}
-	delete(ss.modules)
+	if ss.inotify_fd != linux.Fd(-1) {
+		linux.close(ss.inotify_fd)
+	}
+	pool_destroy(&ss.modules)
+	delete(ss.name_to_handle)
 	ss.global_session->release()
 }
 
 // Compiles a Slang module by name and caches the resulting VkShaderModule.
 // entry_points lists the entry point names to link into the SPIR-V blob.
-load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) -> bool {
+load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) -> (ShaderHandle, bool) {
 	ss := &self.shader_system
 
 	compiler_option_entries := []sp.CompilerOptionEntry {
@@ -69,7 +101,7 @@ load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	session: ^sp.ISession
 	if res := ss.global_session->createSession(session_desc, &session); sp.FAILED(res) {
 		log.errorf("Could not create Slang session")
-		return false
+		return INVALID_SHADER_HANDLE, false
 	}
 	defer session->release()
 
@@ -84,7 +116,7 @@ load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	}
 	if slang_module == nil {
 		log.errorf("Could not load Slang module: %s", module_name)
-		return false
+		return INVALID_SHADER_HANDLE, false
 	}
 	defer slang_module->release()
 
@@ -93,7 +125,7 @@ load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 		name_cstr := strings.clone_to_cstring(name, context.temp_allocator)
 		if res := slang_module->findEntryPointByName(name_cstr, &ep_handles[i]); sp.FAILED(res) {
 			log.errorf("Could not find Slang entry point: %s", name)
-			return false
+			return INVALID_SHADER_HANDLE, false
 		}
 		defer ep_handles[i]->release()
 	}
@@ -112,7 +144,7 @@ load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 			diag->release()
 		}
 		log.errorf("Could not link Slang module: %s", module_name)
-		return false
+		return INVALID_SHADER_HANDLE, false
 	}
 	defer linked->release()
 
@@ -124,7 +156,7 @@ load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 			diag2->release()
 		}
 		log.errorf("Could not get SPIR-V from Slang module: %s", module_name)
-		return false
+		return INVALID_SHADER_HANDLE, false
 	}
 	defer target_code->release()
 
@@ -137,11 +169,69 @@ load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 
 	vk_module: vk.ShaderModule
 	vk_check(vk.CreateShaderModule(self.vk_ctx.device, &module_info, nil, &vk_module))
-	ss.modules[module_name] = vk_module
 
-	return true
+	// check if this module is being reloaded (update in place) or is new
+	if existing, ok := ss.name_to_handle[module_name]; ok {
+		slot := _pool_get_slot(&ss.modules, existing)
+		vk.DestroyShaderModule(self.vk_ctx.device, slot.value, nil)
+		slot.value = vk_module
+		return existing, true
+	}
+
+	handle := pool_alloc(&ss.modules, vk_module)
+	ss.name_to_handle[strings.clone(module_name)] = handle
+	return handle, true
 }
 
-get_shader :: proc(self: ^Engine, module_name: string) -> vk.ShaderModule {
-	return self.shader_system.modules[module_name]
+get_shader :: proc(self: ^Engine, handle: ShaderHandle) -> vk.ShaderModule {
+	return pool_get(&self.shader_system.modules, handle)^
+}
+
+check_shader_hotreload :: proc(self: ^Engine) {
+	ss := &self.shader_system
+	if ss.inotify_fd == linux.Fd(-1) {
+		return
+	}
+
+	buf: [4096]u8
+	n, _ := linux.read(ss.inotify_fd, buf[:])
+	if n <= 0 {
+		return
+	}
+
+	offset := 0
+	for offset < n {
+		event := (^linux.Inotify_Event)(raw_data(buf[offset:]))
+		offset += size_of(linux.Inotify_Event) + int(event.len)
+
+		if .CLOSE_WRITE not_in event.mask {
+			continue
+		}
+
+		// extract filename from the variable-length name field
+		name_ptr := (^u8)(uintptr(rawptr(event)) + size_of(linux.Inotify_Event))
+		filename := string(cstring(name_ptr))
+
+		// strip ".slang" suffix to get module name
+		module_name: string
+		if len(filename) > 6 && filename[len(filename) - 6:] == ".slang" {
+			module_name = filename[:len(filename) - 6]
+		} else {
+			continue
+		}
+
+		if _, ok := ss.name_to_handle[module_name]; !ok {
+			continue
+		}
+
+		log.infof("Shader changed: %s — reloading pipelines", filename)
+
+		// find all pipelines using this shader and reload them
+		for name, &entry in self.pipeline_registry.entries {
+			handle := ss.name_to_handle[module_name]
+			if entry.descriptor.shader == handle {
+				reload_pipeline(self, name)
+			}
+		}
+	}
 }

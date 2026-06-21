@@ -16,21 +16,13 @@ Mesh :: struct {
 	material_index:    i32,
 }
 
-ModelHandle :: struct {
-	handle: u32,
-}
+ModelHandle :: Handle(Model)
 
-INVALID_MODEL :: ModelHandle {
-	handle = max(u32),
-}
+INVALID_MODEL :: ModelHandle{}
 
-InstanceHandle :: struct {
-	handle: u32,
-}
+InstanceHandle :: Handle(Instance)
 
-INVALID_INSTANCE :: InstanceHandle {
-	handle = max(u32),
-}
+INVALID_INSTANCE :: InstanceHandle{}
 
 Model :: struct {
 	meshes: [dynamic]Mesh,
@@ -45,30 +37,35 @@ Instance :: struct {
 MAX_MODEL_INSTANCES :: 4096
 
 ModelSystem :: struct {
-	models:            [dynamic]Model,
+	models:            Pool(Model),
 	model_map:         map[string]ModelHandle,
-	instances:         [dynamic]Instance,
+	instances:         Pool(Instance),
 	transforms_buffer: GpuBuffer,
 }
 
 create_model_system :: proc(engine: ^Engine) {
+	engine.model_system.models = pool_init(1024, Model)
+	engine.model_system.model_map = make(map[string]ModelHandle)
+	engine.model_system.instances = pool_init(MAX_MODEL_INSTANCES, Instance)
 	total_size := vk.DeviceSize(size_of(GpuTransform) * MAX_MODEL_INSTANCES)
 	engine.model_system.transforms_buffer = create_buffer(&engine.vk_ctx, total_size, .MappedStorage)
 }
 
 destroy_model_system :: proc(engine: ^Engine) {
 	ms := &engine.model_system
-	for &model in ms.models {
-		for &mesh in model.meshes {
-			vma.destroy_buffer(engine.vk_ctx.vma_allocator, mesh.vertex_buffer, mesh.vertex_allocation)
-			vma.destroy_buffer(engine.vk_ctx.vma_allocator, mesh.index_buffer, mesh.index_allocation)
+	for &slot in ms.models.slots {
+		if slot.alive {
+			for &mesh in slot.value.meshes {
+				vma.destroy_buffer(engine.vk_ctx.vma_allocator, mesh.vertex_buffer, mesh.vertex_allocation)
+				vma.destroy_buffer(engine.vk_ctx.vma_allocator, mesh.index_buffer, mesh.index_allocation)
+			}
+			delete(slot.value.meshes)
 		}
-		delete(model.meshes)
 	}
 	destroy_buffer(&engine.vk_ctx, ms.transforms_buffer)
-	delete(ms.models)
+	pool_destroy(&ms.models)
 	delete(ms.model_map)
-	delete(ms.instances)
+	pool_destroy(&ms.instances)
 }
 
 load_model :: proc(engine: ^Engine, path: string, material: MaterialHandle = INVALID_MATERIAL) -> ModelHandle {
@@ -147,7 +144,7 @@ register_model :: proc(
 		index_buffer      = index_buf.buffer,
 		index_allocation  = index_buf.alloc,
 		index_count       = u32(len(indices)),
-		material_index    = i32(material_handle.handle),
+		material_index    = i32(material_handle.index),
 	}
 
 	model := Model {
@@ -155,21 +152,16 @@ register_model :: proc(
 	}
 	append(&model.meshes, mesh)
 
-	index := u32(len(engine.model_system.models))
-	append(&engine.model_system.models, model)
-	engine.model_system.model_map[name] = ModelHandle {
-		handle = index,
-	}
+	handle := pool_alloc(&engine.model_system.models, model)
+	engine.model_system.model_map[name] = handle
 
-	return ModelHandle{handle = index}
+	return handle
 }
 
 get_instance :: proc(engine: ^Engine, handle: InstanceHandle) -> ^Instance {
-	return &engine.model_system.instances[handle.handle]
+	return pool_get(&engine.model_system.instances, handle)
 }
 
-spawn_model :: proc(engine: ^Engine, model: ModelHandle, transform: Transform) -> InstanceHandle {
-	index := u32(len(engine.model_system.instances))
-	append(&engine.model_system.instances, Instance{model = model, transform = transform})
-	return InstanceHandle{handle = index}
+spawn :: proc(engine: ^Engine, model: ModelHandle, transform: Transform) -> InstanceHandle {
+	return pool_alloc(&engine.model_system.instances, Instance{model = model, transform = transform})
 }

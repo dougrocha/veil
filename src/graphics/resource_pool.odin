@@ -33,7 +33,7 @@ pool_init :: proc(max_capacity: u32, $T: typeid, allocator := context.allocator)
 
 pool_destroy :: proc(pool: ^Pool($T), allocator := context.allocator) {
 	delete(pool.slots, allocator)
-	delete(pool.free_list, allocator)
+	delete(pool.free_list)
 }
 
 pool_alloc :: proc(pool: ^Pool($T), value: T) -> Handle(T) {

@@ -14,32 +14,29 @@ GpuMaterial :: struct {
 	// metallic:                 f32,
 	// roughness:                f32,
 	// emissive:                 Vec3,
-	base_color_texture: TextureHandle,
-	// metallic_texture:      TextureHandle,
-	// normal_texture:        TextureHandle,
-	// roughness_texture:     TextureHandle,
-	// emissive_texture:      TextureHandle,
+	base_color_texture: u32,
+	// metallic_texture:      u32,
+	// normal_texture:        u32,
+	// roughness_texture:     u32,
+	// emissive_texture:      u32,
 }
 
 Material :: struct {
-	using gpu:  GpuMaterial,
-	alpha_mode: AlphaMode,
+	base_color:         Vec4,
+	base_color_texture: TextureHandle,
+	alpha_mode:         AlphaMode,
 }
 
-MaterialHandle :: struct {
-	handle: u32,
-}
+MaterialHandle :: Handle(Material)
 
-INVALID_MATERIAL :: MaterialHandle {
-	handle = max(u32),
-}
+INVALID_MATERIAL :: MaterialHandle{}
 
 MaterialSystemConfig :: struct {
 	max_material_count: u32,
 }
 
 MaterialSystem :: struct {
-	materials:    [dynamic]Material,
+	materials:    Pool(Material),
 	material_map: map[string]MaterialHandle,
 	buffer:       GpuBuffer,
 	config:       MaterialSystemConfig,
@@ -47,6 +44,8 @@ MaterialSystem :: struct {
 
 create_material_system :: proc(engine: ^Engine, config: MaterialSystemConfig) {
 	engine.material_system.config = config
+	engine.material_system.materials = pool_init(config.max_material_count, Material)
+	engine.material_system.material_map = make(map[string]MaterialHandle)
 
 	total_size := vk.DeviceSize(size_of(GpuMaterial) * u64(config.max_material_count))
 	engine.material_system.buffer = create_buffer(&engine.vk_ctx, total_size, .MappedStorage)
@@ -59,29 +58,29 @@ create_material :: proc(engine: ^Engine, name: string, material: Material) -> Ma
 		return handle
 	}
 
-	if u32(len(engine.material_system.materials)) >= engine.material_system.config.max_material_count {
+	if engine.material_system.materials.count >= engine.material_system.config.max_material_count {
 		log.errorf("Material system is full (max: %d)", engine.material_system.config.max_material_count)
 		return INVALID_MATERIAL
 	}
 
-	index := u32(len(engine.material_system.materials))
-	append(&engine.material_system.materials, material)
-	engine.material_system.material_map[name] = MaterialHandle {
-		handle = index,
-	}
+	handle := pool_alloc(&engine.material_system.materials, material)
+	engine.material_system.material_map[name] = handle
 
-	offset := uintptr(index) * size_of(GpuMaterial)
+	offset := uintptr(handle.index) * size_of(GpuMaterial)
 	dst := uintptr(engine.material_system.buffer.alloc_info.mapped_data) + offset
-	mat := material.gpu
-	mem.copy(rawptr(dst), &mat, size_of(GpuMaterial))
+	gpu_mat := GpuMaterial {
+		base_color         = material.base_color,
+		base_color_texture = material.base_color_texture.index,
+	}
+	mem.copy(rawptr(dst), &gpu_mat, size_of(GpuMaterial))
 
-	return MaterialHandle{handle = index}
+	return handle
 }
 
 destroy_material_system :: proc(engine: ^Engine) {
 	ms := &engine.material_system
 	destroy_buffer(&engine.vk_ctx, ms.buffer)
-	delete(ms.materials)
+	pool_destroy(&ms.materials)
 	delete(ms.material_map)
 }
 

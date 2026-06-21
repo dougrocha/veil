@@ -1,6 +1,5 @@
 package graphics
 
-import "core:math"
 import "core:math/rand"
 import "core:mem"
 
@@ -90,13 +89,13 @@ copy_buffer :: proc(ctx: ^VulkanContext, src, dst: vk.Buffer, size: vk.DeviceSiz
 create_scene_data_buffer :: proc(engine: ^Engine) {
 	size := vk.DeviceSize(size_of(SceneData))
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.scene_data_buffers[i] = create_buffer(&engine.vk_ctx, size, .MappedUniform)
+		engine.frame_resources[i].scene_data_buffer = create_buffer(&engine.vk_ctx, size, .MappedUniform)
 	}
 }
 
 create_particle_buffer :: proc(engine: ^Engine) {
 	particles := make([]Particle, PARTICLE_COUNT, context.temp_allocator)
-	aspect_ratio := f32(engine.swapchain_extent.height) / f32(engine.swapchain_extent.width)
+	aspect_ratio := f32(engine.swapchain.extent.height) / f32(engine.swapchain.extent.width)
 
 	for &p in particles {
 		x := rand.float32() * 20.0 - 10.0
@@ -110,43 +109,34 @@ create_particle_buffer :: proc(engine: ^Engine) {
 
 	size := vk.DeviceSize(size_of(Particle) * len(particles))
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.particle_buffers[i] = upload_buffer(&engine.vk_ctx, raw_data(particles), size, .ParticleSSBO)
+		engine.frame_resources[i].particle_buffer = upload_buffer(
+			&engine.vk_ctx,
+			raw_data(particles),
+			size,
+			.ParticleSSBO,
+		)
 	}
 }
 
-update_scene_data_buffer :: proc(engine: ^Engine, frame_index: u64) {
+update_scene_data_buffer :: proc(engine: ^Engine) {
+	frame_index := current_frame_res_index(engine)
 	scene := SceneData {
-		view = camera_get_view_matrix(engine.camera),
-		proj = camera_get_projection_matrix(
+		view                    = camera_get_view_matrix(engine.camera),
+		proj                    = camera_get_projection_matrix(
 			engine.camera,
-			f32(engine.swapchain_extent.width) / f32(engine.swapchain_extent.height),
+			f32(engine.swapchain.extent.width) / f32(engine.swapchain.extent.height),
 		),
-		point_lights = {
-			0 = {pos = {1.0, 2.0, -4.0}, color = {1.0, 1.0, 1.0}, constant = 1.0, linear = 0.09, quadratic = 0.032},
-			1 = {pos = {-2.0, 1.0, 0.0}, color = {1.0, 0.0, 0.0}, constant = 1.0, linear = 0.09, quadratic = 0.032},
-			2 = {pos = {0.0, 1.0, 2.0}, color = {0.0, 0.0, 1.0}, constant = 1.0, linear = 0.09, quadratic = 0.032},
-		},
-		directional_lights = {0 = {direction = {1.0, -1.0, 0.5}, color = {1.0, 1.0, 0.0}}},
-		spot_lights = {
-			0 = {
-				pos = {2.0, 2.0, 4.0},
-				direction = {0.0, -0.26, -1.0},
-				color = {1.0, 1.0, 1.0},
-				inner_cutoff = math.cos(math.to_radians(f32(12.5))),
-				outer_cutoff = math.cos(math.to_radians(f32(17.5))),
-				constant = 1.0,
-				linear = 0.09,
-				quadratic = 0.032,
-			},
-		},
-		cam_pos = engine.camera.position,
-		ambient_light = engine.ambient_light,
-		point_light_count = 3,
-		directional_light_count = 1,
-		spot_light_count = 0,
+		point_lights            = engine.point_lights,
+		point_light_count       = engine.point_light_count,
+		directional_lights      = engine.directional_lights,
+		directional_light_count = engine.directional_light_count,
+		spot_lights             = engine.spot_lights,
+		spot_light_count        = engine.spot_light_count,
+		cam_pos                 = engine.camera.position,
+		ambient_light           = engine.ambient_light,
 	}
 	scene.proj[1][1] *= -1.0
-	scene.delta_time = engine.delta_time
-	mem.copy(engine.scene_data_buffers[frame_index].alloc_info.mapped_data, &scene, size_of(SceneData))
+	scene.delta_time = engine.clock.delta_time
+	mem.copy(engine.frame_resources[frame_index].scene_data_buffer.alloc_info.mapped_data, &scene, size_of(SceneData))
 }
 
