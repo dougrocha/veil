@@ -20,6 +20,7 @@ struct VSOutput {
     float2 frag_uv;
     float3 frag_normal;
     float3 frag_pos;
+    float4 frag_pos_light_space;
 };
 
 [shader("vertex")]
@@ -31,6 +32,8 @@ VSOutput vertex_main(VSInput input) {
     float4 world_pos = mul(transform.model, float4(v.pos, 1.0));
     output.frag_pos = world_pos.xyz;
 
+    output.frag_pos_light_space = mul(pc.scene_data.light_space_matrix, world_pos);
+
     output.pos = mul(pc.scene_data.proj, mul(pc.scene_data.view, world_pos));
 
     output.frag_normal = mul((float3x3)transform.normal_matrix, v.normal);
@@ -39,8 +42,6 @@ VSOutput vertex_main(VSInput input) {
     output.frag_uv = v.uv;
     return output;
 }
-
-Sampler2D textures[];
 
 // TODO: eventually this will be part of PBR
 static const float shininess = 128;
@@ -106,24 +107,52 @@ float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 f
     return base_color * intensity * attenuation;
 }
 
+[[vk_binding(0, 0)]] Sampler2D textures[];
+Sampler2D shadow_map;
+
+float calc_shadow_factor(float4 shadow_coord) {
+    float3 proj_coords = shadow_coord.xyz / shadow_coord.w;
+    proj_coords.xy = proj_coords.xy * 0.5 + 0.5;
+
+    if (proj_coords.z > 1.0 || proj_coords.x < 0.0 || proj_coords.x > 1.0 || proj_coords.y < 0.0 || proj_coords.y > 1.0) {
+        return 1.0;
+    }
+
+    float closest_depth = shadow_map.Sample(proj_coords.xy).r;
+    float current_depth = proj_coords.z;
+
+    float bias = 0.005;
+
+    if (current_depth - bias > closest_depth) {
+        return 0.0;
+    } else {
+        return 1.0;
+    }
+}
+
 [shader("fragment")]
 float4 fragment_main(VSOutput vert) : SV_TARGET {
     let mat = pc.material_buffer[pc.material_index];
+
     float4 tex_color = textures[mat.base_color_texture].Sample(vert.frag_uv) * float4(vert.frag_color, 1.0) * mat.base_color;
 
     float3 normal = normalize(vert.frag_normal);
     float3 view_dir = normalize(pc.scene_data.cam_pos - vert.frag_pos);
+
+    float shadow = calc_shadow_factor(vert.frag_pos_light_space);
 
     float3 total_light = pc.scene_data.ambient_light.color.rgb * pc.scene_data.ambient_light.brightness;
     for (uint i = 0; i < pc.scene_data.directional_light_count; i++)
         total_light += calc_dir_light(pc.scene_data.directional_lights[i], normal, view_dir);
 
     for (uint i = 0; i < pc.scene_data.point_light_count; i++)
-        total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos);
+        // TODO shadow currently only support on the first point light
+        // also the shadow does show properly under the sphere when other lights are involved
+        total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos) * shadow;
 
     for (uint i = 0; i < pc.scene_data.spot_light_count; i++)
         total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos);
 
     if (tex_color.a < 0.1) discard;
-    return float4(total_light * tex_color.rgb, tex_color.a);
+    return float4(tex_color.rgb * total_light, tex_color.a);
 }

@@ -8,6 +8,7 @@ PassConfig :: struct {
 	depth_target:   ^GpuImage, // nil = no depth attachment
 	clear_color:    [4]f32,
 	load_op:        vk.AttachmentLoadOp,
+	store_depth:    bool,
 }
 
 begin_render_pass :: proc(engine: ^Engine, cmd: vk.CommandBuffer, config: PassConfig) {
@@ -54,29 +55,38 @@ begin_render_pass :: proc(engine: ^Engine, cmd: vk.CommandBuffer, config: PassCo
 		)
 	}
 
-	color_attach_info := vk.RenderingAttachmentInfo {
-		sType = .RENDERING_ATTACHMENT_INFO,
-		imageView = config.color_target.image_view,
-		imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
-		loadOp = config.load_op,
-		storeOp = .DONT_CARE,
-		clearValue = {color = {float32 = config.clear_color}},
+	color_attach_info: vk.RenderingAttachmentInfo
+	if config.color_target != nil {
+		color_attach_info = vk.RenderingAttachmentInfo {
+			sType = .RENDERING_ATTACHMENT_INFO,
+			imageView = config.color_target.image_view,
+			imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
+			loadOp = config.load_op,
+			storeOp = .DONT_CARE,
+			clearValue = {color = {float32 = config.clear_color}},
+		}
+		if config.resolve_target != nil {
+			color_attach_info.resolveMode = {.AVERAGE}
+			color_attach_info.resolveImageView = config.resolve_target.image_view
+			color_attach_info.resolveImageLayout = .COLOR_ATTACHMENT_OPTIMAL
+		} else {
+			color_attach_info.storeOp = .STORE
+		}
 	}
 
-	if config.resolve_target != nil {
-		color_attach_info.resolveMode = {.AVERAGE}
-		color_attach_info.resolveImageView = config.resolve_target.image_view
-		color_attach_info.resolveImageLayout = .COLOR_ATTACHMENT_OPTIMAL
-	} else {
-		color_attach_info.storeOp = .STORE
+	extent: vk.Extent2D
+	if config.color_target != nil {
+		extent = engine.swapchain.extent
+	} else if config.depth_target != nil {
+		extent = {config.depth_target.extent.width, config.depth_target.extent.height}
 	}
 
 	rendering_info := vk.RenderingInfo {
 		sType = .RENDERING_INFO,
-		renderArea = {offset = {0, 0}, extent = engine.swapchain.extent},
+		renderArea = {offset = {0, 0}, extent = extent},
 		layerCount = 1,
-		colorAttachmentCount = 1,
-		pColorAttachments = &color_attach_info,
+		colorAttachmentCount = 1 if config.color_target != nil else 0,
+		pColorAttachments = &color_attach_info if config.color_target != nil else nil,
 	}
 
 	depth_attach_info: vk.RenderingAttachmentInfo
@@ -86,7 +96,7 @@ begin_render_pass :: proc(engine: ^Engine, cmd: vk.CommandBuffer, config: PassCo
 			imageView = config.depth_target.image_view,
 			imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
 			loadOp = config.load_op,
-			storeOp = .DONT_CARE,
+			storeOp = .STORE if config.store_depth else .DONT_CARE,
 			clearValue = {depthStencil = {depth = 1}},
 		}
 		rendering_info.pDepthAttachment = &depth_attach_info
@@ -97,8 +107,8 @@ begin_render_pass :: proc(engine: ^Engine, cmd: vk.CommandBuffer, config: PassCo
 	viewport := vk.Viewport {
 		x        = 0,
 		y        = 0,
-		width    = f32(engine.swapchain.extent.width),
-		height   = f32(engine.swapchain.extent.height),
+		width    = f32(extent.width),
+		height   = f32(extent.height),
 		minDepth = 0,
 		maxDepth = 1,
 	}
@@ -106,10 +116,9 @@ begin_render_pass :: proc(engine: ^Engine, cmd: vk.CommandBuffer, config: PassCo
 
 	scissor := vk.Rect2D {
 		offset = {x = 0, y = 0},
-		extent = engine.swapchain.extent,
+		extent = extent,
 	}
 	vk.CmdSetScissor(cmd, 0, 1, &scissor)
-
 }
 
 end_render_pass :: proc(cmd: vk.CommandBuffer) {

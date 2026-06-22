@@ -56,7 +56,7 @@ main :: proc() {
 	gfx.spawn_point_light(
 		&app.engine,
 		gfx.PointLight {
-			pos = {1, 2, -4},
+			pos = {0, 10, 0},
 			color = {1, 1, 1},
 			constant = 1,
 			linear = 0.09,
@@ -100,6 +100,15 @@ main :: proc() {
 			constant = 1,
 			linear = 0.09,
 			quadratic = 0.032,
+			diffuse_intensity = 1.0,
+			specular_intensity = 1.0,
+		},
+	)
+	gfx.spawn_directional_light(
+		&app.engine,
+		gfx.DirectionalLight {
+			direction = {0, -1, 0},
+			color = {1.0, 0.5, 1.0},
 			diffuse_intensity = 1.0,
 			specular_intensity = 1.0,
 		},

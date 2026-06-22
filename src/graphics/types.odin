@@ -81,34 +81,34 @@ VulkanContext :: struct {
 }
 
 Engine :: struct {
-	vk_ctx:              VulkanContext,
+	vk_ctx:                  VulkanContext,
 
 	// swapchain
-	swapchain:           Swapchain,
+	swapchain:               Swapchain,
 
 	// shaders
-	shader_system:       ShaderSystem,
+	shader_system:           ShaderSystem,
 
 	// graphics pipeline
-	pipeline_registry:   PipelineRegistry,
+	pipeline_registry:       PipelineRegistry,
 
 	// frame and sync resources
-	timeline_semaphore:  vk.Semaphore,
-	frame_resources:     [MAX_FRAMES_IN_FLIGHT]FrameResources,
-	frame_index:         u64,
-	current_image_index: u32,
-	next_signal_value:   u64,
+	timeline_semaphore:      vk.Semaphore,
+	frame_resources:         [MAX_FRAMES_IN_FLIGHT]FrameResources,
+	frame_index:             u64,
+	current_image_index:     u32,
+	next_signal_value:       u64,
 
 	// buffers
-	model_system:        ModelSystem,
-	material_system:     MaterialSystem,
+	model_system:            ModelSystem,
+	material_system:         MaterialSystem,
 
 	// timers
-	clock:               Clock,
+	clock:                   Clock,
 
 	// camera
-	camera:              Camera,
-	ambient_light:       AmbientLight,
+	camera:                  Camera,
+	ambient_light:           AmbientLight,
 
 	// lights
 	point_lights:            [16]PointLight,
@@ -119,38 +119,41 @@ Engine :: struct {
 	spot_light_count:        u32,
 
 	// texture
-	texture_system:      TextureSystem,
+	texture_system:          TextureSystem,
 
 	// skybox
-	skybox_descriptor:   DescriptorSet,
+	skybox_descriptor:       DescriptorSet,
+	shadow_map_image:        GpuImage,
+	shadow_map_sampler:      vk.Sampler,
+	shadow_map_descriptor:   DescriptorSet,
 }
 
 PointLight :: struct {
-	pos:              Vec3,
-	constant:         f32,
-	color:            Vec3,
-	linear:           f32,
-	quadratic:        f32,
-	diffuse_intensity: f32,
+	pos:                Vec3,
+	constant:           f32,
+	color:              Vec3,
+	linear:             f32,
+	quadratic:          f32,
+	diffuse_intensity:  f32,
 	specular_intensity: f32,
 }
 
 DirectionalLight :: struct {
-	direction:         Vec3,
-	color:             Vec3,
+	direction:          Vec3,
+	color:              Vec3,
 	diffuse_intensity:  f32,
 	specular_intensity: f32,
 }
 
 SpotLight :: struct {
-	pos:               Vec3,
-	inner_cutoff:      f32,
-	direction:         Vec3,
-	outer_cutoff:      f32,
-	color:             Vec3,
-	constant:          f32,
-	linear:            f32,
-	quadratic:         f32,
+	pos:                Vec3,
+	inner_cutoff:       f32,
+	direction:          Vec3,
+	outer_cutoff:       f32,
+	color:              Vec3,
+	constant:           f32,
+	linear:             f32,
+	quadratic:          f32,
 	diffuse_intensity:  f32,
 	specular_intensity: f32,
 }
@@ -169,6 +172,7 @@ AmbientLight :: struct {
 SceneData :: struct {
 	view:                    Mat4x4,
 	proj:                    Mat4x4,
+	light_space_matrix:      Mat4x4,
 	point_lights:            [16]PointLight,
 	directional_lights:      [4]DirectionalLight,
 	spot_lights:             [4]SpotLight,
@@ -185,6 +189,13 @@ Vertex :: struct {
 	uv:     Vec2,
 	color:  Vec3,
 	normal: Vec3,
+}
+
+ShadowPushConstants :: struct {
+	scene_data:       vk.DeviceAddress,
+	vertex_buffer:    vk.DeviceAddress,
+	transform_buffer: vk.DeviceAddress,
+	instance_index:   u32,
 }
 
 PushConstants :: struct {

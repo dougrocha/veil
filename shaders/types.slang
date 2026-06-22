@@ -43,6 +43,7 @@ struct SpotLight {
 struct SceneData {
     float4x4 view;
     float4x4 proj;
+    float4x4 light_space_matrix;
     PointLight point_lights[16];
     DirectionalLight directional_lights[4];
     SpotLight spot_lights[4];

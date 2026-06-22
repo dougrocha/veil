@@ -59,9 +59,18 @@ create_texture_system :: proc(engine: ^Engine, config: TextureSystemConfig) {
 				descriptorCount = MAX_TEXTURES,
 				stageFlags = {.FRAGMENT},
 			},
+			{
+				binding = 1,
+				descriptorType = .COMBINED_IMAGE_SAMPLER,
+				descriptorCount = 1,
+				stageFlags = {.FRAGMENT},
+			},
 		},
 		count = MAX_FRAMES_IN_FLIGHT,
-		binding_flags = {[]vk.DescriptorBindingFlags{{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND}}[0]},
+		binding_flags = {
+			vk.DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND},
+			{},
+		},
 		layout_flags = {.UPDATE_AFTER_BIND_POOL},
 		pool_flags = {.UPDATE_AFTER_BIND},
 	)

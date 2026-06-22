@@ -12,6 +12,9 @@ VERTEX_ENTRY :: "vertex_main"
 FRAGMENT_MAIN :: "fragment_main"
 COMPUTE_MAIN :: "compute_main"
 
+DEFAULT_VERTEX_ENTRY: cstring : VERTEX_ENTRY
+DEFAULT_FRAGMENT_ENTRY: cstring : FRAGMENT_MAIN
+
 ShaderHandle :: Handle(vk.ShaderModule)
 
 INVALID_SHADER_HANDLE :: ShaderHandle{}

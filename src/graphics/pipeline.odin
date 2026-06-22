@@ -9,43 +9,77 @@ Pipeline :: struct {
 	pipeline: vk.Pipeline,
 }
 
-PipelineType :: enum {
-	Graphics,
-	Compute,
-}
-
 BlendMode :: enum {
 	Alpha,
 	Additive,
 }
 
 PipelineDescriptor :: struct {
-	shader:               ShaderHandle,
-	type:                 PipelineType,
-	topology:             vk.PrimitiveTopology,
-	cull_mode:            vk.CullModeFlags,
-	depth_test:           bool,
-	depth_write:          bool,
-	depth_compare_op:     vk.CompareOp,
-	blend:                Maybe(BlendMode),
-	push_constant_size:   u32,
-	push_constant_stages: vk.ShaderStageFlags,
-	descriptor_layout:    Maybe(vk.DescriptorSetLayout),
-	sample_count:         vk.SampleCountFlags,
+	shader:                     ShaderHandle,
+	type:                       vk.PipelineBindPoint,
+	topology:                   vk.PrimitiveTopology,
+	cull_mode:                  vk.CullModeFlags,
+	depth_test:                 bool,
+	depth_write:                bool,
+	depth_compare_op:           vk.CompareOp,
+	depth_bias_enable:          bool,
+	depth_bias_constant_factor: f32,
+	depth_bias_clamp:           f32,
+	depth_bias_slope_factor:    f32,
+	blend:                      Maybe(BlendMode),
+	push_constant_size:         u32,
+	push_constant_stages:       vk.ShaderStageFlags,
+	descriptor_layouts:         []vk.DescriptorSetLayout,
+	sample_count:               vk.SampleCountFlags,
+	color_formats:              []vk.Format,
+	depth_format:               vk.Format,
+	vertex_entry:               cstring,
+	fragment_entry:             cstring, // nil = vertex-only depth pass
 }
 
-pipeline_descriptor_default :: proc() -> PipelineDescriptor {
+make_pipeline_descriptor :: proc(
+	shader: ShaderHandle,
+	type: vk.PipelineBindPoint = .GRAPHICS,
+	topology: vk.PrimitiveTopology = .TRIANGLE_LIST,
+	cull_mode: vk.CullModeFlags = {.BACK},
+	depth_test: bool = true,
+	depth_write: bool = true,
+	depth_compare_op: vk.CompareOp = .LESS,
+	depth_bias_enable: bool = false,
+	depth_bias_constant_factor: f32 = 0.0,
+	depth_bias_clamp: f32 = 0.0,
+	depth_bias_slope_factor: f32 = 0.0,
+	blend: Maybe(BlendMode) = nil,
+	push_constant_size: u32 = size_of(PushConstants),
+	push_constant_stages: vk.ShaderStageFlags = {.VERTEX, .FRAGMENT},
+	descriptor_layouts: []vk.DescriptorSetLayout = {},
+	sample_count: vk.SampleCountFlags = {._1},
+	color_formats: []vk.Format = nil,
+	depth_format: vk.Format = DEPTH_FORMAT,
+	vertex_entry: cstring = DEFAULT_VERTEX_ENTRY,
+	fragment_entry: cstring = DEFAULT_FRAGMENT_ENTRY,
+) -> PipelineDescriptor {
 	return PipelineDescriptor {
-		type = .Graphics,
-		topology = .TRIANGLE_LIST,
-		cull_mode = {.BACK},
-		depth_test = true,
-		depth_write = true,
-		depth_compare_op = .LESS,
-		blend = nil,
-		push_constant_size = size_of(PushConstants),
-		push_constant_stages = {.VERTEX, .FRAGMENT},
-		descriptor_layout = nil,
+		shader = shader,
+		type = type,
+		topology = topology,
+		cull_mode = cull_mode,
+		depth_test = depth_test,
+		depth_write = depth_write,
+		depth_compare_op = depth_compare_op,
+		depth_bias_enable = depth_bias_enable,
+		depth_bias_constant_factor = depth_bias_constant_factor,
+		depth_bias_clamp = depth_bias_clamp,
+		depth_bias_slope_factor = depth_bias_slope_factor,
+		blend = blend,
+		push_constant_size = push_constant_size,
+		push_constant_stages = push_constant_stages,
+		descriptor_layouts = descriptor_layouts,
+		sample_count = sample_count,
+		color_formats = color_formats,
+		depth_format = depth_format,
+		vertex_entry = vertex_entry,
+		fragment_entry = fragment_entry,
 	}
 }
 
@@ -58,15 +92,27 @@ PipelineRegistry :: struct {
 	entries: map[string]PipelineEntry,
 }
 
-register_pipeline :: proc(self: ^Engine, reg: ^PipelineRegistry, name: string, desc: PipelineDescriptor) {
-	reg.entries[name] = PipelineEntry {
-		pipeline   = build_pipeline(self, desc),
+register_pipeline :: proc(self: ^Engine, name: string, desc: PipelineDescriptor) {
+	self.pipeline_registry.entries[name] = PipelineEntry {
+		pipeline   = build_pipeline(&self.vk_ctx, get_shader(self, desc.shader), desc),
 		descriptor = desc,
 	}
 }
 
 get_pipeline :: proc(reg: ^PipelineRegistry, name: string) -> Pipeline {
-	return reg.entries[name].pipeline
+	entry, ok := reg.entries[name]
+	if !ok {
+		log.panicf("get_pipeline: unknown pipeline '%s'", name)
+	}
+	return entry.pipeline
+}
+
+get_pipeline_entry :: proc(reg: ^PipelineRegistry, name: string) -> PipelineEntry {
+	entry, ok := reg.entries[name]
+	if !ok {
+		log.panicf("get_pipeline_entry: unknown pipeline '%s'", name)
+	}
+	return entry
 }
 
 destroy_pipeline_registry :: proc(device: vk.Device, reg: ^PipelineRegistry) {
@@ -100,10 +146,14 @@ reload_pipeline :: proc(self: ^Engine, name: string) {
 
 	// determine entry points from pipeline type
 	entry_points: []string
-	switch entry.descriptor.type {
-	case .Graphics:
-		entry_points = {VERTEX_ENTRY, FRAGMENT_MAIN}
-	case .Compute:
+	#partial switch entry.descriptor.type {
+	case .GRAPHICS:
+		if entry.descriptor.fragment_entry != nil {
+			entry_points = {VERTEX_ENTRY, FRAGMENT_MAIN}
+		} else {
+			entry_points = {VERTEX_ENTRY}
+		}
+	case .COMPUTE:
 		entry_points = {COMPUTE_MAIN}
 	}
 
@@ -117,11 +167,11 @@ reload_pipeline :: proc(self: ^Engine, name: string) {
 	vk.DestroyPipeline(self.vk_ctx.device, entry.pipeline.pipeline, nil)
 	vk.DestroyPipelineLayout(self.vk_ctx.device, entry.pipeline.layout, nil)
 
-	entry.pipeline = build_pipeline(self, entry.descriptor)
+	entry.pipeline = build_pipeline(&self.vk_ctx, get_shader(self, entry.descriptor.shader), entry.descriptor)
 	log.infof("Reloaded pipeline: %s", name)
 }
 
-build_pipeline :: proc(self: ^Engine, desc: PipelineDescriptor) -> Pipeline {
+build_pipeline :: proc(vk_ctx: ^VulkanContext, shader: vk.ShaderModule, desc: PipelineDescriptor) -> Pipeline {
 	push_constant_range := vk.PushConstantRange {
 		stageFlags = desc.push_constant_stages,
 		offset     = 0,
@@ -129,28 +179,24 @@ build_pipeline :: proc(self: ^Engine, desc: PipelineDescriptor) -> Pipeline {
 	}
 
 	layout_info := vk.PipelineLayoutCreateInfo {
-		sType = .PIPELINE_LAYOUT_CREATE_INFO,
+		sType          = .PIPELINE_LAYOUT_CREATE_INFO,
+		setLayoutCount = u32(len(desc.descriptor_layouts)),
+		pSetLayouts    = raw_data(desc.descriptor_layouts),
 	}
 	if desc.push_constant_size > 0 {
 		layout_info.pushConstantRangeCount = 1
 		layout_info.pPushConstantRanges = &push_constant_range
 	}
-	if layout, ok := desc.descriptor_layout.?; ok {
-		layout_info.setLayoutCount = 1
-		layout_info.pSetLayouts = &layout
-	}
 
 	pipeline: Pipeline
-	vk_check(vk.CreatePipelineLayout(self.vk_ctx.device, &layout_info, nil, &pipeline.layout))
+	vk_check(vk.CreatePipelineLayout(vk_ctx.device, &layout_info, nil, &pipeline.layout))
 
-	shader_module := get_shader(self, desc.shader)
-
-	switch desc.type {
-	case .Compute:
+	#partial switch desc.type {
+	case .COMPUTE:
 		stage := vk.PipelineShaderStageCreateInfo {
 			sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
 			stage  = {.COMPUTE},
-			module = shader_module,
+			module = shader,
 			pName  = COMPUTE_MAIN,
 		}
 		compute_info := vk.ComputePipelineCreateInfo {
@@ -158,22 +204,27 @@ build_pipeline :: proc(self: ^Engine, desc: PipelineDescriptor) -> Pipeline {
 			stage  = stage,
 			layout = pipeline.layout,
 		}
-		vk_check(vk.CreateComputePipelines(self.vk_ctx.device, 0, 1, &compute_info, nil, &pipeline.pipeline))
+		vk_check(vk.CreateComputePipelines(vk_ctx.device, 0, 1, &compute_info, nil, &pipeline.pipeline))
 
-	case .Graphics:
-		shader_stages := [2]vk.PipelineShaderStageCreateInfo {
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.VERTEX},
-				module = shader_module,
-				pName = VERTEX_ENTRY,
-			},
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.FRAGMENT},
-				module = shader_module,
-				pName = FRAGMENT_MAIN,
-			},
+	case .GRAPHICS:
+		vert_stage := vk.PipelineShaderStageCreateInfo {
+			sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+			stage  = {.VERTEX},
+			module = shader,
+			pName  = desc.vertex_entry,
+		}
+		frag_stage := vk.PipelineShaderStageCreateInfo {
+			sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+			stage  = {.FRAGMENT},
+			module = shader,
+			pName  = desc.fragment_entry,
+		}
+
+		shader_stages: [dynamic]vk.PipelineShaderStageCreateInfo
+		defer delete(shader_stages)
+		append(&shader_stages, vert_stage)
+		if desc.fragment_entry != nil {
+			append(&shader_stages, frag_stage)
 		}
 
 		vertex_input_info := vk.PipelineVertexInputStateCreateInfo {
@@ -199,11 +250,15 @@ build_pipeline :: proc(self: ^Engine, desc: PipelineDescriptor) -> Pipeline {
 		}
 
 		raster_info := vk.PipelineRasterizationStateCreateInfo {
-			sType       = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-			polygonMode = .FILL,
-			cullMode    = desc.cull_mode,
-			frontFace   = .COUNTER_CLOCKWISE,
-			lineWidth   = 1.0,
+			sType                   = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+			polygonMode             = .FILL,
+			cullMode                = desc.cull_mode,
+			frontFace               = .COUNTER_CLOCKWISE,
+			lineWidth               = 1.0,
+			depthBiasEnable         = b32(desc.depth_bias_enable),
+			depthBiasConstantFactor = desc.depth_bias_constant_factor,
+			depthBiasClamp          = desc.depth_bias_clamp,
+			depthBiasSlopeFactor    = desc.depth_bias_slope_factor,
 		}
 
 		multisample_info := vk.PipelineMultisampleStateCreateInfo {
@@ -234,25 +289,34 @@ build_pipeline :: proc(self: ^Engine, desc: PipelineDescriptor) -> Pipeline {
 			}
 		}
 
-		blend_info := vk.PipelineColorBlendStateCreateInfo {
-			sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-			attachmentCount = 1,
-			pAttachments    = &color_blend_attach,
+		color_formats := desc.color_formats
+		if desc.fragment_entry != nil && color_formats == nil {
+			color_formats = []vk.Format{vk.Format(DRAW_FORMAT)}
 		}
 
-		dynamic_states := []vk.DynamicState{.VIEWPORT, .SCISSOR}
+		blend_attachments := make([]vk.PipelineColorBlendAttachmentState, len(color_formats))
+		defer delete(blend_attachments)
+		for &a in blend_attachments {
+			a = color_blend_attach
+		}
+
+		blend_info := vk.PipelineColorBlendStateCreateInfo {
+			sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+			attachmentCount = u32(len(blend_attachments)),
+			pAttachments    = raw_data(blend_attachments),
+		}
+
+		dynamic_states := []vk.DynamicState{.VIEWPORT, .SCISSOR, .DEPTH_BIAS}
 		dynamic_state_info := vk.PipelineDynamicStateCreateInfo {
 			sType             = .PIPELINE_DYNAMIC_STATE_CREATE_INFO,
 			dynamicStateCount = u32(len(dynamic_states)),
 			pDynamicStates    = raw_data(dynamic_states),
 		}
-
-		color_format := vk.Format(DRAW_FORMAT)
 		render_info := vk.PipelineRenderingCreateInfo {
 			sType                   = .PIPELINE_RENDERING_CREATE_INFO,
-			colorAttachmentCount    = 1,
-			pColorAttachmentFormats = &color_format,
-			depthAttachmentFormat   = DEPTH_FORMAT,
+			colorAttachmentCount    = u32(len(color_formats)),
+			pColorAttachmentFormats = raw_data(color_formats),
+			depthAttachmentFormat   = desc.depth_format,
 		}
 
 		pipeline_info := vk.GraphicsPipelineCreateInfo {
@@ -271,7 +335,7 @@ build_pipeline :: proc(self: ^Engine, desc: PipelineDescriptor) -> Pipeline {
 			layout              = pipeline.layout,
 		}
 
-		vk_check(vk.CreateGraphicsPipelines(self.vk_ctx.device, 0, 1, &pipeline_info, nil, &pipeline.pipeline))
+		vk_check(vk.CreateGraphicsPipelines(vk_ctx.device, 0, 1, &pipeline_info, nil, &pipeline.pipeline))
 	}
 
 	return pipeline

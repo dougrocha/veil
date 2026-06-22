@@ -72,6 +72,27 @@ destroy_descriptor_set :: proc(engine: ^Engine, desc: ^DescriptorSet) {
 	vk.DestroyDescriptorSetLayout(engine.vk_ctx.device, desc.layout, nil)
 }
 
+write_descriptor_image :: proc(
+	vk_ctx: ^VulkanContext,
+	desc: ^DescriptorSet,
+	binding: u32,
+	image_info: ^vk.DescriptorImageInfo,
+	array_element: u32 = 0,
+) {
+	for i in 0 ..< desc.count {
+		write := vk.WriteDescriptorSet {
+			sType           = .WRITE_DESCRIPTOR_SET,
+			dstSet          = desc.sets[i],
+			dstBinding      = binding,
+			dstArrayElement = array_element,
+			descriptorCount = 1,
+			descriptorType  = .COMBINED_IMAGE_SAMPLER,
+			pImageInfo      = image_info,
+		}
+		vk.UpdateDescriptorSets(vk_ctx.device, 1, &write, 0, nil)
+	}
+}
+
 // Writes a texture from the texture system into the descriptor set at the given binding.
 // Writes to all sets in the descriptor (all frames).
 write_descriptor_texture :: proc(
@@ -87,16 +108,6 @@ write_descriptor_texture :: proc(
 		imageView   = t.image_view,
 		imageLayout = .READ_ONLY_OPTIMAL,
 	}
-	for i in 0 ..< desc.count {
-		write := vk.WriteDescriptorSet {
-			sType           = .WRITE_DESCRIPTOR_SET,
-			dstSet          = desc.sets[i],
-			dstBinding      = binding,
-			dstArrayElement = array_element,
-			descriptorCount = 1,
-			descriptorType  = .COMBINED_IMAGE_SAMPLER,
-			pImageInfo      = &image_info,
-		}
-		vk.UpdateDescriptorSets(engine.vk_ctx.device, 1, &write, 0, nil)
-	}
+
+	write_descriptor_image(&engine.vk_ctx, desc, binding, &image_info, array_element)
 }
