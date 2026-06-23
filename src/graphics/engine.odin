@@ -219,7 +219,6 @@ engine_shutdown :: proc(self: ^Engine) {
 		vk.DestroySemaphore(self.vk_ctx.device, res.image_acquired_semaphore, nil)
 		vk.DestroySemaphore(self.vk_ctx.device, res.render_complete_semaphore, nil)
 		vk.DestroyCommandPool(self.vk_ctx.device, res.command_pool, nil)
-		delete(res.deletion_queue.deletors)
 	}
 	cleanup_swapchain(self)
 
@@ -259,7 +258,6 @@ engine_render :: proc(app: ^App) {
 	}
 
 	current_frame_res := &app.engine.frame_resources[current_frame_res_index(&app.engine)]
-	flush_deletion_queue(&current_frame_res.deletion_queue)
 
 	// get the next swapchain image we can write too
 	//
@@ -424,7 +422,7 @@ draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		model_ptr := &pool_get(&engine.model_system.models, instance.model)^
 
 		for &mesh in model_ptr.meshes {
-			mat := &engine.material_system.materials.slots[mesh.material_index].value
+			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode == .Blend do continue
 
 			pc := ShadowPushConstants {
@@ -480,7 +478,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 				vertex_buffer    = mesh.vertex_address,
 				material_buffer  = engine.material_system.buffer.ptr,
 				transform_buffer = engine.model_system.transforms_buffer.ptr,
-				material_index   = u32(mesh.material_index),
+				material_index   = u32(mesh.material.index),
 				instance_index   = u32(i),
 			}
 			vk.CmdPushConstants(
@@ -502,7 +500,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		instance := &slot.value
 		model := &pool_get(&engine.model_system.models, instance.model)^
 		for &mesh in model.meshes {
-			mat := &engine.material_system.materials.slots[mesh.material_index].value
+			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode == .Blend do continue
 			draw_instance(engine, cmd, i)
 			break
@@ -520,7 +518,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		instance := &slot.value
 		model := &pool_get(&engine.model_system.models, instance.model)^
 		for &mesh in model.meshes {
-			mat := &engine.material_system.materials.slots[mesh.material_index].value
+			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode != .Blend do continue
 			pos := instance.transform.translation
 			cam := engine.camera.position

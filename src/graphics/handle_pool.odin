@@ -74,15 +74,11 @@ _pool_get_slot :: proc(pool: ^Pool($T), handle: Handle(T)) -> ^Slot(T) {
 
 pool_free :: proc(pool: ^Pool($T), handle: Handle(T)) {
 	slot := _pool_get_slot(pool, handle)
-
 	slot.alive = false
-
 	append(&pool.free_list, handle.index)
 }
 
 pool_get :: proc(pool: ^Pool($T), handle: Handle(T)) -> ^T {
 	slot := _pool_get_slot(pool, handle)
-
 	return &slot.value
 }
-

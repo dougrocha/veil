@@ -34,7 +34,6 @@ FrameResources :: struct {
 	command_buffer:            vk.CommandBuffer,
 	image_acquired_semaphore:  vk.Semaphore,
 	render_complete_semaphore: vk.Semaphore,
-	deletion_queue:            DeletionQueue,
 	scene_data_buffer:         GpuBuffer,
 	particle_buffer:           GpuBuffer,
 }

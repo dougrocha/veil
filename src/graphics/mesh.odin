@@ -13,7 +13,7 @@ Mesh :: struct {
 	index_buffer:      vk.Buffer,
 	index_allocation:  vma.Allocation,
 	index_count:       u32,
-	material_index:    i32,
+	material:          MaterialHandle,
 }
 
 ModelHandle :: Handle(Model)
@@ -144,7 +144,7 @@ register_model :: proc(
 		index_buffer      = index_buf.buffer,
 		index_allocation  = index_buf.alloc,
 		index_count       = u32(len(indices)),
-		material_index    = i32(material_handle.index),
+		material          = material_handle,
 	}
 
 	model := Model {

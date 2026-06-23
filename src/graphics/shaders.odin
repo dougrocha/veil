@@ -175,9 +175,9 @@ load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 
 	// check if this module is being reloaded (update in place) or is new
 	if existing, ok := ss.name_to_handle[module_name]; ok {
-		slot := _pool_get_slot(&ss.modules, existing)
-		vk.DestroyShaderModule(self.vk_ctx.device, slot.value, nil)
-		slot.value = vk_module
+		module_ptr := pool_get(&ss.modules, existing)
+		vk.DestroyShaderModule(self.vk_ctx.device, module_ptr^, nil)
+		module_ptr^ = vk_module
 		return existing, true
 	}
 

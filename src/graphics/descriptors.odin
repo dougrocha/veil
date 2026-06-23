@@ -102,7 +102,7 @@ write_descriptor_texture :: proc(
 	handle: TextureHandle,
 	array_element: u32 = 0,
 ) {
-	t := &engine.texture_system.textures.slots[handle.index].value
+	t := pool_get(&engine.texture_system.textures, handle)
 	image_info := vk.DescriptorImageInfo {
 		sampler     = t.sampler,
 		imageView   = t.image_view,
