@@ -18,26 +18,30 @@ TextureHandle :: Handle(Texture)
 INVALID_TEXTURE :: TextureHandle{}
 
 Texture :: struct {
-	// vulkan internals
-	image:            vk.Image,
-	allocation:       vma.Allocation,
-	image_view:       vk.ImageView,
-	sampler:          vk.Sampler,
-
 	// Texture metadata
 	width:            u32,
 	height:           u32,
 	mip_levels:       u32,
 	channel_count:    u8,
 	has_transparency: bool,
+	format:           vk.Format,
+
+    // vulkan internals
+    image:            vk.Image,
+    allocation:       vma.Allocation,
+    image_view:       vk.ImageView,
+    sampler:          vk.Sampler,
 }
 
 TextureSystem :: struct {
-	textures:               Pool(Texture),
-	texture_map:            map[string]TextureHandle,
-	config:                 TextureSystemConfig,
-	default_texture_handle: TextureHandle,
-	descriptor:             DescriptorSet,
+	textures:                  Pool(Texture),
+	texture_map:               map[string]TextureHandle,
+	config:                    TextureSystemConfig,
+	default_texture_handle:    TextureHandle,
+	default_metallic_roughness_texture: TextureHandle,
+	default_normal_texture:    TextureHandle,
+	default_occlusion_texture: TextureHandle,
+	descriptor:                DescriptorSet,
 }
 
 TextureSystemConfig :: struct {
@@ -93,11 +97,16 @@ destroy_texture_system :: proc(engine: ^Engine) {
 }
 
 create_builtin_textures :: proc(engine: ^Engine) {
+	ts := &engine.texture_system
 	white: [4]u8 = {0xFF, 0xFF, 0xFF, 0xFF}
-	engine.texture_system.default_texture_handle = upload_texture(engine, DEFAULT_TEXTURE_NAME, &white, 1, 1, 4, false)
+	flat_normal: [4]u8 = {128, 128, 0xFF, 0xFF}
+	ts.default_texture_handle    = upload_texture(engine, DEFAULT_TEXTURE_NAME, &white, 1, 1, 4, false)
+	ts.default_metallic_roughness_texture = upload_texture(engine, "default_roughness", &white, 1, 1, 4, false)
+	ts.default_normal_texture    = upload_texture(engine, "default_normal", &flat_normal, 1, 1, 4, false)
+	ts.default_occlusion_texture = upload_texture(engine, "default_occlusion", &white, 1, 1, 4, false)
 }
 
-load_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
+load_texture :: proc(engine: ^Engine, path: string, is_srgb: bool = true) -> TextureHandle {
 	if handle, ok := engine.texture_system.texture_map[path]; ok {
 		return handle
 	}
@@ -119,7 +128,7 @@ load_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
 		return engine.texture_system.default_texture_handle
 	}
 
-	return upload_texture(engine, path, pixels, u32(width), u32(height), 4, false)
+	return upload_texture(engine, path, pixels, u32(width), u32(height), 4, false, is_srgb)
 }
 
 // Uploads a texture to the GPU buffer
@@ -129,9 +138,11 @@ upload_texture :: proc(
 	pixels: rawptr,
 	width, height, channels: u32,
 	has_transparency: bool,
+	is_srgb: bool = true,
 ) -> TextureHandle {
 	ts := &engine.texture_system
 	image_size := vk.DeviceSize(width * height * channels)
+	format := TEXTURE_FORMAT if is_srgb else TEXTURE_FORMAT_LINEAR
 
 	staging := create_buffer(&engine.vk_ctx, image_size, .Staging)
 	defer destroy_buffer(&engine.vk_ctx, staging)
@@ -141,7 +152,7 @@ upload_texture :: proc(
 	gpu_img := create_image(
 		&engine.vk_ctx,
 		{width, height, 1},
-		TEXTURE_FORMAT,
+		format,
 		{.TRANSFER_SRC, .TRANSFER_DST, .SAMPLED},
 		mip_levels = mip_levels,
 	)
@@ -163,7 +174,7 @@ upload_texture :: proc(
 	end_single_time_commands(&engine.vk_ctx, &cmd)
 	// transitioned to SHADER_READ_ONLY_OPTIMAL while generating mipmaps
 
-	generate_mipmaps(engine, gpu_img.image, TEXTURE_FORMAT, width, height, mip_levels)
+	generate_mipmaps(engine, gpu_img.image, format, width, height, mip_levels)
 
 	t := Texture {
 		image            = gpu_img.image,
@@ -173,6 +184,7 @@ upload_texture :: proc(
 		height           = height,
 		channel_count    = 4, // set to four cause our TEXTURE_FORMAT is hard coded
 		has_transparency = has_transparency,
+		format           = format,
 	}
 	create_texture_image_view(&engine.vk_ctx, &t)
 	create_texture_sampler(&engine.vk_ctx, &t)
@@ -427,7 +439,7 @@ get_max_usable_sample_count :: proc(ctx: ^VulkanContext) -> vk.SampleCountFlags 
 }
 
 create_texture_image_view :: proc(ctx: ^VulkanContext, t: ^Texture) {
-	t.image_view = create_image_view(ctx, t.image, TEXTURE_FORMAT, {.COLOR}, mip_levels = t.mip_levels)
+	t.image_view = create_image_view(ctx, t.image, t.format, {.COLOR}, mip_levels = t.mip_levels)
 }
 
 create_texture_sampler :: proc(ctx: ^VulkanContext, t: ^Texture) {

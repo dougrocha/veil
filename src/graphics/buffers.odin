@@ -139,20 +139,21 @@ update_scene_data_buffer :: proc(engine: ^Engine) {
 	scene.proj[1][1] *= -1.0
 	scene.delta_time = engine.clock.delta_time
 
-	light := engine.point_lights[0]
-	light_fov: f32 = 60.0
-	light_near: f32 = 1.0
+	light_fov: f32 = 90.0
+	light_near: f32 = 0.1
 	light_far: f32 = 100.0
+	scene.shadow_near = light_near
+	scene.shadow_far = light_far
 	light_proj := linalg.matrix4_perspective_f32(linalg.to_radians(light_fov), 1.0, light_near, light_far)
-	light_proj[1][1] *= -1.0
 
-	light_target: Vec3 = {0, 0, 0}
-	up: Vec3 = {0.0, 1.0, 0.0}
-	if linalg.abs(light.pos.y - light_target.y) / linalg.distance(light.pos, light_target) > 0.99 {
-		up = {0.0, 0.0, 1.0}
+	shadow_light_count := min(int(engine.point_light_count), MAX_SHADOW_LIGHTS)
+	for light_i in 0 ..< shadow_light_count {
+		light := engine.point_lights[light_i]
+		for face_dir, face_i in CUBE_FACE_DIRS {
+			light_view := linalg.matrix4_look_at(light.pos, light.pos + face_dir.target, face_dir.up)
+			scene.light_view_proj[light_i][face_i] = light_proj * light_view
+		}
 	}
-	light_view := linalg.matrix4_look_at(light.pos, light_target, up)
-	scene.light_space_matrix = light_proj * light_view
 
 	mem.copy(engine.frame_resources[frame_index].scene_data_buffer.alloc_info.mapped_data, &scene, size_of(SceneData))
 }

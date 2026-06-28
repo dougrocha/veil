@@ -35,7 +35,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_draw_image(engine)
 
 	create_shader_system(engine) or_return
-	shadow_map_handle := load_shader(engine, "shadow_map", {VERTEX_ENTRY}) or_return
+	shadow_map_handle := load_shader(engine, "shadow_map", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	ui_handle := load_shader(engine, "ui", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	mesh_handle := load_shader(engine, "mesh", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	particle_handle := load_shader(engine, "particle", {VERTEX_ENTRY, FRAGMENT_MAIN, COMPUTE_MAIN}) or_return
@@ -66,16 +66,29 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 		&engine.vk_ctx,
 		{SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 1},
 		.D32_SFLOAT,
-		// use DEPTH_STENCIL because we are using depth pass here
-		// then in the second pass we put SAMPLED so we can sample this image
 		{.DEPTH_STENCIL_ATTACHMENT, .SAMPLED},
+		array_layers = MAX_SHADOW_LIGHTS * 6,
+		image_flags = {.CUBE_COMPATIBLE},
 	)
 	engine.shadow_map_image.image_view = create_image_view(
 		&engine.vk_ctx,
 		engine.shadow_map_image.image,
 		.D32_SFLOAT,
 		{.DEPTH},
+		view_type    = .CUBE_ARRAY,
+		array_layers = MAX_SHADOW_LIGHTS * 6,
 	)
+
+	for i in 0 ..< MAX_SHADOW_LIGHTS * 6 {
+		engine.shadow_map_face_views[i] = create_image_view(
+			&engine.vk_ctx,
+			engine.shadow_map_image.image,
+			.D32_SFLOAT,
+			{.DEPTH},
+			base_array_layer = u32(i),
+			array_layers = 1,
+		)
+	}
 
 	// shadow map sampler
 	sampler_info := vk.SamplerCreateInfo {
@@ -110,8 +123,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 			depth_compare_op = .LESS_OR_EQUAL,
 			depth_bias_enable = false,
 			push_constant_size = size_of(ShadowPushConstants),
-			push_constant_stages = {.VERTEX},
-			fragment_entry = nil,
+			push_constant_stages = {.VERTEX, .FRAGMENT},
+			color_formats = nil,
 		),
 	)
 
@@ -186,8 +199,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 			cull_mode = {},
 			depth_test = false,
 			depth_write = false,
-			push_constant_size = 0,
-			push_constant_stages = {},
+			push_constant_size = 2 * size_of(f32) + 2 * size_of(u32),
+			push_constant_stages = {.FRAGMENT},
 			descriptor_layouts = {engine.shadow_map_descriptor.layout},
 			depth_format = .UNDEFINED,
 		),
@@ -205,6 +218,9 @@ engine_shutdown :: proc(self: ^Engine) {
 
 	destroy_descriptor_set(self, &self.skybox_descriptor)
 	destroy_descriptor_set(self, &self.shadow_map_descriptor)
+	for view in self.shadow_map_face_views[:MAX_SHADOW_LIGHTS * 6] {
+		vk.DestroyImageView(self.vk_ctx.device, view, nil)
+	}
 	destroy_image(&self.vk_ctx, self.shadow_map_image)
 	vk.DestroySampler(self.vk_ctx.device, self.shadow_map_sampler, nil)
 
@@ -398,25 +414,31 @@ draw_particles :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	vk.CmdDraw(cmd, PARTICLE_COUNT, 1, 0, 0)
 }
 
-draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
+CUBE_FACE_DIRS := [6]struct {
+	target, up: Vec3,
+} {
+	{{1, 0, 0}, {0, -1, 0}},
+	{{-1, 0, 0}, {0, -1, 0}},
+	{{0, 1, 0}, {0, 0, 1}},
+	{{0, -1, 0}, {0, 0, -1}},
+	{{0, 0, 1}, {0, -1, 0}},
+	{{0, 0, -1}, {0, -1, 0}},
+}
+
+draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer, light_i: u32, face_i: u32) {
 	shadow_map_pipeline := get_pipeline(&engine.pipeline_registry, "shadow_map")
 
 	vk.CmdBindPipeline(cmd, .GRAPHICS, shadow_map_pipeline.pipeline)
+	vk.CmdSetDepthBias(cmd, 0, 0, 0)
 
 	transforms := (^GpuTransform)(engine.model_system.transforms_buffer.alloc_info.mapped_data)
-	for &slot, i in engine.model_system.instances.slots {
+	for &slot, slot_i in engine.model_system.instances.slots {
 		if !slot.alive do continue
 		instance := &slot.value
 
-		rot := linalg.matrix4_from_quaternion(instance.transform.rotation)
-		translation := linalg.matrix4_translate(instance.transform.translation)
-		scale := linalg.matrix4_scale(instance.transform.scale)
-		model_mat := translation * rot * scale
-		normal := linalg.transpose(linalg.inverse(model_mat))
-
-		mem.ptr_offset(transforms, i)^ = GpuTransform {
-			model         = model_mat,
-			normal_matrix = normal,
+		mem.ptr_offset(transforms, slot_i)^ = GpuTransform {
+			model         = transform_matrix(instance.transform),
+			normal_matrix = {},
 		}
 
 		model_ptr := &pool_get(&engine.model_system.models, instance.model)^
@@ -429,9 +451,11 @@ draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 				scene_data       = engine.frame_resources[current_frame_res_index(engine)].scene_data_buffer.ptr,
 				vertex_buffer    = mesh.vertex_address,
 				transform_buffer = engine.model_system.transforms_buffer.ptr,
-				instance_index   = u32(i),
+				instance_index   = u32(slot_i),
+				face_index       = face_i,
+				light_index      = light_i,
 			}
-			vk.CmdPushConstants(cmd, shadow_map_pipeline.layout, {.VERTEX}, 0, size_of(ShadowPushConstants), &pc)
+			vk.CmdPushConstants(cmd, shadow_map_pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(ShadowPushConstants), &pc)
 			vk.CmdBindIndexBuffer(cmd, mesh.index_buffer, 0, .UINT32)
 			vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)
 		}
@@ -457,10 +481,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	for &slot, i in engine.model_system.instances.slots {
 		if !slot.alive do continue
 		instance := &slot.value
-		rot := linalg.matrix4_from_quaternion(instance.transform.rotation)
-		translation := linalg.matrix4_translate(instance.transform.translation)
-		scale := linalg.matrix4_scale(instance.transform.scale)
-		model := translation * rot * scale
+		model := transform_matrix(instance.transform)
 		normal := linalg.transpose(linalg.inverse(model))
 
 		mem.ptr_offset(transforms, i)^ = GpuTransform {
@@ -551,23 +572,9 @@ draw_skybox :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 }
 
 draw_debug_shadow_map :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
-	DEBUG_SIZE :: 256
+	DEBUG_SIZE :: 128
 	pipeline := get_pipeline(&engine.pipeline_registry, "debug_shadow_map")
 	begin_render_pass(engine, cmd, PassConfig{color_target = &engine.swapchain.draw_image, load_op = .LOAD})
-	viewport := vk.Viewport {
-		x        = 0,
-		y        = 0,
-		width    = DEBUG_SIZE,
-		height   = DEBUG_SIZE,
-		minDepth = 0,
-		maxDepth = 1,
-	}
-	scissor := vk.Rect2D {
-		offset = {0, 0},
-		extent = {DEBUG_SIZE, DEBUG_SIZE},
-	}
-	vk.CmdSetViewport(cmd, 0, 1, &viewport)
-	vk.CmdSetScissor(cmd, 0, 1, &scissor)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
 	vk.CmdBindDescriptorSets(
 		cmd,
@@ -579,7 +586,28 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		0,
 		nil,
 	)
-	vk.CmdDraw(cmd, 3, 1, 0, 0)
+	scene_data := (^SceneData)(engine.frame_resources[current_frame_res_index(engine)].scene_data_buffer.alloc_info.mapped_data)
+
+	DebugPC :: struct {near, far: f32, face, light: u32}
+	for face in 0..<6 {
+		viewport := vk.Viewport{
+			x        = f32(face) * DEBUG_SIZE,
+			y        = 0,
+			width    = DEBUG_SIZE,
+			height   = DEBUG_SIZE,
+			minDepth = 0,
+			maxDepth = 1,
+		}
+		scissor := vk.Rect2D{
+			offset = {i32(face) * DEBUG_SIZE, 0},
+			extent = {DEBUG_SIZE, DEBUG_SIZE},
+		}
+		vk.CmdSetViewport(cmd, 0, 1, &viewport)
+		vk.CmdSetScissor(cmd, 0, 1, &scissor)
+		debug_pc := DebugPC{scene_data.shadow_near, scene_data.shadow_far, u32(face), 0}
+		vk.CmdPushConstants(cmd, pipeline.layout, {.FRAGMENT}, 0, size_of(DebugPC), &debug_pc)
+		vk.CmdDraw(cmd, 3, 1, 0, 0)
+	}
 	end_render_pass(cmd)
 }
 
@@ -592,13 +620,40 @@ draw_ui :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 draw_scene :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	// dispatch_particles(engine, cmd)
 
-	begin_render_pass(
-		engine,
+	shadow_light_count := min(int(engine.point_light_count), MAX_SHADOW_LIGHTS)
+
+	// Always transition all MAX_SHADOW_LIGHTS*6 layers so unused layers are in the
+	// expected layout when the mesh pass samples the descriptor.
+	transition_image_layout(
 		cmd,
-		PassConfig{depth_target = &engine.shadow_map_image, load_op = .CLEAR, store_depth = true},
+		engine.shadow_map_image.image,
+		.UNDEFINED,
+		.DEPTH_ATTACHMENT_OPTIMAL,
+		{},
+		{.DEPTH_STENCIL_ATTACHMENT_WRITE},
+		{.EARLY_FRAGMENT_TESTS},
+		{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
+		{.DEPTH},
+		layer_count = MAX_SHADOW_LIGHTS * 6,
 	)
-	draw_shadow_casters(engine, cmd)
-	end_render_pass(cmd)
+	for light_i in 0 ..< shadow_light_count {
+		for face_i in 0 ..< 6 {
+			view_i := light_i * 6 + face_i
+			begin_render_pass(
+				engine,
+				cmd,
+				PassConfig{
+					depth_target          = &engine.shadow_map_image,
+					depth_view            = engine.shadow_map_face_views[view_i],
+					load_op               = .CLEAR,
+					store_depth           = true,
+					skip_depth_transition = true,
+				},
+			)
+			draw_shadow_casters(engine, cmd, u32(light_i), u32(face_i))
+			end_render_pass(cmd)
+		}
+	}
 
 	transition_image_layout(
 		cmd,
@@ -610,6 +665,7 @@ draw_scene :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		{.LATE_FRAGMENT_TESTS},
 		{.FRAGMENT_SHADER},
 		{.DEPTH},
+		layer_count = MAX_SHADOW_LIGHTS * 6,
 	)
 
 	begin_render_pass(

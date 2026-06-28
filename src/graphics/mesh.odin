@@ -1,6 +1,7 @@
 package graphics
 
 import "core:log"
+import "core:path/filepath"
 
 import vma "shared:odin-vma"
 import "shared:tinyobj"
@@ -71,6 +72,11 @@ destroy_model_system :: proc(engine: ^Engine) {
 load_model :: proc(engine: ^Engine, path: string, material: MaterialHandle = INVALID_MATERIAL) -> ModelHandle {
 	if handle, ok := engine.model_system.model_map[path]; ok {
 		return handle
+	}
+
+	ext := filepath.ext(path)
+	if ext == ".gltf" || ext == ".glb" {
+		return load_model_gltf(engine, path, material)
 	}
 
 	obj, ok := tinyobj.load_from_file_path(path, allocator = context.temp_allocator)

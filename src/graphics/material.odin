@@ -10,21 +10,24 @@ DEFAULT_MATERIAL_NAME :: "default"
 MAX_MATERIALS :: 1024
 
 GpuMaterial :: struct {
-	base_color:         Vec4,
-	// metallic:                 f32,
-	// roughness:                f32,
-	// emissive:                 Vec3,
-	base_color_texture: u32,
-	// metallic_texture:      u32,
-	// normal_texture:        u32,
-	// roughness_texture:     u32,
-	// emissive_texture:      u32,
+	base_color:                 Vec4,
+	perceptual_roughness:       f32,
+	metallic:                   f32,
+	base_color_texture:         u32,
+	metallic_roughness_texture: u32,
+	normal_map_texture:         u32,
+	occlusion_texture:          u32,
 }
 
 Material :: struct {
-	base_color:         Vec4,
-	base_color_texture: TextureHandle,
-	alpha_mode:         AlphaMode,
+	base_color:                 Vec4,
+	perceptual_roughness:       f32,
+	metallic:                   f32,
+	base_color_texture:         TextureHandle,
+	metallic_roughness_texture: TextureHandle,
+	normal_map_texture:         TextureHandle,
+	occlusion_texture:          TextureHandle,
+	alpha_mode:                 AlphaMode,
 }
 
 MaterialHandle :: Handle(Material)
@@ -66,11 +69,24 @@ create_material :: proc(engine: ^Engine, name: string, material: Material) -> Ma
 	handle := pool_alloc(&engine.material_system.materials, material)
 	engine.material_system.material_map[name] = handle
 
+	ts := &engine.texture_system
+	resolve :: proc(h, default: TextureHandle) -> u32 {
+		return h.index if h != INVALID_TEXTURE else default.index
+	}
+
 	offset := uintptr(handle.index) * size_of(GpuMaterial)
 	dst := uintptr(engine.material_system.buffer.alloc_info.mapped_data) + offset
 	gpu_mat := GpuMaterial {
-		base_color         = material.base_color,
-		base_color_texture = material.base_color_texture.index,
+		base_color                 = material.base_color,
+		perceptual_roughness       = material.perceptual_roughness,
+		metallic                   = material.metallic,
+		base_color_texture         = resolve(material.base_color_texture, ts.default_texture_handle),
+		metallic_roughness_texture = resolve(
+			material.metallic_roughness_texture,
+			ts.default_metallic_roughness_texture,
+		),
+		normal_map_texture         = resolve(material.normal_map_texture, ts.default_normal_texture),
+		occlusion_texture          = resolve(material.occlusion_texture, ts.default_occlusion_texture),
 	}
 	mem.copy(rawptr(dst), &gpu_mat, size_of(GpuMaterial))
 
@@ -89,9 +105,17 @@ get_default_material :: proc(engine: ^Engine) -> MaterialHandle {
 }
 
 create_default_material :: proc(engine: ^Engine) {
+	ts := &engine.texture_system
 	create_material(
 		engine,
 		DEFAULT_MATERIAL_NAME,
-		Material{base_color = {1, 1, 1, 1}, base_color_texture = get_default_texture(engine)},
+		Material {
+			base_color = {1, 1, 1, 1},
+			perceptual_roughness = 0.5,
+			base_color_texture = ts.default_texture_handle,
+			metallic_roughness_texture = ts.default_metallic_roughness_texture,
+			normal_map_texture = ts.default_normal_texture,
+			occlusion_texture = ts.default_occlusion_texture,
+		},
 	)
 }

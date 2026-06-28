@@ -19,8 +19,9 @@ struct VSOutput {
     float3 frag_color;
     float2 frag_uv;
     float3 frag_normal;
+    float3 frag_tangent;
+    float3 frag_bitangent;
     float3 frag_pos;
-    float4 frag_pos_light_space;
 };
 
 [shader("vertex")]
@@ -32,102 +33,83 @@ VSOutput vertex_main(VSInput input) {
     float4 world_pos = mul(transform.model, float4(v.pos, 1.0));
     output.frag_pos = world_pos.xyz;
 
-    output.frag_pos_light_space = mul(pc.scene_data.light_space_matrix, world_pos);
-
     output.pos = mul(pc.scene_data.proj, mul(pc.scene_data.view, world_pos));
 
-    output.frag_normal = mul((float3x3)transform.normal_matrix, v.normal);
+    float3x3 normal_mat = (float3x3)transform.normal_matrix;
+    float3 N            = normalize(mul(normal_mat, v.normal));
+    float3 T            = normalize(mul(normal_mat, v.tangent.xyz));
+    T                   = normalize(T - dot(T, N) * N); // Gram-Schmidt re-orthogonalize
+    float3 B            = cross(N, T) * v.tangent.w;
+    output.frag_normal    = N;
+    output.frag_tangent   = T;
+    output.frag_bitangent = B;
 
     output.frag_color = v.color;
     output.frag_uv = v.uv;
     return output;
 }
 
-// TODO: eventually this will be part of PBR
-static const float shininess = 128;
+// TODO: replace with PBR
+static const float MAX_SHININESS = 256.0;
 
-float3 calc_base_lighting(float3 normal, float3 view_dir, float3 to_light, float diffuse_int, float specular_int, float3 color) {
+float3 calc_base_lighting(float3 normal, float3 view_dir, float3 to_light, float diffuse_int, float specular_int, float3 color, float shininess = MAX_SHININESS, float smoothness = 1.0) {
     // measures the angle betwen the normal of the frag and the light direction
     // will always be positive
     float diffuse_factor = max(dot(normal, to_light), 0.0);
     // gets the "bounce" direction from the light, used so that if this points in the cameras direction
     // you get that specular highlight
-    float3 reflect_dir = reflect(-to_light, normal);
-    // gets the angle between the view direaction and the reflection
-    float specular_factor = pow(max(dot(view_dir, reflect_dir), 0.0), shininess);
+    // float3 reflect_dir = reflect(-to_light, normal);
 
-    return (diffuse_int * diffuse_factor + specular_int * specular_factor) * color;
+    float3 halfway_dir = normalize(to_light + view_dir);
+
+    // gets the angle between the view direaction and the reflection
+    float specular_factor = pow(max(dot(normal, halfway_dir), 0.0), shininess);
+
+
+    return (diffuse_int * diffuse_factor + specular_int * smoothness * specular_factor) * color;
 }
 
 float calc_attenuation(float distance, float constant, float linear, float quadratic) {
     return 1.0 / (constant + linear * distance + quadratic * (distance * distance));
 }
 
-float3 calc_dir_light(DirectionalLight light, float3 normal, float3 view_dir) {
-    // light direction from the frag to the light
+float3 calc_dir_light(DirectionalLight light, float3 normal, float3 view_dir, float shininess, float smoothness) {
     float3 to_light = normalize(-light.direction);
-
-    float3 base_color = calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color);
-
-    return base_color;
+    return calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color, shininess, smoothness);
 }
 
-float3 calc_point_light(PointLight light, float3 normal, float3 view_dir, float3 frag_pos) {
-    // get distance from light to the frag, this is because a point light acts as a normal light,
-    // where as directional_light is more like the sun in the sky, rather than a lamp
+float3 calc_point_light(PointLight light, float3 normal, float3 view_dir, float3 frag_pos, float shininess, float smoothness) {
     float3 to_light = normalize(light.pos - frag_pos);
-
-    // get the absolute distnace from the two points, euclidean by default
     float distance = length(light.pos - frag_pos);
-    // 1 / (some math??), pretty much the bigger the denominator the further away you are, also determined by how the light acts
     float attenuation = calc_attenuation(distance, light.constant, light.linear, light.quadratic);
-    float3 base_color = calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color);
-
-    return base_color  * attenuation;
+    float3 base_color = calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color, shininess, smoothness);
+    return base_color * attenuation;
 }
 
-float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 frag_pos) {
-    // same as point light
+float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 frag_pos, float shininess, float smoothness) {
     float3 to_light = normalize(light.pos - frag_pos);
-    // angle between where the light is pointing and the frag position
-    // this will be our cutoff angle
     float theta = dot(to_light, normalize(-light.direction));
-    // gets the angle of the soft edge zone
     float epsilon = light.inner_cutoff - light.outer_cutoff;
-    // calculate the intensity of the light, if in inner ring its clamped to one
-    // if outside the outer ring, its clamped to 0,
-    // otherwise calculate the light intensity
     float intensity = clamp((theta - light.outer_cutoff) / epsilon, 0.0, 1.0);
-
     float distance = length(light.pos - frag_pos);
     float attenuation = calc_attenuation(distance, light.constant, light.linear, light.quadratic);
-
-    float3 base_color = calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color);
-
+    float3 base_color = calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color, shininess, smoothness);
     return base_color * intensity * attenuation;
 }
 
 [[vk_binding(0, 0)]] Sampler2D textures[];
-Sampler2D shadow_map;
+[[vk_binding(1, 0)]] SamplerCubeArray shadow_cubes;
 
-float calc_shadow_factor(float4 shadow_coord) {
-    float3 proj_coords = shadow_coord.xyz / shadow_coord.w;
-    proj_coords.xy = proj_coords.xy * 0.5 + 0.5;
+float calc_shadow_factor(float3 frag_pos, float3 light_pos, float3 normal, uint light_index) {
+    float3 light_to_frag = frag_pos - light_pos;
+    float current_depth = length(light_to_frag) / pc.scene_data.shadow_far;
 
-    if (proj_coords.z > 1.0 || proj_coords.x < 0.0 || proj_coords.x > 1.0 || proj_coords.y < 0.0 || proj_coords.y > 1.0) {
-        return 1.0;
-    }
+    float3 light_dir = normalize(light_to_frag);
+    float bias = max(0.005 * (1.0 - dot(normal, -light_dir)), 0.0005);
 
-    float closest_depth = shadow_map.Sample(proj_coords.xy).r;
-    float current_depth = proj_coords.z;
+    float closest_depth = shadow_cubes.Sample(float4(light_to_frag, float(light_index))).r;
 
-    float bias = 0.005;
-
-    if (current_depth - bias > closest_depth) {
-        return 0.0;
-    } else {
-        return 1.0;
-    }
+    return current_depth - bias > closest_depth ? 0.0 : 1.0;
 }
 
 [shader("fragment")]
@@ -136,22 +118,35 @@ float4 fragment_main(VSOutput vert) : SV_TARGET {
 
     float4 tex_color = textures[mat.base_color_texture].Sample(vert.frag_uv) * float4(vert.frag_color, 1.0) * mat.base_color;
 
-    float3 normal = normalize(vert.frag_normal);
+    float3 normal;
+    if (length(vert.frag_tangent) > 0.001) {
+        float3x3 TBN = float3x3(vert.frag_tangent, vert.frag_bitangent, vert.frag_normal);
+        float3 normal_sample = textures[mat.normal_map_texture].Sample(vert.frag_uv).rgb;
+        normal = normalize(mul(normal_sample * 2.0 - 1.0, TBN));
+    } else {
+        normal = normalize(vert.frag_normal);
+    }
+
+    float4 arm = textures[mat.metallic_roughness_texture].Sample(vert.frag_uv);
+    float roughness = clamp(arm.g * mat.perceptual_roughness, 0.089, 1.0);
+    float metallic  = arm.b * mat.metallic;
+    float smoothness = 1.0 - roughness;
+    float shininess = max(MAX_SHININESS * smoothness * smoothness, 1.0);
+
     float3 view_dir = normalize(pc.scene_data.cam_pos - vert.frag_pos);
 
-    float shadow = calc_shadow_factor(vert.frag_pos_light_space);
+    float ao = textures[mat.occlusion_texture].Sample(vert.frag_uv).r;
+    float3 total_light = pc.scene_data.ambient_light.color.rgb * pc.scene_data.ambient_light.brightness * ao;
+    // for (uint i = 0; i < pc.scene_data.directional_light_count; i++)
+    //     total_light += calc_dir_light(pc.scene_data.directional_lights[i], normal, view_dir);
 
-    float3 total_light = pc.scene_data.ambient_light.color.rgb * pc.scene_data.ambient_light.brightness;
-    for (uint i = 0; i < pc.scene_data.directional_light_count; i++)
-        total_light += calc_dir_light(pc.scene_data.directional_lights[i], normal, view_dir);
+    for (uint i = 0; i < pc.scene_data.point_light_count; i++) {
+        float shadow = i < 6 ? calc_shadow_factor(vert.frag_pos, pc.scene_data.point_lights[i].pos, normalize(vert.frag_normal), i) : 1.0;
+        total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+    }
 
-    for (uint i = 0; i < pc.scene_data.point_light_count; i++)
-        // TODO shadow currently only support on the first point light
-        // also the shadow does show properly under the sphere when other lights are involved
-        total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos) * shadow;
-
-    for (uint i = 0; i < pc.scene_data.spot_light_count; i++)
-        total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos);
+    // for (uint i = 0; i < pc.scene_data.spot_light_count; i++)
+    //     total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos);
 
     if (tex_color.a < 0.1) discard;
     return float4(tex_color.rgb * total_light, tex_color.a);

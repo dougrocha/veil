@@ -10,10 +10,12 @@ import vk "vendor:vulkan"
 
 SWAPCHAIN_FORMAT :: vk.Format.B8G8R8A8_SRGB
 DEPTH_FORMAT :: vk.Format.D32_SFLOAT
-TEXTURE_FORMAT :: vk.Format.R8G8B8A8_SRGB
+TEXTURE_FORMAT        :: vk.Format.R8G8B8A8_SRGB
+TEXTURE_FORMAT_LINEAR :: vk.Format.R8G8B8A8_UNORM
 DRAW_FORMAT :: vk.Format.R16G16B16A16_SFLOAT
 
 MAX_FRAMES_IN_FLIGHT :: 2
+MAX_SHADOW_LIGHTS    :: 6
 
 PARTICLE_COUNT :: 8192
 
@@ -123,6 +125,7 @@ Engine :: struct {
 	// skybox
 	skybox_descriptor:       DescriptorSet,
 	shadow_map_image:        GpuImage,
+	shadow_map_face_views:   [MAX_SHADOW_LIGHTS * 6]vk.ImageView,
 	shadow_map_sampler:      vk.Sampler,
 	shadow_map_descriptor:   DescriptorSet,
 }
@@ -171,7 +174,7 @@ AmbientLight :: struct {
 SceneData :: struct {
 	view:                    Mat4x4,
 	proj:                    Mat4x4,
-	light_space_matrix:      Mat4x4,
+	light_view_proj:         [MAX_SHADOW_LIGHTS][6]Mat4x4,
 	point_lights:            [16]PointLight,
 	directional_lights:      [4]DirectionalLight,
 	spot_lights:             [4]SpotLight,
@@ -181,13 +184,16 @@ SceneData :: struct {
 	point_light_count:       u32,
 	directional_light_count: u32,
 	spot_light_count:        u32,
+	shadow_near:             f32,
+	shadow_far:              f32,
 }
 
 Vertex :: struct {
-	pos:    Vec3,
-	uv:     Vec2,
-	color:  Vec3,
-	normal: Vec3,
+	pos:     Vec3,
+	uv:      Vec2,
+	color:   Vec3,
+	normal:  Vec3,
+	tangent: Vec4, // xyz = tangent direction, w = handedness
 }
 
 ShadowPushConstants :: struct {
@@ -195,6 +201,8 @@ ShadowPushConstants :: struct {
 	vertex_buffer:    vk.DeviceAddress,
 	transform_buffer: vk.DeviceAddress,
 	instance_index:   u32,
+	face_index:       u32,
+	light_index:      u32,
 }
 
 PushConstants :: struct {
@@ -234,6 +242,14 @@ transform_create :: proc(
 	scale: Vec3 = {1.0, 1.0, 1.0},
 ) -> Transform {
 	return Transform{translation = translation, rotation = rotation, scale = scale}
+}
+
+transform_matrix :: proc(transform: Transform) -> Mat4x4 {
+	rot := linalg.matrix4_from_quaternion(transform.rotation)
+	translation := linalg.matrix4_translate(transform.translation)
+	scale := linalg.matrix4_scale(transform.scale)
+
+	return translation * rot * scale
 }
 
 Particle :: struct {

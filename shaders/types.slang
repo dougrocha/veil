@@ -3,6 +3,7 @@ struct Vertex {
     float2 uv;
     float3 color;
     float3 normal;
+    float4 tangent; // xyz = tangent direction, w = handedness
 };
 
 struct AmbientLight {
@@ -43,7 +44,7 @@ struct SpotLight {
 struct SceneData {
     float4x4 view;
     float4x4 proj;
-    float4x4 light_space_matrix;
+    float4x4 light_view_proj[6][6];
     PointLight point_lights[16];
     DirectionalLight directional_lights[4];
     SpotLight spot_lights[4];
@@ -53,19 +54,18 @@ struct SceneData {
     uint point_light_count;
     uint directional_light_count;
     uint spot_light_count;
+    float shadow_near;
+    float shadow_far;
 };
 
 struct Material {
     float4 base_color;
-    uint base_color_texture;
-    // for PBR RENDERING LATER, we are doing phong for now
-    // float metallic;
-    // float roughness;
-    // float3 emissive;
-    // uint metallic_texture;
-    // uint normal_texture;
-    // uint roughness_texture;
-    // uint emissive_texture;
+    float  perceptual_roughness;
+    float  metallic;
+    uint   base_color_texture;
+    uint   metallic_roughness_texture;
+    uint   normal_map_texture;
+    uint   occlusion_texture;
 };
 
 struct Transform {

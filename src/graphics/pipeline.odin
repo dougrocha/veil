@@ -29,9 +29,11 @@ PipelineDescriptor :: struct {
 	blend:                      Maybe(BlendMode),
 	push_constant_size:         u32,
 	push_constant_stages:       vk.ShaderStageFlags,
-	descriptor_layouts:         []vk.DescriptorSetLayout,
-	sample_count:               vk.SampleCountFlags,
-	color_formats:              []vk.Format,
+	descriptor_layouts:       [8]vk.DescriptorSetLayout,
+	descriptor_layout_count:  u32,
+	sample_count:             vk.SampleCountFlags,
+	color_formats:            [4]vk.Format,
+	color_format_count:       u32,
 	depth_format:               vk.Format,
 	vertex_entry:               cstring,
 	fragment_entry:             cstring, // nil = vertex-only depth pass
@@ -54,33 +56,37 @@ make_pipeline_descriptor :: proc(
 	push_constant_stages: vk.ShaderStageFlags = {.VERTEX, .FRAGMENT},
 	descriptor_layouts: []vk.DescriptorSetLayout = {},
 	sample_count: vk.SampleCountFlags = {._1},
-	color_formats: []vk.Format = nil,
+	color_formats: []vk.Format = {vk.Format(DRAW_FORMAT)},
+
 	depth_format: vk.Format = DEPTH_FORMAT,
 	vertex_entry: cstring = DEFAULT_VERTEX_ENTRY,
 	fragment_entry: cstring = DEFAULT_FRAGMENT_ENTRY,
 ) -> PipelineDescriptor {
-	return PipelineDescriptor {
-		shader = shader,
-		type = type,
-		topology = topology,
-		cull_mode = cull_mode,
-		depth_test = depth_test,
-		depth_write = depth_write,
-		depth_compare_op = depth_compare_op,
-		depth_bias_enable = depth_bias_enable,
+	desc := PipelineDescriptor {
+		shader                     = shader,
+		type                       = type,
+		topology                   = topology,
+		cull_mode                  = cull_mode,
+		depth_test                 = depth_test,
+		depth_write                = depth_write,
+		depth_compare_op           = depth_compare_op,
+		depth_bias_enable          = depth_bias_enable,
 		depth_bias_constant_factor = depth_bias_constant_factor,
-		depth_bias_clamp = depth_bias_clamp,
-		depth_bias_slope_factor = depth_bias_slope_factor,
-		blend = blend,
-		push_constant_size = push_constant_size,
-		push_constant_stages = push_constant_stages,
-		descriptor_layouts = descriptor_layouts,
-		sample_count = sample_count,
-		color_formats = color_formats,
-		depth_format = depth_format,
-		vertex_entry = vertex_entry,
-		fragment_entry = fragment_entry,
+		depth_bias_clamp           = depth_bias_clamp,
+		depth_bias_slope_factor    = depth_bias_slope_factor,
+		blend                      = blend,
+		push_constant_size         = push_constant_size,
+		push_constant_stages       = push_constant_stages,
+		sample_count               = sample_count,
+		depth_format               = depth_format,
+		vertex_entry               = vertex_entry,
+		fragment_entry             = fragment_entry,
+		color_format_count         = u32(len(color_formats)),
+		descriptor_layout_count    = u32(len(descriptor_layouts)),
 	}
+	for f, i in color_formats      do desc.color_formats[i]      = f
+	for l, i in descriptor_layouts do desc.descriptor_layouts[i] = l
+	return desc
 }
 
 PipelineEntry :: struct {
@@ -172,6 +178,7 @@ reload_pipeline :: proc(self: ^Engine, name: string) {
 }
 
 build_pipeline :: proc(vk_ctx: ^VulkanContext, shader: vk.ShaderModule, desc: PipelineDescriptor) -> Pipeline {
+	desc := desc // local copy so arrays are addressable
 	push_constant_range := vk.PushConstantRange {
 		stageFlags = desc.push_constant_stages,
 		offset     = 0,
@@ -180,8 +187,8 @@ build_pipeline :: proc(vk_ctx: ^VulkanContext, shader: vk.ShaderModule, desc: Pi
 
 	layout_info := vk.PipelineLayoutCreateInfo {
 		sType          = .PIPELINE_LAYOUT_CREATE_INFO,
-		setLayoutCount = u32(len(desc.descriptor_layouts)),
-		pSetLayouts    = raw_data(desc.descriptor_layouts),
+		setLayoutCount = desc.descriptor_layout_count,
+		pSetLayouts    = &desc.descriptor_layouts[0],
 	}
 	if desc.push_constant_size > 0 {
 		layout_info.pushConstantRangeCount = 1
@@ -289,12 +296,7 @@ build_pipeline :: proc(vk_ctx: ^VulkanContext, shader: vk.ShaderModule, desc: Pi
 			}
 		}
 
-		color_formats := desc.color_formats
-		if desc.fragment_entry != nil && color_formats == nil {
-			color_formats = []vk.Format{vk.Format(DRAW_FORMAT)}
-		}
-
-		blend_attachments := make([]vk.PipelineColorBlendAttachmentState, len(color_formats))
+		blend_attachments := make([]vk.PipelineColorBlendAttachmentState, desc.color_format_count)
 		defer delete(blend_attachments)
 		for &a in blend_attachments {
 			a = color_blend_attach
@@ -302,7 +304,7 @@ build_pipeline :: proc(vk_ctx: ^VulkanContext, shader: vk.ShaderModule, desc: Pi
 
 		blend_info := vk.PipelineColorBlendStateCreateInfo {
 			sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-			attachmentCount = u32(len(blend_attachments)),
+			attachmentCount = desc.color_format_count,
 			pAttachments    = raw_data(blend_attachments),
 		}
 
@@ -314,8 +316,8 @@ build_pipeline :: proc(vk_ctx: ^VulkanContext, shader: vk.ShaderModule, desc: Pi
 		}
 		render_info := vk.PipelineRenderingCreateInfo {
 			sType                   = .PIPELINE_RENDERING_CREATE_INFO,
-			colorAttachmentCount    = u32(len(color_formats)),
-			pColorAttachmentFormats = raw_data(color_formats),
+			colorAttachmentCount    = desc.color_format_count,
+			pColorAttachmentFormats = &desc.color_formats[0],
 			depthAttachmentFormat   = desc.depth_format,
 		}
 

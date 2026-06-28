@@ -192,7 +192,7 @@ create_logical_device :: proc(ctx: ^VulkanContext) -> bool {
 	enabled_features := vk.PhysicalDeviceFeatures2 {
 		sType = .PHYSICAL_DEVICE_FEATURES_2,
 		pNext = &enabled_features_11,
-		features = {samplerAnisotropy = true, sampleRateShading = true},
+		features = {samplerAnisotropy = true, sampleRateShading = true, imageCubeArray = true},
 	}
 
 	queue_priorities := []f32{1.0}

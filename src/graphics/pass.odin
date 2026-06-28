@@ -3,12 +3,14 @@ package graphics
 import vk "vendor:vulkan"
 
 PassConfig :: struct {
-	color_target:   ^GpuImage,
-	resolve_target: ^GpuImage, // nil = no MSAA resolve
-	depth_target:   ^GpuImage, // nil = no depth attachment
-	clear_color:    [4]f32,
-	load_op:        vk.AttachmentLoadOp,
-	store_depth:    bool,
+	color_target:          ^GpuImage,
+	resolve_target:        ^GpuImage, // nil = no MSAA resolve
+	depth_target:          ^GpuImage, // nil = no depth attachment
+	depth_view:            vk.ImageView, // overrides depth_target.image_view when set
+	clear_color:           [4]f32,
+	load_op:               vk.AttachmentLoadOp,
+	store_depth:           bool,
+	skip_depth_transition: bool, // caller manages depth layout transitions
 }
 
 begin_render_pass :: proc(engine: ^Engine, cmd: vk.CommandBuffer, config: PassConfig) {
@@ -41,7 +43,7 @@ begin_render_pass :: proc(engine: ^Engine, cmd: vk.CommandBuffer, config: PassCo
 		)
 	}
 
-	if config.depth_target != nil {
+	if config.depth_target != nil && !config.skip_depth_transition {
 		transition_image_layout(
 			cmd,
 			config.depth_target.image,
@@ -91,9 +93,10 @@ begin_render_pass :: proc(engine: ^Engine, cmd: vk.CommandBuffer, config: PassCo
 
 	depth_attach_info: vk.RenderingAttachmentInfo
 	if config.depth_target != nil {
+		depth_view := config.depth_view if config.depth_view != 0 else config.depth_target.image_view
 		depth_attach_info = vk.RenderingAttachmentInfo {
 			sType = .RENDERING_ATTACHMENT_INFO,
-			imageView = config.depth_target.image_view,
+			imageView = depth_view,
 			imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
 			loadOp = config.load_op,
 			storeOp = .STORE if config.store_depth else .DONT_CARE,
