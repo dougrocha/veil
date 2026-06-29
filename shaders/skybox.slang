@@ -5,7 +5,7 @@ struct SkyboxPushConstants {
 };
 [[vk_push_constant]] SkyboxPushConstants pc;
 
-[[vk::binding(0, 0)]] SamplerCube skybox;
+[[vk_binding(1, 0)]] SamplerCube skybox;
 
 struct VSOutput {
     float4 pos : SV_Position;

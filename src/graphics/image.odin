@@ -16,7 +16,7 @@ GpuImage :: struct {
 	usage:        vk.ImageUsageFlags,
 }
 
-create_image :: proc(
+image_create :: proc(
 	ctx: ^VulkanContext,
 	extent: vk.Extent3D,
 	format: vk.Format,
@@ -72,7 +72,7 @@ destroy_image :: proc(ctx: ^VulkanContext, img: GpuImage) {
 	vma.destroy_image(ctx.vma_allocator, img.image, img.alloc)
 }
 
-create_image_view :: proc(
+image_view_create :: proc(
 	ctx: ^VulkanContext,
 	img: vk.Image,
 	format: vk.Format,

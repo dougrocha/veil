@@ -98,7 +98,7 @@ float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 f
 }
 
 [[vk_binding(0, 0)]] Sampler2D textures[];
-[[vk_binding(1, 0)]] SamplerCubeArray shadow_cubes;
+[[vk_binding(0, 1)]] SamplerCubeArray shadow_cubes;
 
 float calc_shadow_factor(float3 frag_pos, float3 light_pos, float3 normal, uint light_index) {
     float3 light_to_frag = frag_pos - light_pos;
@@ -122,6 +122,7 @@ float4 fragment_main(VSOutput vert) : SV_TARGET {
     if (length(vert.frag_tangent) > 0.001) {
         float3x3 TBN = float3x3(vert.frag_tangent, vert.frag_bitangent, vert.frag_normal);
         float3 normal_sample = textures[mat.normal_map_texture].Sample(vert.frag_uv).rgb;
+        normal_sample.g = 1.0 - normal_sample.g; // convert OpenGL (nor_gl) to Vulkan/DX convention
         normal = normalize(mul(normal_sample * 2.0 - 1.0, TBN));
     } else {
         normal = normalize(vert.frag_normal);

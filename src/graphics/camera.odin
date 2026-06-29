@@ -43,7 +43,7 @@ camera_create :: proc(
 		world_up          = world_up,
 		yaw               = yaw,
 		pitch             = pitch,
-		movement_speed    = 5,
+		movement_speed    = 20,
 		mouse_sensitivity = 0.1,
 		zoom              = 45,
 	}
@@ -71,7 +71,7 @@ camera_get_projection_matrix :: proc(
 	c: Camera,
 	aspect_ratio: f32,
 	near_plane: f32 = 0.1,
-	far_plane: f32 = 100.0,
+	far_plane: f32 = 5000.0,
 ) -> Mat4x4 {
 	return linalg.matrix4_perspective_f32(linalg.to_radians(c.zoom), aspect_ratio, near_plane, far_plane, true)
 }

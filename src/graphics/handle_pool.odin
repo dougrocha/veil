@@ -1,10 +1,12 @@
 package graphics
 
-// TODO: Add reference counting here
+import "core:log"
+
 Slot :: struct($T: typeid) {
 	value:      T, // the actual data
 	generation: u32, // keeps track of reuse amount of this slot
 	alive:      bool, // is this resource set
+	references: u64,
 }
 
 Handle :: struct($T: typeid) {
@@ -54,6 +56,7 @@ pool_alloc :: proc(pool: ^Pool($T), value: T) -> Handle(T) {
 	slot.value = value
 	slot.generation += 1
 	slot.alive = true
+	slot.references = 1
 
 	return Handle(T){index = insert_index, generation = slot.generation}
 }
@@ -74,6 +77,11 @@ _pool_get_slot :: proc(pool: ^Pool($T), handle: Handle(T)) -> ^Slot(T) {
 
 pool_free :: proc(pool: ^Pool($T), handle: Handle(T)) {
 	slot := _pool_get_slot(pool, handle)
+	if slot.references > 1 {
+		log.panic("Trying to free a handle with active references")
+	}
+
+	slot.references = 0
 	slot.alive = false
 	append(&pool.free_list, handle.index)
 }
@@ -81,4 +89,21 @@ pool_free :: proc(pool: ^Pool($T), handle: Handle(T)) {
 pool_get :: proc(pool: ^Pool($T), handle: Handle(T)) -> ^T {
 	slot := _pool_get_slot(pool, handle)
 	return &slot.value
+}
+
+pool_acquire :: proc(pool: ^Pool($T), handle: Handle(T)) -> ^T {
+	slot := _pool_get_slot(pool, handle)
+	slot.references += 1
+	return &slot.value
+}
+
+pool_release :: proc(pool: ^Pool($T), handle: Handle(T)) {
+	slot := _pool_get_slot(pool, handle)
+
+	assert(slot.references > 0, "double release")
+	if slot.references > 1 {
+		slot.references -= 1
+	} else {
+		pool_free(pool, handle)
+	}
 }

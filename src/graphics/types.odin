@@ -10,12 +10,12 @@ import vk "vendor:vulkan"
 
 SWAPCHAIN_FORMAT :: vk.Format.B8G8R8A8_SRGB
 DEPTH_FORMAT :: vk.Format.D32_SFLOAT
-TEXTURE_FORMAT        :: vk.Format.R8G8B8A8_SRGB
+TEXTURE_FORMAT :: vk.Format.R8G8B8A8_SRGB
 TEXTURE_FORMAT_LINEAR :: vk.Format.R8G8B8A8_UNORM
 DRAW_FORMAT :: vk.Format.R16G16B16A16_SFLOAT
 
 MAX_FRAMES_IN_FLIGHT :: 2
-MAX_SHADOW_LIGHTS    :: 6
+MAX_SHADOW_LIGHTS :: 6
 
 PARTICLE_COUNT :: 8192
 
@@ -38,17 +38,6 @@ FrameResources :: struct {
 	render_complete_semaphore: vk.Semaphore,
 	scene_data_buffer:         GpuBuffer,
 	particle_buffer:           GpuBuffer,
-}
-
-Swapchain :: struct {
-	handle:           vk.SwapchainKHR,
-	images:           []vk.Image,
-	image_views:      []vk.ImageView,
-	require_recreate: bool,
-	extent:           vk.Extent2D,
-	depth_image:      GpuImage,
-	color_image:      GpuImage,
-	draw_image:       GpuImage,
 }
 
 Clock :: struct {
@@ -122,12 +111,10 @@ Engine :: struct {
 	// texture
 	texture_system:          TextureSystem,
 
-	// skybox
-	skybox_descriptor:       DescriptorSet,
-	shadow_map_image:        GpuImage,
+	// global resources (binding 0 = shadow map, binding 1 = skybox)
+	global_descriptor:       DescriptorSet,
+	shadow_map:              Texture,
 	shadow_map_face_views:   [MAX_SHADOW_LIGHTS * 6]vk.ImageView,
-	shadow_map_sampler:      vk.Sampler,
-	shadow_map_descriptor:   DescriptorSet,
 }
 
 PointLight :: struct {

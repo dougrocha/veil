@@ -46,44 +46,86 @@ main :: proc() {
 	wood_gate_mat := gfx.create_material(
 		&app.engine,
 		"wood_gate",
-		gfx.Material {
-			base_color = {1, 1, 1, 1},
-			base_color_texture = gfx.load_texture(&app.engine, "assets/textures/wooden_gate_diff_4k.jpg"),
-			normal_map_texture = gfx.load_texture(&app.engine, "assets/textures/wooden_gate_nor_gl_4k.jpg", false),
-			metallic_roughness_texture = gfx.load_texture(
-				&app.engine,
-				"assets/textures/wooden_gate_arm_4k.jpg",
-				false,
-			),
-			occlusion_texture = gfx.load_texture(&app.engine, "assets/textures/wooden_gate_ao_4k.png", false),
-		},
+		base_color_texture = gfx.texture_load(&app.engine, "assets/textures/wooden_gate_diff_4k.jpg"),
+		normal_map_texture = gfx.texture_load(&app.engine, "assets/textures/wooden_gate_nor_gl_4k.jpg", false),
+		metallic_roughness_texture = gfx.texture_load(&app.engine, "assets/textures/wooden_gate_arm_4k.jpg", false),
+		occlusion_texture = gfx.texture_load(&app.engine, "assets/textures/wooden_gate_ao_4k.png", false),
 	)
 	wood_gate := gfx.load_model(&app.engine, "assets/models/wooden_gate_4k.gltf", wood_gate_mat)
 	gfx.spawn(&app.engine, wood_gate, gfx.transform_create(translation = {0, 1, -2}))
 
-	wood_floor := gfx.load_texture(&app.engine, "assets/textures/wood_floor.png")
-	wood_floor_mat := gfx.create_material(
+	lion_head_mat := gfx.create_material(
 		&app.engine,
-		"plane_mat",
-		gfx.Material{base_color = {1, 1, 1, 1}, base_color_texture = wood_floor, perceptual_roughness = 0.05},
+		"lion_head",
+		base_color_texture = gfx.texture_load(&app.engine, "assets/models/textures/lion_head_diff_4k.jpg"),
+		normal_map_texture = gfx.texture_load(&app.engine, "assets/models/textures/lion_head_nor_gl_4k.jpg", false),
+		metallic_roughness_texture = gfx.texture_load(
+			&app.engine,
+			"assets/models/textures/lion_head_arm_4k.jpg",
+			false,
+		),
+		occlusion_texture = gfx.texture_load(&app.engine, "assets/models/textures/lion_head_arm_4k.jpg", false),
 	)
-	wood_floor_model := gfx.create_plane(&app.engine, "wood_floor", wood_floor_mat, half_size = {5, 5})
-	gfx.spawn(&app.engine, wood_floor_model, gfx.transform_create(translation = {0, 0, 0}))
+	lion_head := gfx.load_model(&app.engine, "assets/models/lion_head_4k.gltf", lion_head_mat)
+	gfx.spawn(&app.engine, lion_head, gfx.transform_create(translation = {0, 1.5, 0}))
 
-	wood_gate_wall := gfx.create_plane(&app.engine, "wood_gate_wall", wood_gate_mat, half_size = {5, 5})
-	gfx.spawn(&app.engine, wood_gate_wall, gfx.transform_create(
-		translation = {0, 5, -5},
-		rotation = linalg.quaternion_angle_axis_f32(math.to_radians(f32(90)), {1, 0, 0}),
-	))
+	boulder_mat := gfx.create_material(
+		&app.engine,
+		"boulder",
+		base_color_texture = gfx.texture_load(
+			&app.engine,
+			"assets/models/textures/namaqualand_boulder_02_diff_4k.jpg",
+		),
+		normal_map_texture = gfx.texture_load(
+			&app.engine,
+			"assets/models/textures/namaqualand_boulder_02_nor_gl_4k.jpg",
+			false,
+		),
+		metallic_roughness_texture = gfx.texture_load(
+			&app.engine,
+			"assets/models/textures/namaqualand_boulder_02_arm_4k.jpg",
+			false,
+		),
+		occlusion_texture = gfx.texture_load(
+			&app.engine,
+			"assets/models/textures/namaqualand_boulder_02_arm_4k.jpg",
+			false,
+		),
+	)
+	boulder := gfx.load_model(&app.engine, "assets/models/namaqualand_boulder_02_4k.gltf", boulder_mat)
+	gfx.spawn(&app.engine, boulder, gfx.transform_create(translation = {3, 0.06, 2}))
 
-	shiny_mat := gfx.create_material(&app.engine, "shiny_mat", gfx.Material{base_color = {1, 1, 1, 1}, perceptual_roughness = 0.0})
-	rough_mat := gfx.create_material(&app.engine, "rough_mat", gfx.Material{base_color = {1, 1, 1, 1}, perceptual_roughness = 1.0})
+	duck_mat := gfx.create_material(
+		&app.engine,
+		"duck",
+		base_color_texture = gfx.texture_load(&app.engine, "assets/models/textures/rubber_duck_toy_diff_4k.jpg"),
+		normal_map_texture = gfx.texture_load(
+			&app.engine,
+			"assets/models/textures/rubber_duck_toy_nor_gl_4k.jpg",
+			false,
+		),
+		metallic_roughness_texture = gfx.texture_load(
+			&app.engine,
+			"assets/models/textures/rubber_duck_toy_arm_4k.jpg",
+			false,
+		),
+		occlusion_texture = gfx.texture_load(&app.engine, "assets/models/textures/rubber_duck_toy_arm_4k.jpg", false),
+	)
+	duck := gfx.load_model(&app.engine, "assets/models/rubber_duck_toy_4k.gltf", duck_mat)
+	gfx.spawn(&app.engine, duck, gfx.transform_create(translation = {-3, 0, 2}))
+
+
+	shiny_mat := gfx.create_material(&app.engine, "shiny_mat", perceptual_roughness = 0.0)
+	rough_mat := gfx.create_material(&app.engine, "rough_mat", perceptual_roughness = 1.0)
 	shiny_cube := gfx.create_cube(&app.engine, "shiny_cube", shiny_mat)
-	rough_cube  := gfx.create_cube(&app.engine, "rough_cube", rough_mat)
+	rough_cube := gfx.create_cube(&app.engine, "rough_cube", rough_mat)
 	gfx.spawn(&app.engine, shiny_cube, gfx.transform_create(translation = {-2, 1, 0}))
-	gfx.spawn(&app.engine, rough_cube,  gfx.transform_create(translation = { 2, 1, 0}))
+	gfx.spawn(&app.engine, rough_cube, gfx.transform_create(translation = {2, 1, 0}))
 
-	space_skybox_tex := gfx.load_cubemap_texture(&app.engine, "assets/textures/StandardCubeMap.png")
+	sponza := gfx.load_model(&app.engine, "assets/models/sponza-gltf-pbr/sponza.glb")
+	gfx.spawn(&app.engine, sponza, gfx.transform_create(translation = {0, 0, 0}, scale = {0.01, 0.01, 0.01}))
+
+	space_skybox_tex := gfx.texture_load_cubemap(&app.engine, "assets/textures/StandardCubeMap.png")
 	gfx.set_skybox_texture(&app.engine, space_skybox_tex)
 
 	gfx.spawn_point_light(
@@ -126,11 +168,7 @@ main :: proc() {
 	// sphere_model := gfx.create_sphere(&app.engine, "sphere")
 	// sphere := gfx.spawn(&app.engine, sphere_model, gfx.transform_create(translation = {0, 2.5, 0}))
 
-	yellow_mat := gfx.create_material(
-		&app.engine,
-		"yellow_mat",
-		gfx.Material{base_color = {1, 1, 0, 1}, base_color_texture = gfx.get_default_texture(&app.engine)},
-	)
+	yellow_mat := gfx.create_material(&app.engine, "yellow_mat", base_color = {1, 1, 0, 1})
 	light_sphere_model := gfx.create_sphere(&app.engine, "light_sphere", material = yellow_mat)
 	light_sphere := gfx.spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
 
@@ -184,11 +222,11 @@ main :: proc() {
 			app.engine.clock.fps_timer = 0
 		}
 
-		light_pos  := gfx.Vec3{0, 4, 3}
-		light_pos2 := gfx.Vec3{0, 4, -3}
+		light_pos := gfx.Vec3{-2, 4, 0}
+		light_pos2 := gfx.Vec3{2, 4, 0}
 		app.engine.point_lights[0].pos = light_pos
 		app.engine.point_lights[1].pos = light_pos2
-		gfx.get_instance(&app.engine, light_sphere).transform.translation  = light_pos
+		gfx.get_instance(&app.engine, light_sphere).transform.translation = light_pos
 		gfx.get_instance(&app.engine, light_sphere2).transform.translation = light_pos2
 
 		process_input(&app.engine, app.engine.clock.delta_time)

@@ -29,11 +29,11 @@ PipelineDescriptor :: struct {
 	blend:                      Maybe(BlendMode),
 	push_constant_size:         u32,
 	push_constant_stages:       vk.ShaderStageFlags,
-	descriptor_layouts:       [8]vk.DescriptorSetLayout,
-	descriptor_layout_count:  u32,
-	sample_count:             vk.SampleCountFlags,
-	color_formats:            [4]vk.Format,
-	color_format_count:       u32,
+	descriptor_layouts:         [8]vk.DescriptorSetLayout,
+	descriptor_layout_count:    u32,
+	sample_count:               vk.SampleCountFlags,
+	color_formats:              [4]vk.Format,
+	color_format_count:         u32,
 	depth_format:               vk.Format,
 	vertex_entry:               cstring,
 	fragment_entry:             cstring, // nil = vertex-only depth pass
@@ -57,7 +57,6 @@ make_pipeline_descriptor :: proc(
 	descriptor_layouts: []vk.DescriptorSetLayout = {},
 	sample_count: vk.SampleCountFlags = {._1},
 	color_formats: []vk.Format = {vk.Format(DRAW_FORMAT)},
-
 	depth_format: vk.Format = DEPTH_FORMAT,
 	vertex_entry: cstring = DEFAULT_VERTEX_ENTRY,
 	fragment_entry: cstring = DEFAULT_FRAGMENT_ENTRY,
@@ -84,7 +83,7 @@ make_pipeline_descriptor :: proc(
 		color_format_count         = u32(len(color_formats)),
 		descriptor_layout_count    = u32(len(descriptor_layouts)),
 	}
-	for f, i in color_formats      do desc.color_formats[i]      = f
+	for f, i in color_formats do desc.color_formats[i] = f
 	for l, i in descriptor_layouts do desc.descriptor_layouts[i] = l
 	return desc
 }

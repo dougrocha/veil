@@ -10,6 +10,9 @@ import stbi "vendor:stb/image"
 import vk "vendor:vulkan"
 
 DEFAULT_TEXTURE_NAME :: "default"
+DEFAULT_METALLIC_ROUGHNESS_TEXTURE_NAME :: "default_roughness"
+DEFAULT_NORMAL_TEXTURE_NAME :: "default_normal"
+DEFAULT_OCCLUSION_TEXTURE_NAME :: "default_occlusion"
 
 MAX_TEXTURES :: 1024
 
@@ -17,38 +20,46 @@ TextureHandle :: Handle(Texture)
 
 INVALID_TEXTURE :: TextureHandle{}
 
-Texture :: struct {
-	// Texture metadata
-	width:            u32,
-	height:           u32,
-	mip_levels:       u32,
-	channel_count:    u8,
-	has_transparency: bool,
-	format:           vk.Format,
+TextureFlags :: distinct bit_set[TextureFlag;u8]
+TextureFlag :: enum u8 {
+	TRANSPARENT,
+	WRITABLE,
+	EXTERNAL_LIFETIME,
+}
 
-    // vulkan internals
-    image:            vk.Image,
-    allocation:       vma.Allocation,
-    image_view:       vk.ImageView,
-    sampler:          vk.Sampler,
+Texture :: struct {
+	using gpu:     GpuImage,
+	sampler:       vk.Sampler,
+
+	// Texture metadata
+	name:          string,
+	channel_count: u8,
+	flags:         TextureFlags,
+	filter_min:    TextureFilter,
+	filter_mag:    TextureFilter,
+	repeat_u:      TextureRepeat,
+	repeat_v:      TextureRepeat,
+	repeat_w:      TextureRepeat,
 }
 
 TextureSystem :: struct {
-	textures:                  Pool(Texture),
-	texture_map:               map[string]TextureHandle,
-	config:                    TextureSystemConfig,
-	default_texture_handle:    TextureHandle,
+	config:                             TextureSystemConfig,
+	default_texture_handle:             TextureHandle,
 	default_metallic_roughness_texture: TextureHandle,
-	default_normal_texture:    TextureHandle,
-	default_occlusion_texture: TextureHandle,
-	descriptor:                DescriptorSet,
+	default_normal_texture:             TextureHandle,
+	default_occlusion_texture:          TextureHandle,
+	descriptor:                         DescriptorSet,
+
+	// storage pool
+	textures:                           Pool(Texture),
+	texture_map:                        map[string]TextureHandle,
 }
 
 TextureSystemConfig :: struct {
 	max_textures_count: u32,
 }
 
-create_texture_system :: proc(engine: ^Engine, config: TextureSystemConfig) {
+texture_system_create :: proc(engine: ^Engine, config: TextureSystemConfig) {
 	ts := &engine.texture_system
 	ts.config = config
 	ts.textures = pool_init(config.max_textures_count, Texture)
@@ -63,32 +74,26 @@ create_texture_system :: proc(engine: ^Engine, config: TextureSystemConfig) {
 				descriptorCount = MAX_TEXTURES,
 				stageFlags = {.FRAGMENT},
 			},
-			{
-				binding = 1,
-				descriptorType = .COMBINED_IMAGE_SAMPLER,
-				descriptorCount = 1,
-				stageFlags = {.FRAGMENT},
-			},
 		},
 		count = MAX_FRAMES_IN_FLIGHT,
-		binding_flags = {
-			vk.DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND},
-			{},
-		},
+		binding_flags = {vk.DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND}},
 		layout_flags = {.UPDATE_AFTER_BIND_POOL},
 		pool_flags = {.UPDATE_AFTER_BIND},
 	)
 
-	create_builtin_textures(engine)
+	texture_create_builtin(engine)
 }
 
-destroy_texture_system :: proc(engine: ^Engine) {
+texture_destroy :: proc(ctx: ^VulkanContext, t: Texture) {
+	vk.DestroySampler(ctx.device, t.sampler, nil)
+	destroy_image(ctx, t.gpu)
+}
+
+texture_system_destroy :: proc(engine: ^Engine) {
 	ts := &engine.texture_system
 	for &slot in ts.textures.slots {
 		if slot.alive {
-			vk.DestroySampler(engine.vk_ctx.device, slot.value.sampler, nil)
-			vk.DestroyImageView(engine.vk_ctx.device, slot.value.image_view, nil)
-			vma.destroy_image(engine.vk_ctx.vma_allocator, slot.value.image, slot.value.allocation)
+			texture_destroy(&engine.vk_ctx, slot.value)
 		}
 	}
 	pool_destroy(&ts.textures)
@@ -96,17 +101,55 @@ destroy_texture_system :: proc(engine: ^Engine) {
 	destroy_descriptor_set(engine, &ts.descriptor)
 }
 
-create_builtin_textures :: proc(engine: ^Engine) {
+texture_create_builtin :: proc(engine: ^Engine) {
 	ts := &engine.texture_system
 	white: [4]u8 = {0xFF, 0xFF, 0xFF, 0xFF}
 	flat_normal: [4]u8 = {128, 128, 0xFF, 0xFF}
-	ts.default_texture_handle    = upload_texture(engine, DEFAULT_TEXTURE_NAME, &white, 1, 1, 4, false)
-	ts.default_metallic_roughness_texture = upload_texture(engine, "default_roughness", &white, 1, 1, 4, false)
-	ts.default_normal_texture    = upload_texture(engine, "default_normal", &flat_normal, 1, 1, 4, false)
-	ts.default_occlusion_texture = upload_texture(engine, "default_occlusion", &white, 1, 1, 4, false)
+
+	upload_builtin :: proc(
+		engine: ^Engine,
+		t: Texture,
+		pixels: rawptr,
+		format: TextureFormat = .R8G8B8A8_SRGB,
+	) -> TextureHandle {
+		ts := &engine.texture_system
+		t := t
+		texture_upload(&engine.vk_ctx, pixels, &t, format)
+		handle := pool_alloc(&ts.textures, t)
+		ts.texture_map[t.name] = handle
+		write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, handle.index)
+		return handle
+	}
+
+	ts.default_texture_handle = upload_builtin(
+		engine,
+		Texture{gpu = {extent = {1, 1, 1}}, name = DEFAULT_TEXTURE_NAME, channel_count = 4},
+		&white,
+	)
+	ts.default_metallic_roughness_texture = upload_builtin(
+		engine,
+		Texture{gpu = {extent = {1, 1, 1}}, name = DEFAULT_METALLIC_ROUGHNESS_TEXTURE_NAME, channel_count = 4},
+		&white,
+	)
+	ts.default_normal_texture = upload_builtin(
+		engine,
+		Texture{gpu = {extent = {1, 1, 1}}, name = DEFAULT_NORMAL_TEXTURE_NAME, channel_count = 4},
+		&flat_normal,
+		.R8G8B8A8_UNORM,
+	)
+	ts.default_occlusion_texture = upload_builtin(
+		engine,
+		Texture{gpu = {extent = {1, 1, 1}}, name = DEFAULT_OCCLUSION_TEXTURE_NAME, channel_count = 4},
+		&white,
+	)
 }
 
-load_texture :: proc(engine: ^Engine, path: string, is_srgb: bool = true) -> TextureHandle {
+texture_load :: proc {
+	texture_load_from_file,
+	texture_load_from_memory,
+}
+
+texture_load_from_file :: proc(engine: ^Engine, path: string, is_srgb: bool = true) -> TextureHandle {
 	if handle, ok := engine.texture_system.texture_map[path]; ok {
 		return handle
 	}
@@ -128,36 +171,115 @@ load_texture :: proc(engine: ^Engine, path: string, is_srgb: bool = true) -> Tex
 		return engine.texture_system.default_texture_handle
 	}
 
-	return upload_texture(engine, path, pixels, u32(width), u32(height), 4, false, is_srgb)
+	log.debugf("Loading texture: %s (%dx%d)", path, width, height)
+
+	flags: TextureFlags
+	pixel_count := int(width * height)
+	for i in 0 ..< pixel_count {
+		if pixels[i * 4 + 3] < 255 {
+			flags += {.TRANSPARENT}
+			break
+		}
+	}
+
+	texture := Texture {
+		gpu = {extent = {u32(width), u32(height), 1}},
+		name = path,
+		channel_count = 4,
+		flags = flags,
+	}
+	texture_upload(&engine.vk_ctx, pixels, &texture, is_srgb ? .R8G8B8A8_SRGB : .R8G8B8A8_UNORM)
+
+	handle := pool_alloc(&ts.textures, texture)
+	ts.texture_map[texture.name] = handle
+	write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, handle.index)
+	return handle
+}
+
+texture_load_from_memory :: proc(engine: ^Engine, name: string, data: []byte, is_srgb: bool = true) -> TextureHandle {
+	if handle, ok := engine.texture_system.texture_map[name]; ok {
+		return handle
+	}
+
+	ts := &engine.texture_system
+	if ts.textures.count >= ts.config.max_textures_count {
+		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
+		return ts.default_texture_handle
+	}
+
+	width, height, channels: i32
+	pixels := stbi.load_from_memory(raw_data(data), i32(len(data)), &width, &height, &channels, 4)
+	defer stbi.image_free(pixels)
+	if pixels == nil {
+		log.errorf("Failed to decode image '%s' from memory: %s", name, stbi.failure_reason())
+		return ts.default_texture_handle
+	}
+
+	log.debugf("Loading texture from memory: %s (%dx%d)", name, width, height)
+
+	flags: TextureFlags
+	pixel_count := int(width * height)
+	for i in 0 ..< pixel_count {
+		if pixels[i * 4 + 3] < 255 {
+			flags += {.TRANSPARENT}
+			break
+		}
+	}
+
+	texture := Texture {
+		gpu = {extent = {u32(width), u32(height), 1}},
+		name = name,
+		channel_count = 4,
+		flags = flags,
+	}
+	texture_upload(&engine.vk_ctx, pixels, &texture, is_srgb ? .R8G8B8A8_SRGB : .R8G8B8A8_UNORM)
+
+	handle := pool_alloc(&ts.textures, texture)
+	ts.texture_map[name] = handle
+	write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, handle.index)
+	return handle
+}
+
+texture_resize :: proc(ctx: ^VulkanContext, t: ^Texture, new_extent: vk.Extent3D) {
+	texture_destroy(ctx, t^)
+	t.extent = new_extent
+	texture_create_writable(ctx, t)
+}
+
+texture_create_writable :: proc(ctx: ^VulkanContext, t: ^Texture) {
+	format := channel_count_to_format(t.channel_count, srgb = false)
+	t.gpu = image_create(ctx, t.extent, format, {.TRANSFER_SRC, .TRANSFER_DST, .SAMPLED, .COLOR_ATTACHMENT})
+	t.image_view = image_view_create(ctx, t.image, format, {.COLOR})
+	texture_sampler_create(ctx, t)
 }
 
 // Uploads a texture to the GPU buffer
-upload_texture :: proc(
-	engine: ^Engine,
-	name: string,
+texture_upload :: proc(
+	ctx: ^VulkanContext,
 	pixels: rawptr,
-	width, height, channels: u32,
-	has_transparency: bool,
-	is_srgb: bool = true,
-) -> TextureHandle {
-	ts := &engine.texture_system
-	image_size := vk.DeviceSize(width * height * channels)
-	format := TEXTURE_FORMAT if is_srgb else TEXTURE_FORMAT_LINEAR
+	texture: ^Texture,
+	format: TextureFormat = .R8G8B8A8_SRGB,
+) {
+	w := texture.extent.width
+	h := texture.extent.height
+	image_size := vk.DeviceSize(w * h * u32(texture.channel_count))
 
-	staging := create_buffer(&engine.vk_ctx, image_size, .Staging)
-	defer destroy_buffer(&engine.vk_ctx, staging)
+	staging := create_buffer(ctx, image_size, .Staging)
+	defer destroy_buffer(ctx, staging)
 	mem.copy(staging.alloc_info.mapped_data, pixels, int(image_size))
 
-	mip_levels := u32(math.floor(math.log2(f32(max(width, height)))) + 1)
-	gpu_img := create_image(
-		&engine.vk_ctx,
-		{width, height, 1},
-		format,
-		{.TRANSFER_SRC, .TRANSFER_DST, .SAMPLED},
+	img_format := texture_format_to_vk(format)
+	mip_levels := u32(math.floor(math.log2(f32(max(w, h)))) + 1)
+
+	gpu_img := image_create(
+		ctx,
+		{w, h, 1},
+		img_format,
+		{.TRANSFER_SRC, .TRANSFER_DST, .SAMPLED, .COLOR_ATTACHMENT},
 		mip_levels = mip_levels,
 	)
 
-	cmd := begin_single_time_commands(&engine.vk_ctx)
+	cmd := begin_single_time_commands(ctx)
 	transition_image_layout(
 		cmd,
 		gpu_img.image,
@@ -170,36 +292,33 @@ upload_texture :: proc(
 		{.COLOR},
 		mip_levels,
 	)
-	copy_buffer_to_image(cmd, staging.buffer, gpu_img.image, width, height)
-	end_single_time_commands(&engine.vk_ctx, &cmd)
-	// transitioned to SHADER_READ_ONLY_OPTIMAL while generating mipmaps
+	copy_buffer_to_image(cmd, staging.buffer, gpu_img.image, w, h)
+	end_single_time_commands(ctx, &cmd)
 
-	generate_mipmaps(engine, gpu_img.image, format, width, height, mip_levels)
+	generate_mipmaps(ctx, gpu_img.image, img_format, w, h, mip_levels)
 
-	t := Texture {
-		image            = gpu_img.image,
-		allocation       = gpu_img.alloc,
-		mip_levels       = mip_levels,
-		width            = width,
-		height           = height,
-		channel_count    = 4, // set to four cause our TEXTURE_FORMAT is hard coded
-		has_transparency = has_transparency,
-		format           = format,
-	}
-	create_texture_image_view(&engine.vk_ctx, &t)
-	create_texture_sampler(&engine.vk_ctx, &t)
-
-	handle := pool_alloc(&engine.texture_system.textures, t)
-	engine.texture_system.texture_map[name] = handle
-	write_descriptor_texture(engine, &engine.texture_system.descriptor, 0, handle, handle.index)
-	return handle
+	texture.gpu = gpu_img
+	texture_image_view_create(ctx, texture)
+	texture_sampler_create(ctx, texture)
 }
 
-get_default_texture :: proc(engine: ^Engine) -> TextureHandle {
+texture_get_default :: proc(engine: ^Engine) -> TextureHandle {
 	return engine.texture_system.default_texture_handle
 }
 
-load_cubemap_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
+texture_get_default_normal :: proc(engine: ^Engine) -> TextureHandle {
+	return engine.texture_system.default_normal_texture
+}
+
+texture_get_default_metallic_roughness :: proc(engine: ^Engine) -> TextureHandle {
+	return engine.texture_system.default_metallic_roughness_texture
+}
+
+texture_get_default_occlusion :: proc(engine: ^Engine) -> TextureHandle {
+	return engine.texture_system.default_occlusion_texture
+}
+
+texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	if handle, ok := engine.texture_system.texture_map[path]; ok {
 		return handle
 	}
@@ -220,6 +339,8 @@ load_cubemap_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
 		log.errorf("Failed to read cubemap image: %s", stbi.failure_reason())
 		return ts.default_texture_handle
 	}
+
+	log.debugf("Loading cubemap: %s (%dx%d)", path, width, height)
 
 	face_w := u32(width) / 4
 	face_h := u32(height) / 3
@@ -252,7 +373,7 @@ load_cubemap_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
 		}
 	}
 
-	gpu_img := create_image(
+	gpu_img := image_create(
 		&engine.vk_ctx,
 		{face_w, face_h, 1},
 		TEXTURE_FORMAT,
@@ -290,14 +411,10 @@ load_cubemap_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	end_single_time_commands(&engine.vk_ctx, &cmd)
 
 	t := Texture {
-		image         = gpu_img.image,
-		allocation    = gpu_img.alloc,
-		mip_levels    = 1,
-		width         = face_w,
-		height        = face_h,
+		gpu           = gpu_img,
 		channel_count = 4,
 	}
-	t.image_view = create_image_view(
+	t.image_view = image_view_create(
 		&engine.vk_ctx,
 		t.image,
 		TEXTURE_FORMAT,
@@ -305,11 +422,11 @@ load_cubemap_texture :: proc(engine: ^Engine, path: string) -> TextureHandle {
 		view_type = .CUBE,
 		array_layers = 6,
 	)
-	create_texture_sampler(&engine.vk_ctx, &t)
+	texture_sampler_create(&engine.vk_ctx, &t)
 
 	handle := pool_alloc(&ts.textures, t)
 	ts.texture_map[path] = handle
-	write_descriptor_texture(engine, &engine.texture_system.descriptor, 0, handle, handle.index)
+	write_descriptor_texture(&engine.vk_ctx, &engine.texture_system, 0, handle, handle.index)
 	return handle
 }
 
@@ -343,15 +460,14 @@ copy_buffer_to_cubemap :: proc(
 	)
 }
 
-generate_mipmaps :: proc(engine: ^Engine, image: vk.Image, format: vk.Format, width, height, mip_levels: u32) {
-	format_props: vk.FormatProperties
-	vk.GetPhysicalDeviceFormatProperties(engine.vk_ctx.physical_device, format, &format_props)
+generate_mipmaps :: proc(ctx: ^VulkanContext, image: vk.Image, format: vk.Format, width, height, mip_levels: u32) {
+	format_props := get_physical_device_format_properties(ctx, format)
 
 	if .SAMPLED_IMAGE_FILTER_LINEAR not_in format_props.optimalTilingFeatures {
 		log.panicf("Texture image format does not support linear blitting")
 	}
 
-	cmd := begin_single_time_commands(&engine.vk_ctx)
+	cmd := begin_single_time_commands(ctx)
 
 	mip_width, mip_height := width, height
 	for i in 1 ..< mip_levels {
@@ -420,7 +536,7 @@ generate_mipmaps :: proc(engine: ^Engine, image: vk.Image, format: vk.Format, wi
 		1,
 		mip_levels - 1,
 	)
-	end_single_time_commands(&engine.vk_ctx, &cmd)
+	end_single_time_commands(ctx, &cmd)
 }
 
 get_max_usable_sample_count :: proc(ctx: ^VulkanContext) -> vk.SampleCountFlags {
@@ -438,21 +554,21 @@ get_max_usable_sample_count :: proc(ctx: ^VulkanContext) -> vk.SampleCountFlags 
 	return {._1}
 }
 
-create_texture_image_view :: proc(ctx: ^VulkanContext, t: ^Texture) {
-	t.image_view = create_image_view(ctx, t.image, t.format, {.COLOR}, mip_levels = t.mip_levels)
+texture_image_view_create :: proc(ctx: ^VulkanContext, t: ^Texture) {
+	t.image_view = image_view_create(ctx, t.image, t.format, {.COLOR}, mip_levels = t.mip_levels)
 }
 
-create_texture_sampler :: proc(ctx: ^VulkanContext, t: ^Texture) {
+texture_sampler_create :: proc(ctx: ^VulkanContext, t: ^Texture) {
 	properties := get_physical_device_properties(ctx)
 
 	sampler_info := vk.SamplerCreateInfo {
 		sType                   = .SAMPLER_CREATE_INFO,
-		magFilter               = .LINEAR,
-		minFilter               = .LINEAR,
+		minFilter               = texture_filter_to_vk(t.filter_min),
+		magFilter               = texture_filter_to_vk(t.filter_mag),
 		mipmapMode              = .LINEAR,
-		addressModeU            = .REPEAT,
-		addressModeV            = .REPEAT,
-		addressModeW            = .REPEAT,
+		addressModeU            = texture_repeat_to_vk(t.repeat_u),
+		addressModeV            = texture_repeat_to_vk(t.repeat_v),
+		addressModeW            = texture_repeat_to_vk(t.repeat_w),
 		mipLodBias              = 0.0,
 		anisotropyEnable        = true,
 		maxAnisotropy           = properties.limits.maxSamplerAnisotropy,

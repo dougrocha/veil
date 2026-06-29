@@ -52,6 +52,12 @@ get_physical_device_properties :: proc(ctx: ^VulkanContext) -> vk.PhysicalDevice
 	return properties
 }
 
+get_physical_device_format_properties :: proc(ctx: ^VulkanContext, format: vk.Format) -> vk.FormatProperties {
+	format_props: vk.FormatProperties
+	vk.GetPhysicalDeviceFormatProperties(ctx.physical_device, format, &format_props)
+	return format_props
+}
+
 read_file :: proc(filepath: string, allocator := context.allocator) -> string {
 	buf, err := os.read_entire_file(filepath, allocator)
 	log.assertf(err == os.ERROR_NONE, "Failed to read file '%s': %v", filepath, err)

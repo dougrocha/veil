@@ -96,18 +96,18 @@ write_descriptor_image :: proc(
 // Writes a texture from the texture system into the descriptor set at the given binding.
 // Writes to all sets in the descriptor (all frames).
 write_descriptor_texture :: proc(
-	engine: ^Engine,
-	desc: ^DescriptorSet,
+	ctx: ^VulkanContext,
+	ts: ^TextureSystem,
 	binding: u32,
 	handle: TextureHandle,
 	array_element: u32 = 0,
 ) {
-	t := pool_get(&engine.texture_system.textures, handle)
+	t := pool_get(&ts.textures, handle)
 	image_info := vk.DescriptorImageInfo {
 		sampler     = t.sampler,
 		imageView   = t.image_view,
 		imageLayout = .READ_ONLY_OPTIMAL,
 	}
 
-	write_descriptor_image(&engine.vk_ctx, desc, binding, &image_info, array_element)
+	write_descriptor_image(ctx, &ts.descriptor, binding, &image_info, array_element)
 }

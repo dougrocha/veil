@@ -20,6 +20,7 @@ GpuMaterial :: struct {
 }
 
 Material :: struct {
+	name:                       string,
 	base_color:                 Vec4,
 	perceptual_roughness:       f32,
 	metallic:                   f32,
@@ -56,7 +57,18 @@ create_material_system :: proc(engine: ^Engine, config: MaterialSystemConfig) {
 	create_default_material(engine)
 }
 
-create_material :: proc(engine: ^Engine, name: string, material: Material) -> MaterialHandle {
+create_material :: proc(
+	engine: ^Engine,
+	name: string,
+	base_color: Vec4 = {1, 1, 1, 1},
+	perceptual_roughness: f32 = 0,
+	metallic: f32 = 0,
+	base_color_texture: TextureHandle = INVALID_TEXTURE,
+	metallic_roughness_texture: TextureHandle = INVALID_TEXTURE,
+	normal_map_texture: TextureHandle = INVALID_TEXTURE,
+	occlusion_texture: TextureHandle = INVALID_TEXTURE,
+	alpha_mode: AlphaMode = .Opaque,
+) -> MaterialHandle {
 	if handle, ok := engine.material_system.material_map[name]; ok {
 		return handle
 	}
@@ -64,6 +76,20 @@ create_material :: proc(engine: ^Engine, name: string, material: Material) -> Ma
 	if engine.material_system.materials.count >= engine.material_system.config.max_material_count {
 		log.errorf("Material system is full (max: %d)", engine.material_system.config.max_material_count)
 		return INVALID_MATERIAL
+	}
+
+	log.debugf("Creating material: %s", name)
+
+	material := Material {
+		name                       = name,
+		base_color                 = base_color,
+		perceptual_roughness       = perceptual_roughness,
+		metallic                   = metallic,
+		base_color_texture         = base_color_texture,
+		metallic_roughness_texture = metallic_roughness_texture,
+		normal_map_texture         = normal_map_texture,
+		occlusion_texture          = occlusion_texture,
+		alpha_mode                 = alpha_mode,
 	}
 
 	handle := pool_alloc(&engine.material_system.materials, material)
@@ -77,16 +103,13 @@ create_material :: proc(engine: ^Engine, name: string, material: Material) -> Ma
 	offset := uintptr(handle.index) * size_of(GpuMaterial)
 	dst := uintptr(engine.material_system.buffer.alloc_info.mapped_data) + offset
 	gpu_mat := GpuMaterial {
-		base_color                 = material.base_color,
-		perceptual_roughness       = material.perceptual_roughness,
-		metallic                   = material.metallic,
-		base_color_texture         = resolve(material.base_color_texture, ts.default_texture_handle),
-		metallic_roughness_texture = resolve(
-			material.metallic_roughness_texture,
-			ts.default_metallic_roughness_texture,
-		),
-		normal_map_texture         = resolve(material.normal_map_texture, ts.default_normal_texture),
-		occlusion_texture          = resolve(material.occlusion_texture, ts.default_occlusion_texture),
+		base_color                 = base_color,
+		perceptual_roughness       = perceptual_roughness,
+		metallic                   = metallic,
+		base_color_texture         = resolve(base_color_texture, ts.default_texture_handle),
+		metallic_roughness_texture = resolve(metallic_roughness_texture, ts.default_metallic_roughness_texture),
+		normal_map_texture         = resolve(normal_map_texture, ts.default_normal_texture),
+		occlusion_texture          = resolve(occlusion_texture, ts.default_occlusion_texture),
 	}
 	mem.copy(rawptr(dst), &gpu_mat, size_of(GpuMaterial))
 
@@ -109,13 +132,10 @@ create_default_material :: proc(engine: ^Engine) {
 	create_material(
 		engine,
 		DEFAULT_MATERIAL_NAME,
-		Material {
-			base_color = {1, 1, 1, 1},
-			perceptual_roughness = 0.5,
-			base_color_texture = ts.default_texture_handle,
-			metallic_roughness_texture = ts.default_metallic_roughness_texture,
-			normal_map_texture = ts.default_normal_texture,
-			occlusion_texture = ts.default_occlusion_texture,
-		},
+		perceptual_roughness = 0.5,
+		base_color_texture = ts.default_texture_handle,
+		metallic_roughness_texture = ts.default_metallic_roughness_texture,
+		normal_map_texture = ts.default_normal_texture,
+		occlusion_texture = ts.default_occlusion_texture,
 	)
 }
