@@ -1,7 +1,6 @@
 struct Vertex {
     float3 pos;
     float2 uv;
-    float3 color;
     float3 normal;
     float4 tangent; // xyz = tangent direction, w = handedness
 };

@@ -62,27 +62,20 @@ load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 				pos: [3]f32
 				_ = cgltf.accessor_read_float(pos_acc, i, raw_data(pos[:]), 3)
 				vertices[i].pos = pos
-				vertices[i].color = {1, 1, 1}
-			}
 
-			if uv_acc != nil {
-				for i in 0 ..< vertex_count {
+				if uv_acc != nil {
 					uv: [2]f32
 					_ = cgltf.accessor_read_float(uv_acc, i, raw_data(uv[:]), 2)
-					vertices[i].uv = {uv[0], uv[1]}
+					vertices[i].uv = uv
 				}
-			}
 
-			if norm_acc != nil {
-				for i in 0 ..< vertex_count {
+				if norm_acc != nil {
 					n: [3]f32
 					_ = cgltf.accessor_read_float(norm_acc, i, raw_data(n[:]), 3)
 					vertices[i].normal = n
 				}
-			}
 
-			if tan_acc != nil {
-				for i in 0 ..< vertex_count {
+				if tan_acc != nil {
 					t: [4]f32
 					_ = cgltf.accessor_read_float(tan_acc, i, raw_data(t[:]), 4)
 					vertices[i].tangent = t

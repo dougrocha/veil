@@ -2,18 +2,21 @@ package graphics
 
 import vk "vendor:vulkan"
 
+RenderTargets :: struct {
+	color: GpuImage,
+	depth: GpuImage,
+	draw:  GpuImage,
+}
+
 Swapchain :: struct {
 	handle:           vk.SwapchainKHR,
 	images:           []vk.Image,
-	image_views:      []vk.ImageView,
 	require_recreate: bool,
 	extent:           vk.Extent2D,
-	depth_image:      Texture,
-	color_image:      Texture,
-	draw_image:       Texture,
+	render_targets:   RenderTargets,
 }
 
-create_swapchain :: proc(self: ^Engine, width, height: u32) {
+swapchain_create :: proc(self: ^Engine, width, height: u32) {
 	self.swapchain.extent = {width, height}
 
 	surface_caps: vk.SurfaceCapabilitiesKHR
@@ -48,79 +51,62 @@ create_swapchain :: proc(self: ^Engine, width, height: u32) {
 	vk.GetSwapchainImagesKHR(self.vk_ctx.device, self.swapchain.handle, &image_count, nil)
 	self.swapchain.images = make([]vk.Image, image_count)
 	vk.GetSwapchainImagesKHR(self.vk_ctx.device, self.swapchain.handle, &image_count, raw_data(self.swapchain.images))
-	self.swapchain.image_views = make([]vk.ImageView, image_count)
-
-	for i in 0 ..< len(self.swapchain.images) {
-		self.swapchain.image_views[i] = image_view_create(
-			&self.vk_ctx,
-			self.swapchain.images[i],
-			SWAPCHAIN_FORMAT,
-			{.COLOR},
-		)
-	}
 
 }
 
-cleanup_swapchain :: proc(self: ^Engine) {
-	texture_destroy(&self.vk_ctx, self.swapchain.color_image)
-	texture_destroy(&self.vk_ctx, self.swapchain.depth_image)
-	texture_destroy(&self.vk_ctx, self.swapchain.draw_image)
-
-	for view in self.swapchain.image_views {
-		vk.DestroyImageView(self.vk_ctx.device, view, nil)
-	}
+swapchain_destroy :: proc(self: ^Engine) {
+	render_targets_destroy(&self.vk_ctx, &self.swapchain.render_targets)
 	delete(self.swapchain.images)
-	delete(self.swapchain.image_views)
-
 	vk.DestroySwapchainKHR(self.vk_ctx.device, self.swapchain.handle, nil)
 }
 
-create_color_resources :: proc(engine: ^Engine) {
-	engine.swapchain.color_image.gpu = image_create(
-		&engine.vk_ctx,
-		{engine.swapchain.extent.width, engine.swapchain.extent.height, 1},
-		DRAW_FORMAT,
-		{.TRANSIENT_ATTACHMENT, .COLOR_ATTACHMENT},
-		samples = engine.vk_ctx.msaa_samples,
-	)
-	engine.swapchain.color_image.image_view = image_view_create(
-		&engine.vk_ctx,
-		engine.swapchain.color_image.image,
-		DRAW_FORMAT,
-		{.COLOR},
-	)
-	engine.swapchain.color_image.flags = {.WRITABLE, .EXTERNAL_LIFETIME}
+render_target_create :: proc(
+	ctx: ^VulkanContext,
+	extent: vk.Extent3D,
+	format: vk.Format,
+	usage: vk.ImageUsageFlags,
+	aspect: vk.ImageAspectFlags,
+	samples: vk.SampleCountFlags = {._1},
+) -> GpuImage {
+	img := image_create(ctx, extent, format, usage, samples = samples)
+	img.image_view = image_view_create(ctx, img.image, format, aspect)
+	return img
 }
 
-create_depth_resources :: proc(engine: ^Engine) {
-	engine.swapchain.depth_image.gpu = image_create(
-		&engine.vk_ctx,
-		{engine.swapchain.extent.width, engine.swapchain.extent.height, 1},
-		DEPTH_FORMAT,
-		{.DEPTH_STENCIL_ATTACHMENT},
-		samples = engine.vk_ctx.msaa_samples,
-	)
-	engine.swapchain.depth_image.image_view = image_view_create(
-		&engine.vk_ctx,
-		engine.swapchain.depth_image.image,
-		DEPTH_FORMAT,
-		{.DEPTH},
-	)
-	engine.swapchain.depth_image.flags = {.WRITABLE, .EXTERNAL_LIFETIME}
+render_targets_create :: proc(ctx: ^VulkanContext, extent: vk.Extent2D, msaa: vk.SampleCountFlags) -> RenderTargets {
+	extent_3d := vk.Extent3D{extent.width, extent.height, 1}
+
+	targets := RenderTargets {
+		color = render_target_create(
+			ctx,
+			extent_3d,
+			DRAW_FORMAT,
+			{.TRANSIENT_ATTACHMENT, .COLOR_ATTACHMENT},
+			{.COLOR},
+			samples = msaa,
+		),
+		depth = render_target_create(
+			ctx,
+			extent_3d,
+			DEPTH_FORMAT,
+			{.DEPTH_STENCIL_ATTACHMENT},
+			{.DEPTH},
+			samples = msaa,
+		),
+		draw  = render_target_create(
+			ctx,
+			extent_3d,
+			DRAW_FORMAT,
+			{.COLOR_ATTACHMENT, .TRANSFER_SRC, .TRANSFER_DST, .STORAGE},
+			{.COLOR},
+		),
+	}
+
+	return targets
 }
 
-create_draw_image :: proc(engine: ^Engine) {
-	engine.swapchain.draw_image.gpu = image_create(
-		&engine.vk_ctx,
-		{engine.swapchain.extent.width, engine.swapchain.extent.height, 1},
-		DRAW_FORMAT,
-		{.COLOR_ATTACHMENT, .TRANSFER_SRC, .TRANSFER_DST, .STORAGE},
-	)
-	engine.swapchain.draw_image.image_view = image_view_create(
-		&engine.vk_ctx,
-		engine.swapchain.draw_image.image,
-		DRAW_FORMAT,
-		{.COLOR},
-	)
-	engine.swapchain.draw_image.flags = {.WRITABLE, .EXTERNAL_LIFETIME}
+render_targets_destroy :: proc(ctx: ^VulkanContext, targets: ^RenderTargets) {
+	destroy_image(ctx, targets.color)
+	destroy_image(ctx, targets.depth)
+	destroy_image(ctx, targets.draw)
 }

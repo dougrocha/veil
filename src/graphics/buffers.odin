@@ -94,6 +94,13 @@ create_scene_data_buffer :: proc(engine: ^Engine) {
 	}
 }
 
+create_transforms_buffer :: proc(engine: ^Engine) {
+	size := vk.DeviceSize(size_of(GpuTransform) * MAX_MODEL_INSTANCES)
+	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+		engine.frame_resources[i].transforms_buffer = create_buffer(&engine.vk_ctx, size, .MappedStorage)
+	}
+}
+
 create_particle_buffer :: proc(engine: ^Engine) {
 	particles := make([]Particle, PARTICLE_COUNT, context.temp_allocator)
 	aspect_ratio := f32(engine.swapchain.extent.height) / f32(engine.swapchain.extent.width)
@@ -122,19 +129,19 @@ create_particle_buffer :: proc(engine: ^Engine) {
 update_scene_data_buffer :: proc(engine: ^Engine) {
 	frame_index := current_frame_res_index(engine)
 	scene := SceneData {
-		view                    = camera_get_view_matrix(engine.camera),
+		view                    = camera_get_view_matrix(engine.scene.camera),
 		proj                    = camera_get_projection_matrix(
-			engine.camera,
+			engine.scene.camera,
 			f32(engine.swapchain.extent.width) / f32(engine.swapchain.extent.height),
 		),
-		point_lights            = engine.point_lights,
-		point_light_count       = engine.point_light_count,
-		directional_lights      = engine.directional_lights,
-		directional_light_count = engine.directional_light_count,
-		spot_lights             = engine.spot_lights,
-		spot_light_count        = engine.spot_light_count,
-		cam_pos                 = engine.camera.position,
-		ambient_light           = engine.ambient_light,
+		point_lights            = engine.scene.point_lights,
+		point_light_count       = engine.scene.point_light_count,
+		directional_lights      = engine.scene.directional_lights,
+		directional_light_count = engine.scene.directional_light_count,
+		spot_lights             = engine.scene.spot_lights,
+		spot_light_count        = engine.scene.spot_light_count,
+		cam_pos                 = engine.scene.camera.position,
+		ambient_light           = engine.scene.ambient_light,
 	}
 	scene.proj[1][1] *= -1.0
 	scene.delta_time = engine.clock.delta_time
@@ -146,9 +153,9 @@ update_scene_data_buffer :: proc(engine: ^Engine) {
 	scene.shadow_far = light_far
 	light_proj := linalg.matrix4_perspective_f32(linalg.to_radians(light_fov), 1.0, light_near, light_far)
 
-	shadow_light_count := min(int(engine.point_light_count), MAX_SHADOW_LIGHTS)
+	shadow_light_count := min(int(engine.scene.point_light_count), MAX_SHADOW_LIGHTS)
 	for light_i in 0 ..< shadow_light_count {
-		light := engine.point_lights[light_i]
+		light := engine.scene.point_lights[light_i]
 		for face_dir, face_i in CUBE_FACE_DIRS {
 			light_view := linalg.matrix4_look_at(light.pos, light.pos + face_dir.target, face_dir.up)
 			scene.light_view_proj[light_i][face_i] = light_proj * light_view

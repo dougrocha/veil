@@ -106,10 +106,13 @@ create_material :: proc(
 		base_color                 = base_color,
 		perceptual_roughness       = perceptual_roughness,
 		metallic                   = metallic,
-		base_color_texture         = resolve(base_color_texture, ts.default_texture_handle),
-		metallic_roughness_texture = resolve(metallic_roughness_texture, ts.default_metallic_roughness_texture),
-		normal_map_texture         = resolve(normal_map_texture, ts.default_normal_texture),
-		occlusion_texture          = resolve(occlusion_texture, ts.default_occlusion_texture),
+		base_color_texture         = resolve(base_color_texture, texture_load(engine, DefaultTexture.White)),
+		metallic_roughness_texture = resolve(
+			metallic_roughness_texture,
+			texture_load(engine, DefaultTexture.Metallic_Roughness),
+		),
+		normal_map_texture         = resolve(normal_map_texture, texture_load(engine, DefaultTexture.Flat_Normal)),
+		occlusion_texture          = resolve(occlusion_texture, texture_load(engine, DefaultTexture.Occlusion)),
 	}
 	mem.copy(rawptr(dst), &gpu_mat, size_of(GpuMaterial))
 
@@ -128,14 +131,13 @@ get_default_material :: proc(engine: ^Engine) -> MaterialHandle {
 }
 
 create_default_material :: proc(engine: ^Engine) {
-	ts := &engine.texture_system
 	create_material(
 		engine,
 		DEFAULT_MATERIAL_NAME,
 		perceptual_roughness = 0.5,
-		base_color_texture = ts.default_texture_handle,
-		metallic_roughness_texture = ts.default_metallic_roughness_texture,
-		normal_map_texture = ts.default_normal_texture,
-		occlusion_texture = ts.default_occlusion_texture,
+		base_color_texture = texture_load(engine, DefaultTexture.White),
+		metallic_roughness_texture = texture_load(engine, DefaultTexture.Metallic_Roughness),
+		normal_map_texture = texture_load(engine, DefaultTexture.Flat_Normal),
+		occlusion_texture = texture_load(engine, DefaultTexture.Occlusion),
 	)
 }

@@ -3,13 +3,6 @@ package graphics
 import "core:log"
 import vk "vendor:vulkan"
 
-TextureType :: enum {
-	UNKNOWN,
-	DIFFUSE,
-	SPECULAR,
-	NORMAL,
-}
-
 TextureFilter :: enum {
 	LINEAR,
 	NEAREST,

@@ -27,7 +27,6 @@ create_plane :: proc(
 			vertices[z * cols + x] = Vertex {
 				pos    = {(-0.5 + tx) * size.x, 0, (-0.5 + tz) * size.y},
 				uv     = {tx, tz},
-				color  = {1, 1, 1},
 				normal = {0, 1, 0},
 			}
 		}
@@ -68,35 +67,35 @@ create_cube :: proc(
 
 	vertices := []Vertex {
 		// front (+Z)
-		{pos = {min.x, min.y, max.z}, uv = {0, 0}, color = {1, 1, 1}, normal = {0, 0, 1}},
-		{pos = {max.x, min.y, max.z}, uv = {1, 0}, color = {1, 1, 1}, normal = {0, 0, 1}},
-		{pos = {max.x, max.y, max.z}, uv = {1, 1}, color = {1, 1, 1}, normal = {0, 0, 1}},
-		{pos = {min.x, max.y, max.z}, uv = {0, 1}, color = {1, 1, 1}, normal = {0, 0, 1}},
+		{pos = {min.x, min.y, max.z}, uv = {0, 0}, normal = {0, 0, 1}},
+		{pos = {max.x, min.y, max.z}, uv = {1, 0}, normal = {0, 0, 1}},
+		{pos = {max.x, max.y, max.z}, uv = {1, 1}, normal = {0, 0, 1}},
+		{pos = {min.x, max.y, max.z}, uv = {0, 1}, normal = {0, 0, 1}},
 		// back (-Z)
-		{pos = {max.x, min.y, min.z}, uv = {0, 0}, color = {1, 1, 1}, normal = {0, 0, -1}},
-		{pos = {min.x, min.y, min.z}, uv = {1, 0}, color = {1, 1, 1}, normal = {0, 0, -1}},
-		{pos = {min.x, max.y, min.z}, uv = {1, 1}, color = {1, 1, 1}, normal = {0, 0, -1}},
-		{pos = {max.x, max.y, min.z}, uv = {0, 1}, color = {1, 1, 1}, normal = {0, 0, -1}},
+		{pos = {max.x, min.y, min.z}, uv = {0, 0}, normal = {0, 0, -1}},
+		{pos = {min.x, min.y, min.z}, uv = {1, 0}, normal = {0, 0, -1}},
+		{pos = {min.x, max.y, min.z}, uv = {1, 1}, normal = {0, 0, -1}},
+		{pos = {max.x, max.y, min.z}, uv = {0, 1}, normal = {0, 0, -1}},
 		// right (+X)
-		{pos = {max.x, min.y, min.z}, uv = {0, 0}, color = {1, 1, 1}, normal = {1, 0, 0}},
-		{pos = {max.x, max.y, min.z}, uv = {1, 0}, color = {1, 1, 1}, normal = {1, 0, 0}},
-		{pos = {max.x, max.y, max.z}, uv = {1, 1}, color = {1, 1, 1}, normal = {1, 0, 0}},
-		{pos = {max.x, min.y, max.z}, uv = {0, 1}, color = {1, 1, 1}, normal = {1, 0, 0}},
+		{pos = {max.x, min.y, min.z}, uv = {0, 0}, normal = {1, 0, 0}},
+		{pos = {max.x, max.y, min.z}, uv = {1, 0}, normal = {1, 0, 0}},
+		{pos = {max.x, max.y, max.z}, uv = {1, 1}, normal = {1, 0, 0}},
+		{pos = {max.x, min.y, max.z}, uv = {0, 1}, normal = {1, 0, 0}},
 		// left (-X)
-		{pos = {min.x, min.y, max.z}, uv = {1, 0}, color = {1, 1, 1}, normal = {-1, 0, 0}},
-		{pos = {min.x, max.y, max.z}, uv = {0, 0}, color = {1, 1, 1}, normal = {-1, 0, 0}},
-		{pos = {min.x, max.y, min.z}, uv = {0, 1}, color = {1, 1, 1}, normal = {-1, 0, 0}},
-		{pos = {min.x, min.y, min.z}, uv = {1, 1}, color = {1, 1, 1}, normal = {-1, 0, 0}},
+		{pos = {min.x, min.y, max.z}, uv = {1, 0}, normal = {-1, 0, 0}},
+		{pos = {min.x, max.y, max.z}, uv = {0, 0}, normal = {-1, 0, 0}},
+		{pos = {min.x, max.y, min.z}, uv = {0, 1}, normal = {-1, 0, 0}},
+		{pos = {min.x, min.y, min.z}, uv = {1, 1}, normal = {-1, 0, 0}},
 		// top (+Y)
-		{pos = {max.x, max.y, min.z}, uv = {1, 0}, color = {1, 1, 1}, normal = {0, 1, 0}},
-		{pos = {min.x, max.y, min.z}, uv = {0, 0}, color = {1, 1, 1}, normal = {0, 1, 0}},
-		{pos = {min.x, max.y, max.z}, uv = {0, 1}, color = {1, 1, 1}, normal = {0, 1, 0}},
-		{pos = {max.x, max.y, max.z}, uv = {1, 1}, color = {1, 1, 1}, normal = {0, 1, 0}},
+		{pos = {max.x, max.y, min.z}, uv = {1, 0}, normal = {0, 1, 0}},
+		{pos = {min.x, max.y, min.z}, uv = {0, 0}, normal = {0, 1, 0}},
+		{pos = {min.x, max.y, max.z}, uv = {0, 1}, normal = {0, 1, 0}},
+		{pos = {max.x, max.y, max.z}, uv = {1, 1}, normal = {0, 1, 0}},
 		// bottom (-Y)
-		{pos = {max.x, min.y, max.z}, uv = {0, 0}, color = {1, 1, 1}, normal = {0, -1, 0}},
-		{pos = {min.x, min.y, max.z}, uv = {1, 0}, color = {1, 1, 1}, normal = {0, -1, 0}},
-		{pos = {min.x, min.y, min.z}, uv = {1, 1}, color = {1, 1, 1}, normal = {0, -1, 0}},
-		{pos = {max.x, min.y, min.z}, uv = {0, 1}, color = {1, 1, 1}, normal = {0, -1, 0}},
+		{pos = {max.x, min.y, max.z}, uv = {0, 0}, normal = {0, -1, 0}},
+		{pos = {min.x, min.y, max.z}, uv = {1, 0}, normal = {0, -1, 0}},
+		{pos = {min.x, min.y, min.z}, uv = {1, 1}, normal = {0, -1, 0}},
+		{pos = {max.x, min.y, min.z}, uv = {0, 1}, normal = {0, -1, 0}},
 	}
 	indices := []u32 {
 		0,
@@ -180,7 +179,7 @@ create_sphere :: proc(
 			s := f32(j) / f32(sectors)
 			t := f32(i) / f32(stacks)
 
-			append(&vertices, Vertex{pos = {x, y, z}, uv = {s, t}, normal = {nx, ny, nz}, color = {1, 1, 1}})
+			append(&vertices, Vertex{pos = {x, y, z}, uv = {s, t}, normal = {nx, ny, nz}})
 		}
 	}
 

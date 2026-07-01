@@ -38,6 +38,7 @@ FrameResources :: struct {
 	render_complete_semaphore: vk.Semaphore,
 	scene_data_buffer:         GpuBuffer,
 	particle_buffer:           GpuBuffer,
+	transforms_buffer:         GpuBuffer,
 }
 
 Clock :: struct {
@@ -71,50 +72,52 @@ VulkanContext :: struct {
 }
 
 Engine :: struct {
-	vk_ctx:                  VulkanContext,
+	vk_ctx:              VulkanContext,
 
 	// swapchain
-	swapchain:               Swapchain,
+	swapchain:           Swapchain,
 
 	// shaders
-	shader_system:           ShaderSystem,
+	shader_system:       ShaderSystem,
 
 	// graphics pipeline
-	pipeline_registry:       PipelineRegistry,
+	pipeline_registry:   PipelineRegistry,
 
 	// frame and sync resources
-	timeline_semaphore:      vk.Semaphore,
-	frame_resources:         [MAX_FRAMES_IN_FLIGHT]FrameResources,
-	frame_index:             u64,
-	current_image_index:     u32,
-	next_signal_value:       u64,
+	timeline_semaphore:  vk.Semaphore,
+	frame_resources:     [MAX_FRAMES_IN_FLIGHT]FrameResources,
+	frame_index:         u64,
+	current_image_index: u32,
 
 	// buffers
-	model_system:            ModelSystem,
-	material_system:         MaterialSystem,
+	model_system:        ModelSystem,
+	material_system:     MaterialSystem,
 
 	// timers
-	clock:                   Clock,
-
-	// camera
-	camera:                  Camera,
-	ambient_light:           AmbientLight,
-
-	// lights
-	point_lights:            [16]PointLight,
-	point_light_count:       u32,
-	directional_lights:      [4]DirectionalLight,
-	directional_light_count: u32,
-	spot_lights:             [4]SpotLight,
-	spot_light_count:        u32,
+	clock:               Clock,
 
 	// texture
-	texture_system:          TextureSystem,
+	texture_system:      TextureSystem,
 
 	// global resources (binding 0 = shadow map, binding 1 = skybox)
-	global_descriptor:       DescriptorSet,
-	shadow_map:              Texture,
-	shadow_map_face_views:   [MAX_SHADOW_LIGHTS * 6]vk.ImageView,
+	global_descriptor:   DescriptorSet,
+	shadow_atlas:        ShadowAtlas,
+
+	// simulation state — no Vulkan types
+	scene:               Scene,
+}
+
+// Everything the game mutates. No Vulkan types in here.
+Scene :: struct {
+	camera:                  Camera,
+	ambient_light:           AmbientLight,
+	point_lights:            [16]PointLight,
+	directional_lights:      [4]DirectionalLight,
+	spot_lights:             [4]SpotLight,
+	point_light_count:       u32,
+	directional_light_count: u32,
+	spot_light_count:        u32,
+	instances:               Pool(Instance),
 }
 
 PointLight :: struct {
@@ -178,7 +181,6 @@ SceneData :: struct {
 Vertex :: struct {
 	pos:     Vec3,
 	uv:      Vec2,
-	color:   Vec3,
 	normal:  Vec3,
 	tangent: Vec4, // xyz = tangent direction, w = handedness
 }
@@ -231,9 +233,10 @@ transform_create :: proc(
 	return Transform{translation = translation, rotation = rotation, scale = scale}
 }
 
+// Builds the model matrix by combining translation, rotation, and scale
 transform_matrix :: proc(transform: Transform) -> Mat4x4 {
-	rot := linalg.matrix4_from_quaternion(transform.rotation)
 	translation := linalg.matrix4_translate(transform.translation)
+	rot := linalg.matrix4_from_quaternion(transform.rotation)
 	scale := linalg.matrix4_scale(transform.scale)
 
 	return translation * rot * scale

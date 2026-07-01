@@ -16,7 +16,6 @@ struct VSInput {
 
 struct VSOutput {
     float4 pos : SV_Position;
-    float3 frag_color;
     float2 frag_uv;
     float3 frag_normal;
     float3 frag_tangent;
@@ -44,7 +43,6 @@ VSOutput vertex_main(VSInput input) {
     output.frag_tangent   = T;
     output.frag_bitangent = B;
 
-    output.frag_color = v.color;
     output.frag_uv = v.uv;
     return output;
 }
@@ -116,7 +114,7 @@ float calc_shadow_factor(float3 frag_pos, float3 light_pos, float3 normal, uint 
 float4 fragment_main(VSOutput vert) : SV_TARGET {
     let mat = pc.material_buffer[pc.material_index];
 
-    float4 tex_color = textures[mat.base_color_texture].Sample(vert.frag_uv) * float4(vert.frag_color, 1.0) * mat.base_color;
+    float4 tex_color = textures[mat.base_color_texture].Sample(vert.frag_uv) * mat.base_color;
 
     float3 normal;
     if (length(vert.frag_tangent) > 0.001) {

@@ -1,23 +1,15 @@
 package graphics
 
-import "core:log"
-
-Slot :: struct($T: typeid) {
-	value:      T, // the actual data
-	generation: u32, // keeps track of reuse amount of this slot
-	alive:      bool, // is this resource set
-	references: u64,
-}
-
 Handle :: struct($T: typeid) {
 	index:      u32,
 	generation: u32,
 }
 
 Pool :: struct($T: typeid) {
-	slots:     []Slot(T),
-	free_list: [dynamic]u32,
-	count:     u32,
+	values:      []T, // packed payloads, indexed directly by handle.index
+	generations: []u32, // odd = alive, even = free; bumped on both alloc and free
+	free_list:   [dynamic]u32,
+	count:       u32,
 }
 
 pool_init :: proc(max_capacity: u32, $T: typeid, allocator := context.allocator) -> Pool(T) {
@@ -26,7 +18,8 @@ pool_init :: proc(max_capacity: u32, $T: typeid, allocator := context.allocator)
 	// only create the pool
 	// cause honestly I dont care about free_list like this
 	// and we dont know for sure how many free items will happen
-	pool.slots = make([]Slot(T), max_capacity, allocator)
+	pool.values = make([]T, max_capacity, allocator)
+	pool.generations = make([]u32, max_capacity, allocator)
 	pool.free_list = make([dynamic]u32, 0, max_capacity, allocator)
 	pool.count = 0
 
@@ -34,12 +27,13 @@ pool_init :: proc(max_capacity: u32, $T: typeid, allocator := context.allocator)
 }
 
 pool_destroy :: proc(pool: ^Pool($T), allocator := context.allocator) {
-	delete(pool.slots, allocator)
+	delete(pool.values, allocator)
+	delete(pool.generations, allocator)
 	delete(pool.free_list)
 }
 
 pool_alloc :: proc(pool: ^Pool($T), value: T) -> Handle(T) {
-	assert(pool.count < u32(len(pool.slots)) || len(pool.free_list) > 0, "pool does not have a free slot")
+	assert(pool.count < u32(len(pool.values)) || len(pool.free_list) > 0, "pool does not have a free slot")
 
 	insert_index: u32
 
@@ -50,60 +44,36 @@ pool_alloc :: proc(pool: ^Pool($T), value: T) -> Handle(T) {
 		pool.count += 1
 	}
 
-	assert(insert_index < u32(len(pool.slots)), "trying to insert past pool bounds")
+	assert(insert_index < u32(len(pool.values)), "trying to insert past pool bounds")
 
-	slot := &pool.slots[insert_index]
-	slot.value = value
-	slot.generation += 1
-	slot.alive = true
-	slot.references = 1
+	pool.values[insert_index] = value
+	pool.generations[insert_index] += 1 // now odd: alive
 
-	return Handle(T){index = insert_index, generation = slot.generation}
+	return Handle(T){index = insert_index, generation = pool.generations[insert_index]}
 }
 
-// Helper method to get a slot from a handle
+pool_is_alive :: proc(pool: ^Pool($T), index: u32) -> bool {
+	return pool.generations[index] % 2 == 1
+}
+
+// Helper method to validate a handle and return its index
 //
 // will crash and assert if invalid
-_pool_get_slot :: proc(pool: ^Pool($T), handle: Handle(T)) -> ^Slot(T) {
-	assert(handle.index < u32(len(pool.slots)), "handle index out of bounds")
+_pool_check_handle :: proc(pool: ^Pool($T), handle: Handle(T)) -> u32 {
+	assert(handle.index < u32(len(pool.values)), "handle index out of bounds")
+	assert(pool.generations[handle.index] == handle.generation, "handle generation mismatch")
+	assert(pool_is_alive(pool, handle.index), "handle points to dead slot")
 
-	slot := &pool.slots[handle.index]
-
-	assert(slot.generation == handle.generation, "handle generation mismatch")
-	assert(slot.alive, "handle points to dead slot")
-
-	return slot
+	return handle.index
 }
 
 pool_free :: proc(pool: ^Pool($T), handle: Handle(T)) {
-	slot := _pool_get_slot(pool, handle)
-	if slot.references > 1 {
-		log.panic("Trying to free a handle with active references")
-	}
-
-	slot.references = 0
-	slot.alive = false
-	append(&pool.free_list, handle.index)
+	index := _pool_check_handle(pool, handle)
+	pool.generations[index] += 1 // now even: dead
+	append(&pool.free_list, index)
 }
 
 pool_get :: proc(pool: ^Pool($T), handle: Handle(T)) -> ^T {
-	slot := _pool_get_slot(pool, handle)
-	return &slot.value
-}
-
-pool_acquire :: proc(pool: ^Pool($T), handle: Handle(T)) -> ^T {
-	slot := _pool_get_slot(pool, handle)
-	slot.references += 1
-	return &slot.value
-}
-
-pool_release :: proc(pool: ^Pool($T), handle: Handle(T)) {
-	slot := _pool_get_slot(pool, handle)
-
-	assert(slot.references > 0, "double release")
-	if slot.references > 1 {
-		slot.references -= 1
-	} else {
-		pool_free(pool, handle)
-	}
+	index := _pool_check_handle(pool, handle)
+	return &pool.values[index]
 }

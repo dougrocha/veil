@@ -57,9 +57,9 @@ create_shader_system :: proc(self: ^Engine) -> bool {
 
 destroy_shader_system :: proc(self: ^Engine) {
 	ss := &self.shader_system
-	for &slot in ss.modules.slots {
-		if slot.alive {
-			vk.DestroyShaderModule(self.vk_ctx.device, slot.value, nil)
+	for &module, i in ss.modules.values {
+		if pool_is_alive(&ss.modules, u32(i)) {
+			vk.DestroyShaderModule(self.vk_ctx.device, module, nil)
 		}
 	}
 	if ss.inotify_fd != linux.Fd(-1) {
@@ -230,10 +230,10 @@ check_shader_hotreload :: proc(self: ^Engine) {
 		log.infof("Shader changed: %s — reloading pipelines", filename)
 
 		// find all pipelines using this shader and reload them
-		for name, &entry in self.pipeline_registry.entries {
-			handle := ss.name_to_handle[module_name]
-			if entry.descriptor.shader == handle {
-				reload_pipeline(self, name)
+		handle := ss.name_to_handle[module_name]
+		for kind in PipelineKind {
+			if self.pipeline_registry.descriptors[kind].shader == handle {
+				reload_pipeline(self, kind)
 			}
 		}
 	}

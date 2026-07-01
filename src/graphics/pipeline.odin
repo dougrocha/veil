@@ -88,72 +88,59 @@ make_pipeline_descriptor :: proc(
 	return desc
 }
 
-PipelineEntry :: struct {
-	pipeline:   Pipeline,
-	descriptor: PipelineDescriptor,
+PipelineKind :: enum u8 {
+	Shadow,
+	Mesh,
+	Skybox,
+	UI,
+	Particle_Draw,
+	Particle_Compute,
+	Debug_Shadow,
 }
 
 PipelineRegistry :: struct {
-	entries: map[string]PipelineEntry,
+	pipelines:   [PipelineKind]Pipeline,
+	descriptors: [PipelineKind]PipelineDescriptor,
 }
 
-register_pipeline :: proc(self: ^Engine, name: string, desc: PipelineDescriptor) {
-	self.pipeline_registry.entries[name] = PipelineEntry {
-		pipeline   = build_pipeline(&self.vk_ctx, get_shader(self, desc.shader), desc),
-		descriptor = desc,
-	}
+register_pipeline :: proc(self: ^Engine, kind: PipelineKind, desc: PipelineDescriptor) {
+	self.pipeline_registry.pipelines[kind] = build_pipeline(&self.vk_ctx, get_shader(self, desc.shader), desc)
+	self.pipeline_registry.descriptors[kind] = desc
 }
 
-get_pipeline :: proc(reg: ^PipelineRegistry, name: string) -> Pipeline {
-	entry, ok := reg.entries[name]
-	if !ok {
-		log.panicf("get_pipeline: unknown pipeline '%s'", name)
-	}
-	return entry.pipeline
-}
-
-get_pipeline_entry :: proc(reg: ^PipelineRegistry, name: string) -> PipelineEntry {
-	entry, ok := reg.entries[name]
-	if !ok {
-		log.panicf("get_pipeline_entry: unknown pipeline '%s'", name)
-	}
-	return entry
+get_pipeline :: #force_inline proc(reg: ^PipelineRegistry, kind: PipelineKind) -> Pipeline {
+	return reg.pipelines[kind]
 }
 
 destroy_pipeline_registry :: proc(device: vk.Device, reg: ^PipelineRegistry) {
-	for _, entry in reg.entries {
-		vk.DestroyPipeline(device, entry.pipeline.pipeline, nil)
-		vk.DestroyPipelineLayout(device, entry.pipeline.layout, nil)
+	for pipeline in reg.pipelines {
+		vk.DestroyPipeline(device, pipeline.pipeline, nil)
+		vk.DestroyPipelineLayout(device, pipeline.layout, nil)
 	}
-	delete(reg.entries)
 }
 
-reload_pipeline :: proc(self: ^Engine, name: string) {
-	entry, ok := &self.pipeline_registry.entries[name]
-	if !ok {
-		log.errorf("reload_pipeline: unknown pipeline '%s'", name)
-		return
-	}
+reload_pipeline :: proc(self: ^Engine, kind: PipelineKind) {
+	descriptor := &self.pipeline_registry.descriptors[kind]
 
 	// find the shader module name by searching name_to_handle
 	module_name: string
 	for n, h in self.shader_system.name_to_handle {
-		if h == entry.descriptor.shader {
+		if h == descriptor.shader {
 			module_name = n
 			break
 		}
 	}
 
 	if module_name == "" {
-		log.errorf("reload_pipeline '%s': could not find shader module name", name)
+		log.errorf("reload_pipeline '%v': could not find shader module name", kind)
 		return
 	}
 
 	// determine entry points from pipeline type
 	entry_points: []string
-	#partial switch entry.descriptor.type {
+	#partial switch descriptor.type {
 	case .GRAPHICS:
-		if entry.descriptor.fragment_entry != nil {
+		if descriptor.fragment_entry != nil {
 			entry_points = {VERTEX_ENTRY, FRAGMENT_MAIN}
 		} else {
 			entry_points = {VERTEX_ENTRY}
@@ -164,16 +151,17 @@ reload_pipeline :: proc(self: ^Engine, name: string) {
 
 	_, compile_ok := load_shader(self, module_name, entry_points)
 	if !compile_ok {
-		log.errorf("reload_pipeline '%s': shader compilation failed, keeping old pipeline", name)
+		log.errorf("reload_pipeline '%v': shader compilation failed, keeping old pipeline", kind)
 		return
 	}
 
+	pipeline := &self.pipeline_registry.pipelines[kind]
 	vk.DeviceWaitIdle(self.vk_ctx.device)
-	vk.DestroyPipeline(self.vk_ctx.device, entry.pipeline.pipeline, nil)
-	vk.DestroyPipelineLayout(self.vk_ctx.device, entry.pipeline.layout, nil)
+	vk.DestroyPipeline(self.vk_ctx.device, pipeline.pipeline, nil)
+	vk.DestroyPipelineLayout(self.vk_ctx.device, pipeline.layout, nil)
 
-	entry.pipeline = build_pipeline(&self.vk_ctx, get_shader(self, entry.descriptor.shader), entry.descriptor)
-	log.infof("Reloaded pipeline: %s", name)
+	pipeline^ = build_pipeline(&self.vk_ctx, get_shader(self, descriptor.shader), descriptor^)
+	log.infof("Reloaded pipeline: %v", kind)
 }
 
 build_pipeline :: proc(vk_ctx: ^VulkanContext, shader: vk.ShaderModule, desc: PipelineDescriptor) -> Pipeline {

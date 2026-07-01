@@ -2,7 +2,6 @@ package main
 
 import "core:log"
 import "core:math"
-import "core:math/linalg"
 import "core:time"
 
 import sdl "vendor:sdl3"
@@ -200,9 +199,9 @@ main :: proc() {
 					_ = sdl.SetWindowRelativeMouseMode(app.window, mouse_captured)
 				}
 			case .MOUSE_MOTION:
-				if mouse_captured do gfx.camera_process_mouse_movement(&app.engine.camera, ev.motion.xrel, -ev.motion.yrel)
+				if mouse_captured do gfx.camera_process_mouse_movement(&app.engine.scene.camera, ev.motion.xrel, -ev.motion.yrel)
 			case .MOUSE_WHEEL:
-				gfx.camera_process_mouse_scroll(&app.engine.camera, ev.wheel.y)
+				gfx.camera_process_mouse_scroll(&app.engine.scene.camera, ev.wheel.y)
 			case .WINDOW_PIXEL_SIZE_CHANGED:
 				app.width = u32(ev.window.data1)
 				app.height = u32(ev.window.data2)
@@ -224,8 +223,8 @@ main :: proc() {
 
 		light_pos := gfx.Vec3{-2, 4, 0}
 		light_pos2 := gfx.Vec3{2, 4, 0}
-		app.engine.point_lights[0].pos = light_pos
-		app.engine.point_lights[1].pos = light_pos2
+		app.engine.scene.point_lights[0].pos = light_pos
+		app.engine.scene.point_lights[1].pos = light_pos2
 		gfx.get_instance(&app.engine, light_sphere).transform.translation = light_pos
 		gfx.get_instance(&app.engine, light_sphere2).transform.translation = light_pos2
 
@@ -237,11 +236,11 @@ main :: proc() {
 process_input :: proc(engine: ^gfx.Engine, dt: f32) {
 	keys := sdl.GetKeyboardState(nil)
 
-	if keys[sdl.Scancode.W] do gfx.camera_process_keyboard(&engine.camera, .Forward, dt)
-	if keys[sdl.Scancode.S] do gfx.camera_process_keyboard(&engine.camera, .Backward, dt)
-	if keys[sdl.Scancode.A] do gfx.camera_process_keyboard(&engine.camera, .Left, dt)
-	if keys[sdl.Scancode.D] do gfx.camera_process_keyboard(&engine.camera, .Right, dt)
-	if keys[sdl.Scancode.SPACE] do gfx.camera_process_keyboard(&engine.camera, .Up, dt)
-	if keys[sdl.Scancode.LCTRL] do gfx.camera_process_keyboard(&engine.camera, .Down, dt)
+	if keys[sdl.Scancode.W] do gfx.camera_process_keyboard(&engine.scene.camera, .Forward, dt)
+	if keys[sdl.Scancode.S] do gfx.camera_process_keyboard(&engine.scene.camera, .Backward, dt)
+	if keys[sdl.Scancode.A] do gfx.camera_process_keyboard(&engine.scene.camera, .Left, dt)
+	if keys[sdl.Scancode.D] do gfx.camera_process_keyboard(&engine.scene.camera, .Right, dt)
+	if keys[sdl.Scancode.SPACE] do gfx.camera_process_keyboard(&engine.scene.camera, .Up, dt)
+	if keys[sdl.Scancode.LCTRL] do gfx.camera_process_keyboard(&engine.scene.camera, .Down, dt)
 }
 

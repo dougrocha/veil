@@ -23,8 +23,6 @@ INVALID_TEXTURE :: TextureHandle{}
 TextureFlags :: distinct bit_set[TextureFlag;u8]
 TextureFlag :: enum u8 {
 	TRANSPARENT,
-	WRITABLE,
-	EXTERNAL_LIFETIME,
 }
 
 Texture :: struct {
@@ -32,7 +30,6 @@ Texture :: struct {
 	sampler:       vk.Sampler,
 
 	// Texture metadata
-	name:          string,
 	channel_count: u8,
 	flags:         TextureFlags,
 	filter_min:    TextureFilter,
@@ -42,17 +39,21 @@ Texture :: struct {
 	repeat_w:      TextureRepeat,
 }
 
+DefaultTexture :: enum u8 {
+	White,
+	Flat_Normal,
+	Metallic_Roughness,
+	Occlusion,
+}
+
 TextureSystem :: struct {
-	config:                             TextureSystemConfig,
-	default_texture_handle:             TextureHandle,
-	default_metallic_roughness_texture: TextureHandle,
-	default_normal_texture:             TextureHandle,
-	default_occlusion_texture:          TextureHandle,
-	descriptor:                         DescriptorSet,
+	config:      TextureSystemConfig,
+	descriptor:  DescriptorSet,
 
 	// storage pool
-	textures:                           Pool(Texture),
-	texture_map:                        map[string]TextureHandle,
+	textures:    Pool(Texture),
+	texture_map: map[string]TextureHandle,
+	defaults:    [DefaultTexture]TextureHandle,
 }
 
 TextureSystemConfig :: struct {
@@ -91,9 +92,9 @@ texture_destroy :: proc(ctx: ^VulkanContext, t: Texture) {
 
 texture_system_destroy :: proc(engine: ^Engine) {
 	ts := &engine.texture_system
-	for &slot in ts.textures.slots {
-		if slot.alive {
-			texture_destroy(&engine.vk_ctx, slot.value)
+	for &texture, i in ts.textures.values {
+		if pool_is_alive(&ts.textures, u32(i)) {
+			texture_destroy(&engine.vk_ctx, texture)
 		}
 	}
 	pool_destroy(&ts.textures)
@@ -116,37 +117,33 @@ texture_create_builtin :: proc(engine: ^Engine) {
 		t := t
 		texture_upload(&engine.vk_ctx, pixels, &t, format)
 		handle := pool_alloc(&ts.textures, t)
-		ts.texture_map[t.name] = handle
 		write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, handle.index)
 		return handle
 	}
 
-	ts.default_texture_handle = upload_builtin(
+	ts.defaults[.White] = upload_builtin(engine, Texture{gpu = {extent = {1, 1, 1}}, channel_count = 4}, &white)
+	ts.defaults[.Metallic_Roughness] = upload_builtin(
 		engine,
-		Texture{gpu = {extent = {1, 1, 1}}, name = DEFAULT_TEXTURE_NAME, channel_count = 4},
+		Texture{gpu = {extent = {1, 1, 1}}, channel_count = 4},
 		&white,
 	)
-	ts.default_metallic_roughness_texture = upload_builtin(
+	ts.defaults[.Flat_Normal] = upload_builtin(
 		engine,
-		Texture{gpu = {extent = {1, 1, 1}}, name = DEFAULT_METALLIC_ROUGHNESS_TEXTURE_NAME, channel_count = 4},
-		&white,
-	)
-	ts.default_normal_texture = upload_builtin(
-		engine,
-		Texture{gpu = {extent = {1, 1, 1}}, name = DEFAULT_NORMAL_TEXTURE_NAME, channel_count = 4},
+		Texture{gpu = {extent = {1, 1, 1}}, channel_count = 4},
 		&flat_normal,
 		.R8G8B8A8_UNORM,
 	)
-	ts.default_occlusion_texture = upload_builtin(
-		engine,
-		Texture{gpu = {extent = {1, 1, 1}}, name = DEFAULT_OCCLUSION_TEXTURE_NAME, channel_count = 4},
-		&white,
-	)
+	ts.defaults[.Occlusion] = upload_builtin(engine, Texture{gpu = {extent = {1, 1, 1}}, channel_count = 4}, &white)
 }
 
 texture_load :: proc {
 	texture_load_from_file,
 	texture_load_from_memory,
+	texture_load_default,
+}
+
+texture_load_default :: #force_inline proc(engine: ^Engine, which: DefaultTexture) -> TextureHandle {
+	return engine.texture_system.defaults[which]
 }
 
 texture_load_from_file :: proc(engine: ^Engine, path: string, is_srgb: bool = true) -> TextureHandle {
@@ -157,7 +154,7 @@ texture_load_from_file :: proc(engine: ^Engine, path: string, is_srgb: bool = tr
 	ts := &engine.texture_system
 	if ts.textures.count >= ts.config.max_textures_count {
 		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
-		return ts.default_texture_handle
+		return texture_load(engine, DefaultTexture.White)
 	}
 
 	c_path := strings.clone_to_cstring(path)
@@ -168,30 +165,31 @@ texture_load_from_file :: proc(engine: ^Engine, path: string, is_srgb: bool = tr
 	defer stbi.image_free(pixels)
 	if pixels == nil {
 		log.errorf("Failed to read image: %s", stbi.failure_reason())
-		return engine.texture_system.default_texture_handle
+		return engine.texture_system.defaults[.White]
 	}
 
 	log.debugf("Loading texture: %s (%dx%d)", path, width, height)
 
 	flags: TextureFlags
-	pixel_count := int(width * height)
-	for i in 0 ..< pixel_count {
-		if pixels[i * 4 + 3] < 255 {
-			flags += {.TRANSPARENT}
-			break
+	if channels == 4 {
+		pixel_count := int(width * height)
+		for i in 0 ..< pixel_count {
+			if pixels[i * 4 + 3] < 255 {
+				flags += {.TRANSPARENT}
+				break
+			}
 		}
 	}
 
 	texture := Texture {
 		gpu = {extent = {u32(width), u32(height), 1}},
-		name = path,
 		channel_count = 4,
 		flags = flags,
 	}
 	texture_upload(&engine.vk_ctx, pixels, &texture, is_srgb ? .R8G8B8A8_SRGB : .R8G8B8A8_UNORM)
 
 	handle := pool_alloc(&ts.textures, texture)
-	ts.texture_map[texture.name] = handle
+	ts.texture_map[path] = handle
 	write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, handle.index)
 	return handle
 }
@@ -204,7 +202,7 @@ texture_load_from_memory :: proc(engine: ^Engine, name: string, data: []byte, is
 	ts := &engine.texture_system
 	if ts.textures.count >= ts.config.max_textures_count {
 		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
-		return ts.default_texture_handle
+		return texture_load(engine, DefaultTexture.White)
 	}
 
 	width, height, channels: i32
@@ -212,23 +210,24 @@ texture_load_from_memory :: proc(engine: ^Engine, name: string, data: []byte, is
 	defer stbi.image_free(pixels)
 	if pixels == nil {
 		log.errorf("Failed to decode image '%s' from memory: %s", name, stbi.failure_reason())
-		return ts.default_texture_handle
+		return texture_load(engine, DefaultTexture.White)
 	}
 
 	log.debugf("Loading texture from memory: %s (%dx%d)", name, width, height)
 
 	flags: TextureFlags
-	pixel_count := int(width * height)
-	for i in 0 ..< pixel_count {
-		if pixels[i * 4 + 3] < 255 {
-			flags += {.TRANSPARENT}
-			break
+	if channels == 4 {
+		pixel_count := int(width * height)
+		for i in 0 ..< pixel_count {
+			if pixels[i * 4 + 3] < 255 {
+				flags += {.TRANSPARENT}
+				break
+			}
 		}
 	}
 
 	texture := Texture {
 		gpu = {extent = {u32(width), u32(height), 1}},
-		name = name,
 		channel_count = 4,
 		flags = flags,
 	}
@@ -238,19 +237,6 @@ texture_load_from_memory :: proc(engine: ^Engine, name: string, data: []byte, is
 	ts.texture_map[name] = handle
 	write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, handle.index)
 	return handle
-}
-
-texture_resize :: proc(ctx: ^VulkanContext, t: ^Texture, new_extent: vk.Extent3D) {
-	texture_destroy(ctx, t^)
-	t.extent = new_extent
-	texture_create_writable(ctx, t)
-}
-
-texture_create_writable :: proc(ctx: ^VulkanContext, t: ^Texture) {
-	format := channel_count_to_format(t.channel_count, srgb = false)
-	t.gpu = image_create(ctx, t.extent, format, {.TRANSFER_SRC, .TRANSFER_DST, .SAMPLED, .COLOR_ATTACHMENT})
-	t.image_view = image_view_create(ctx, t.image, format, {.COLOR})
-	texture_sampler_create(ctx, t)
 }
 
 // Uploads a texture to the GPU buffer
@@ -302,21 +288,6 @@ texture_upload :: proc(
 	texture_sampler_create(ctx, texture)
 }
 
-texture_get_default :: proc(engine: ^Engine) -> TextureHandle {
-	return engine.texture_system.default_texture_handle
-}
-
-texture_get_default_normal :: proc(engine: ^Engine) -> TextureHandle {
-	return engine.texture_system.default_normal_texture
-}
-
-texture_get_default_metallic_roughness :: proc(engine: ^Engine) -> TextureHandle {
-	return engine.texture_system.default_metallic_roughness_texture
-}
-
-texture_get_default_occlusion :: proc(engine: ^Engine) -> TextureHandle {
-	return engine.texture_system.default_occlusion_texture
-}
 
 texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	if handle, ok := engine.texture_system.texture_map[path]; ok {
@@ -326,7 +297,7 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	ts := &engine.texture_system
 	if ts.textures.count >= ts.config.max_textures_count {
 		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
-		return ts.default_texture_handle
+		return texture_load(engine, DefaultTexture.White)
 	}
 
 	c_path := strings.clone_to_cstring(path)
@@ -337,7 +308,7 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	defer stbi.image_free(pixels)
 	if pixels == nil {
 		log.errorf("Failed to read cubemap image: %s", stbi.failure_reason())
-		return ts.default_texture_handle
+		return texture_load(engine, DefaultTexture.White)
 	}
 
 	log.debugf("Loading cubemap: %s (%dx%d)", path, width, height)

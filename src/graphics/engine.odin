@@ -14,8 +14,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	engine.clock.start_time = time.now()
 	engine.clock.last_frame_time = engine.clock.start_time
-	engine.camera = camera_create({2, 2, 4}, yaw = -90, pitch = -15)
-	engine.ambient_light = AmbientLight {
+	engine.scene.camera = camera_create({2, 2, 4}, yaw = -90, pitch = -15)
+	engine.scene.ambient_light = AmbientLight {
 		color      = {1, 1, 1, 1},
 		brightness = 0.03,
 	}
@@ -29,10 +29,12 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	initialize_vma(&engine.vk_ctx)
 	create_upload_pool(&engine.vk_ctx)
 
-	create_swapchain(engine, app.width, app.height)
-	create_color_resources(engine)
-	create_depth_resources(engine)
-	create_draw_image(engine)
+	swapchain_create(engine, app.width, app.height)
+	engine.swapchain.render_targets = render_targets_create(
+		&engine.vk_ctx,
+		engine.swapchain.extent,
+		engine.vk_ctx.msaa_samples,
+	)
 
 	create_shader_system(engine) or_return
 	shadow_map_handle := load_shader(engine, "shadow_map", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
@@ -50,6 +52,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	create_material_system(engine, {max_material_count = MAX_MATERIALS})
 	create_model_system(engine)
 	create_particle_buffer(engine)
+	create_transforms_buffer(engine)
 
 	engine.global_descriptor = create_descriptor_set(
 		engine,
@@ -59,62 +62,17 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 		},
 		count = MAX_FRAMES_IN_FLIGHT,
 	)
-	SHADOW_MAP_SIZE :: 2048
-	engine.shadow_map.gpu = image_create(
-		&engine.vk_ctx,
-		{SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 1},
-		.D32_SFLOAT,
-		{.DEPTH_STENCIL_ATTACHMENT, .SAMPLED},
-		array_layers = MAX_SHADOW_LIGHTS * 6,
-		image_flags = {.CUBE_COMPATIBLE},
-	)
-	engine.shadow_map.image_view = image_view_create(
-		&engine.vk_ctx,
-		engine.shadow_map.image,
-		.D32_SFLOAT,
-		{.DEPTH},
-		view_type = .CUBE_ARRAY,
-		array_layers = MAX_SHADOW_LIGHTS * 6,
-	)
-
-	for i in 0 ..< MAX_SHADOW_LIGHTS * 6 {
-		engine.shadow_map_face_views[i] = image_view_create(
-			&engine.vk_ctx,
-			engine.shadow_map.image,
-			.D32_SFLOAT,
-			{.DEPTH},
-			base_array_layer = u32(i),
-			array_layers = 1,
-		)
-	}
-
-	// shadow map sampler
-	sampler_info := vk.SamplerCreateInfo {
-		sType         = .SAMPLER_CREATE_INFO,
-		magFilter     = .LINEAR,
-		minFilter     = .LINEAR,
-		mipmapMode    = .LINEAR,
-		addressModeU  = .CLAMP_TO_EDGE,
-		addressModeV  = .CLAMP_TO_EDGE,
-		addressModeW  = .CLAMP_TO_EDGE,
-		mipLodBias    = 0.0,
-		maxAnisotropy = 1.0,
-		minLod        = 0,
-		maxLod        = 1.0,
-		borderColor   = .FLOAT_OPAQUE_WHITE,
-	}
-	vk_check(vk.CreateSampler(engine.vk_ctx.device, &sampler_info, nil, &engine.shadow_map.sampler))
-	engine.shadow_map.flags = {.WRITABLE, .EXTERNAL_LIFETIME}
+	engine.shadow_atlas = shadow_atlas_create(&engine.vk_ctx, SHADOW_MAP_SIZE)
 	shadow_map_image_info := vk.DescriptorImageInfo {
-		sampler     = engine.shadow_map.sampler,
-		imageView   = engine.shadow_map.image_view,
+		sampler     = engine.shadow_atlas.sampler,
+		imageView   = engine.shadow_atlas.cube_array_view,
 		imageLayout = .DEPTH_STENCIL_READ_ONLY_OPTIMAL,
 	}
 	write_descriptor_image(&engine.vk_ctx, &engine.global_descriptor, 0, &shadow_map_image_info)
 
 	register_pipeline(
 		engine,
-		"shadow_map",
+		.Shadow,
 		make_pipeline_descriptor(
 			shader = shadow_map_handle,
 			cull_mode = nil,
@@ -128,7 +86,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	register_pipeline(
 		engine,
-		"ui",
+		.UI,
 		make_pipeline_descriptor(
 			shader = ui_handle,
 			cull_mode = {},
@@ -140,7 +98,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	register_pipeline(
 		engine,
-		"mesh",
+		.Mesh,
 		make_pipeline_descriptor(
 			shader = mesh_handle,
 			blend = .Alpha,
@@ -151,7 +109,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	register_pipeline(
 		engine,
-		"particle_draw",
+		.Particle_Draw,
 		make_pipeline_descriptor(
 			shader = particle_handle,
 			topology = .POINT_LIST,
@@ -166,7 +124,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	register_pipeline(
 		engine,
-		"particle",
+		.Particle_Compute,
 		make_pipeline_descriptor(
 			shader = particle_handle,
 			type = .COMPUTE,
@@ -177,7 +135,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	register_pipeline(
 		engine,
-		"skybox",
+		.Skybox,
 		make_pipeline_descriptor(
 			shader = skybox_handle,
 			cull_mode = {},
@@ -191,7 +149,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	register_pipeline(
 		engine,
-		"debug_shadow_map",
+		.Debug_Shadow,
 		make_pipeline_descriptor(
 			shader = debug_shadow_map_handle,
 			cull_mode = {},
@@ -215,10 +173,7 @@ engine_shutdown :: proc(self: ^Engine) {
 	destroy_material_system(self)
 
 	destroy_descriptor_set(self, &self.global_descriptor)
-	for view in self.shadow_map_face_views[:MAX_SHADOW_LIGHTS * 6] {
-		vk.DestroyImageView(self.vk_ctx.device, view, nil)
-	}
-	texture_destroy(&self.vk_ctx, self.shadow_map)
+	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_atlas)
 
 	destroy_pipeline_registry(self.vk_ctx.device, &self.pipeline_registry)
 
@@ -228,11 +183,12 @@ engine_shutdown :: proc(self: ^Engine) {
 	for &res in self.frame_resources {
 		destroy_buffer(&self.vk_ctx, res.scene_data_buffer)
 		destroy_buffer(&self.vk_ctx, res.particle_buffer)
+		destroy_buffer(&self.vk_ctx, res.transforms_buffer)
 		vk.DestroySemaphore(self.vk_ctx.device, res.image_acquired_semaphore, nil)
 		vk.DestroySemaphore(self.vk_ctx.device, res.render_complete_semaphore, nil)
 		vk.DestroyCommandPool(self.vk_ctx.device, res.command_pool, nil)
 	}
-	cleanup_swapchain(self)
+	swapchain_destroy(self)
 
 	destroy_vulkan_context(&self.vk_ctx)
 }
@@ -249,17 +205,22 @@ engine_render :: proc(app: ^App) {
 	// recreate swapchain
 	if app.engine.swapchain.require_recreate {
 		vk.DeviceWaitIdle(app.engine.vk_ctx.device)
-		cleanup_swapchain(&app.engine)
-		create_swapchain(&app.engine, app.width, app.height)
-		create_color_resources(&app.engine)
-		create_depth_resources(&app.engine)
-		create_draw_image(&app.engine)
+		render_targets_destroy(&app.engine.vk_ctx, &app.engine.swapchain.render_targets)
+		delete(app.engine.swapchain.images)
+		vk.DestroySwapchainKHR(app.engine.vk_ctx.device, app.engine.swapchain.handle, nil)
+		swapchain_create(&app.engine, app.width, app.height)
+		app.engine.swapchain.render_targets = render_targets_create(
+			&app.engine.vk_ctx,
+			app.engine.swapchain.extent,
+			app.engine.vk_ctx.msaa_samples,
+		)
 		app.engine.swapchain.require_recreate = false
 	}
 
 	// wait until next frame can be drawn on
-	if app.engine.next_signal_value >= MAX_FRAMES_IN_FLIGHT {
-		wait_value := app.engine.next_signal_value - MAX_FRAMES_IN_FLIGHT + 1
+	next_signal_value := app.engine.frame_index + 1
+	if next_signal_value >= MAX_FRAMES_IN_FLIGHT {
+		wait_value := next_signal_value - MAX_FRAMES_IN_FLIGHT + 1
 		wait_info := vk.SemaphoreWaitInfo {
 			sType          = .SEMAPHORE_WAIT_INFO,
 			semaphoreCount = 1,
@@ -269,7 +230,7 @@ engine_render :: proc(app: ^App) {
 		vk_check(vk.WaitSemaphores(app.engine.vk_ctx.device, &wait_info, max(u64)))
 	}
 
-	current_frame_res := &app.engine.frame_resources[current_frame_res_index(&app.engine)]
+	current_frame_res := current_frame(&app.engine)
 
 	// get the next swapchain image we can write too
 	//
@@ -290,10 +251,10 @@ engine_render :: proc(app: ^App) {
 		app.engine.swapchain.require_recreate = true
 	}
 
-	app.engine.next_signal_value += 1
-	signal_value := app.engine.next_signal_value
+	signal_value := next_signal_value
 
 	update_scene_data_buffer(&app.engine)
+	update_transforms_buffer(&app.engine)
 	check_shader_hotreload(&app.engine)
 
 	record_command_buffer(&app.engine)
@@ -368,8 +329,12 @@ current_frame_res_index :: proc(engine: ^Engine) -> u64 {
 	return engine.frame_index % MAX_FRAMES_IN_FLIGHT
 }
 
+current_frame :: #force_inline proc(engine: ^Engine) -> ^FrameResources {
+	return &engine.frame_resources[current_frame_res_index(engine)]
+}
+
 dispatch_particles :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
-	pipeline := get_pipeline(&engine.pipeline_registry, "particle")
+	pipeline := get_pipeline(&engine.pipeline_registry, .Particle_Compute)
 
 	frame_res_index := current_frame_res_index(engine)
 	last_frame := (frame_res_index + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT
@@ -398,7 +363,7 @@ dispatch_particles :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 }
 
 draw_particles :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
-	pipeline := get_pipeline(&engine.pipeline_registry, "particle_draw")
+	pipeline := get_pipeline(&engine.pipeline_registry, .Particle_Draw)
 
 	frame_res_index := current_frame_res_index(engine)
 	particle_pc := ParticlePushConstants {
@@ -421,21 +386,29 @@ CUBE_FACE_DIRS := [6]struct {
 	{{0, 0, -1}, {0, -1, 0}},
 }
 
+update_transforms_buffer :: proc(engine: ^Engine) {
+	transforms := (^GpuTransform)(current_frame(engine).transforms_buffer.alloc_info.mapped_data)
+	for &instance, i in engine.scene.instances.values {
+		if !pool_is_alive(&engine.scene.instances, u32(i)) do continue
+		model := transform_matrix(instance.transform)
+		normal := linalg.transpose(linalg.inverse(model))
+
+		mem.ptr_offset(transforms, i)^ = GpuTransform {
+			model         = model,
+			normal_matrix = normal,
+		}
+	}
+}
+
 draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer, light_i: u32, face_i: u32) {
-	shadow_map_pipeline := get_pipeline(&engine.pipeline_registry, "shadow_map")
+	shadow_map_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow)
 
 	vk.CmdBindPipeline(cmd, .GRAPHICS, shadow_map_pipeline.pipeline)
 	vk.CmdSetDepthBias(cmd, 0, 0, 0)
 
-	transforms := (^GpuTransform)(engine.model_system.transforms_buffer.alloc_info.mapped_data)
-	for &slot, slot_i in engine.model_system.instances.slots {
-		if !slot.alive do continue
-		instance := &slot.value
-
-		mem.ptr_offset(transforms, slot_i)^ = GpuTransform {
-			model         = transform_matrix(instance.transform),
-			normal_matrix = {},
-		}
+	frame := current_frame(engine)
+	for &instance, slot_i in engine.scene.instances.values {
+		if !pool_is_alive(&engine.scene.instances, u32(slot_i)) do continue
 
 		model_ptr := &pool_get(&engine.model_system.models, instance.model)^
 
@@ -444,9 +417,9 @@ draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer, light_i: u32
 			if mat.alpha_mode == .Blend do continue
 
 			pc := ShadowPushConstants {
-				scene_data       = engine.frame_resources[current_frame_res_index(engine)].scene_data_buffer.ptr,
+				scene_data       = frame.scene_data_buffer.ptr,
 				vertex_buffer    = mesh.vertex_address,
-				transform_buffer = engine.model_system.transforms_buffer.ptr,
+				transform_buffer = frame.transforms_buffer.ptr,
 				instance_index   = u32(slot_i),
 				face_index       = face_i,
 				light_index      = light_i,
@@ -466,7 +439,7 @@ draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer, light_i: u32
 }
 
 draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
-	mesh_pipeline := get_pipeline(&engine.pipeline_registry, "mesh")
+	mesh_pipeline := get_pipeline(&engine.pipeline_registry, .Mesh)
 
 	vk.CmdBindPipeline(cmd, .GRAPHICS, mesh_pipeline.pipeline)
 	frame_idx := current_frame_res_index(engine)
@@ -476,34 +449,25 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	}
 	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, mesh_pipeline.layout, 0, 2, &sets[0], 0, nil)
 
-	transforms := (^GpuTransform)(engine.model_system.transforms_buffer.alloc_info.mapped_data)
-	for &slot, i in engine.model_system.instances.slots {
-		if !slot.alive do continue
-		instance := &slot.value
-		model := transform_matrix(instance.transform)
-		normal := linalg.transpose(linalg.inverse(model))
-
-		mem.ptr_offset(transforms, i)^ = GpuTransform {
-			model         = model,
-			normal_matrix = normal,
-		}
-	}
-
-	draw_instance :: proc(engine: ^Engine, cmd: vk.CommandBuffer, i: int) {
-		instance := &engine.model_system.instances.slots[i].value
+	draw_instance :: proc(engine: ^Engine, cmd: vk.CommandBuffer, i: int, blend: bool) {
+		instance := &engine.scene.instances.values[i]
 		model := &pool_get(&engine.model_system.models, instance.model)^
+		frame := current_frame(engine)
 		for &mesh in model.meshes {
+			mat := pool_get(&engine.material_system.materials, mesh.material)
+			if (mat.alpha_mode == .Blend) != blend do continue
+
 			pc := PushConstants {
-				scene_data       = engine.frame_resources[current_frame_res_index(engine)].scene_data_buffer.ptr,
+				scene_data       = frame.scene_data_buffer.ptr,
 				vertex_buffer    = mesh.vertex_address,
 				material_buffer  = engine.material_system.buffer.ptr,
-				transform_buffer = engine.model_system.transforms_buffer.ptr,
+				transform_buffer = frame.transforms_buffer.ptr,
 				material_index   = u32(mesh.material.index),
 				instance_index   = u32(i),
 			}
 			vk.CmdPushConstants(
 				cmd,
-				get_pipeline(&engine.pipeline_registry, "mesh").layout,
+				get_pipeline(&engine.pipeline_registry, .Mesh).layout,
 				{.VERTEX, .FRAGMENT},
 				0,
 				size_of(PushConstants),
@@ -515,14 +479,13 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	}
 
 	// opaque + mask
-	for &slot, i in engine.model_system.instances.slots {
-		if !slot.alive do continue
-		instance := &slot.value
+	for &instance, i in engine.scene.instances.values {
+		if !pool_is_alive(&engine.scene.instances, u32(i)) do continue
 		model := &pool_get(&engine.model_system.models, instance.model)^
 		for &mesh in model.meshes {
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode == .Blend do continue
-			draw_instance(engine, cmd, i)
+			draw_instance(engine, cmd, i, false)
 			break
 		}
 	}
@@ -533,15 +496,14 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		dist:  f32,
 	}
 	transparent := make([dynamic]TransparentEntry, context.temp_allocator)
-	for &slot, i in engine.model_system.instances.slots {
-		if !slot.alive do continue
-		instance := &slot.value
+	for &instance, i in engine.scene.instances.values {
+		if !pool_is_alive(&engine.scene.instances, u32(i)) do continue
 		model := &pool_get(&engine.model_system.models, instance.model)^
 		for &mesh in model.meshes {
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode != .Blend do continue
 			pos := instance.transform.translation
-			cam := engine.camera.position
+			cam := engine.scene.camera.position
 			dist := linalg.length(pos - cam)
 			append(&transparent, TransparentEntry{index = i, dist = dist})
 			break
@@ -550,7 +512,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 
 	slice.sort_by(transparent[:], proc(a, b: TransparentEntry) -> bool {return a.dist > b.dist})
 	for entry in transparent {
-		draw_instance(engine, cmd, entry.index)
+		draw_instance(engine, cmd, entry.index, true)
 	}
 }
 
@@ -565,7 +527,7 @@ set_skybox_texture :: proc(engine: ^Engine, handle: TextureHandle) {
 }
 
 draw_skybox :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
-	pipeline := get_pipeline(&engine.pipeline_registry, "skybox")
+	pipeline := get_pipeline(&engine.pipeline_registry, .Skybox)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
 	skybox_frame_idx := current_frame_res_index(engine)
 	vk.CmdBindDescriptorSets(
@@ -578,9 +540,8 @@ draw_skybox :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		0,
 		nil,
 	)
-	frame_idx := skybox_frame_idx
 	pc := SkyboxPushConstants {
-		scene_data = engine.frame_resources[frame_idx].scene_data_buffer.ptr,
+		scene_data = current_frame(engine).scene_data_buffer.ptr,
 	}
 	vk.CmdPushConstants(cmd, pipeline.layout, {.VERTEX, .FRAGMENT}, 0, size_of(SkyboxPushConstants), &pc)
 	vk.CmdDraw(cmd, 3, 1, 0, 0)
@@ -588,8 +549,8 @@ draw_skybox :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 
 draw_debug_shadow_map :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	DEBUG_SIZE :: 128
-	pipeline := get_pipeline(&engine.pipeline_registry, "debug_shadow_map")
-	begin_render_pass(engine, cmd, PassConfig{color_target = &engine.swapchain.draw_image.gpu, load_op = .LOAD})
+	pipeline := get_pipeline(&engine.pipeline_registry, .Debug_Shadow)
+	begin_render_pass(engine, cmd, PassConfig{color_target = &engine.swapchain.render_targets.draw, load_op = .LOAD})
 	vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
 	vk.CmdBindDescriptorSets(
 		cmd,
@@ -601,9 +562,7 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		0,
 		nil,
 	)
-	scene_data := (^SceneData)(
-		engine.frame_resources[current_frame_res_index(engine)].scene_data_buffer.alloc_info.mapped_data,
-	)
+	scene_data := (^SceneData)(current_frame(engine).scene_data_buffer.alloc_info.mapped_data)
 
 	DebugPC :: struct {
 		near, far:   f32,
@@ -632,7 +591,7 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 }
 
 draw_ui :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
-	pipeline := get_pipeline(&engine.pipeline_registry, "ui")
+	pipeline := get_pipeline(&engine.pipeline_registry, .UI)
 	vk.CmdBindPipeline(cmd, .GRAPHICS, pipeline.pipeline)
 	vk.CmdDraw(cmd, 6, 1, 0, 0)
 }
@@ -640,13 +599,13 @@ draw_ui :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 draw_scene :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	// dispatch_particles(engine, cmd)
 
-	shadow_light_count := min(int(engine.point_light_count), MAX_SHADOW_LIGHTS)
+	shadow_light_count := min(int(engine.scene.point_light_count), MAX_SHADOW_LIGHTS)
 
 	// Always transition all MAX_SHADOW_LIGHTS*6 layers so unused layers are in the
 	// expected layout when the mesh pass samples the descriptor.
 	transition_image_layout(
 		cmd,
-		engine.shadow_map.image,
+		engine.shadow_atlas.image,
 		.UNDEFINED,
 		.DEPTH_ATTACHMENT_OPTIMAL,
 		{},
@@ -663,8 +622,8 @@ draw_scene :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 				engine,
 				cmd,
 				PassConfig {
-					depth_target = &engine.shadow_map.gpu,
-					depth_view = engine.shadow_map_face_views[view_i],
+					depth_target = &engine.shadow_atlas.gpu_image,
+					depth_view = engine.shadow_atlas.face_views[view_i],
 					load_op = .CLEAR,
 					store_depth = true,
 					skip_depth_transition = true,
@@ -677,7 +636,7 @@ draw_scene :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 
 	transition_image_layout(
 		cmd,
-		engine.shadow_map.image,
+		engine.shadow_atlas.image,
 		.DEPTH_ATTACHMENT_OPTIMAL,
 		.DEPTH_STENCIL_READ_ONLY_OPTIMAL,
 		{.DEPTH_STENCIL_ATTACHMENT_WRITE},
@@ -692,9 +651,9 @@ draw_scene :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		engine,
 		cmd,
 		PassConfig {
-			color_target = &engine.swapchain.color_image.gpu,
-			resolve_target = &engine.swapchain.draw_image.gpu,
-			depth_target = &engine.swapchain.depth_image.gpu,
+			color_target = &engine.swapchain.render_targets.color,
+			resolve_target = &engine.swapchain.render_targets.draw,
+			depth_target = &engine.swapchain.render_targets.depth,
 			clear_color = {0.1, 0.1, 0.1, 1},
 			load_op = .CLEAR,
 		},
@@ -712,7 +671,7 @@ draw_scene :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 }
 
 record_command_buffer :: proc(engine: ^Engine) {
-	current_frame_res := &engine.frame_resources[current_frame_res_index(engine)]
+	current_frame_res := current_frame(engine)
 
 	vk.ResetCommandPool(engine.vk_ctx.device, current_frame_res.command_pool, {})
 
@@ -728,7 +687,7 @@ record_command_buffer :: proc(engine: ^Engine) {
 
 	transition_image_layout(
 		cmd,
-		engine.swapchain.draw_image.image,
+		engine.swapchain.render_targets.draw.image,
 		.COLOR_ATTACHMENT_OPTIMAL,
 		.TRANSFER_SRC_OPTIMAL,
 		{.COLOR_ATTACHMENT_WRITE},
@@ -752,7 +711,7 @@ record_command_buffer :: proc(engine: ^Engine) {
 
 	copy_image_to_image(
 		cmd,
-		engine.swapchain.draw_image.image,
+		engine.swapchain.render_targets.draw.image,
 		engine.swapchain.images[engine.current_image_index],
 		engine.swapchain.extent,
 		engine.swapchain.extent,

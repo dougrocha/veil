@@ -38,35 +38,30 @@ Instance :: struct {
 MAX_MODEL_INSTANCES :: 4096
 
 ModelSystem :: struct {
-	models:            Pool(Model),
-	model_map:         map[string]ModelHandle,
-	instances:         Pool(Instance),
-	transforms_buffer: GpuBuffer,
+	models:    Pool(Model),
+	model_map: map[string]ModelHandle,
 }
 
 create_model_system :: proc(engine: ^Engine) {
 	engine.model_system.models = pool_init(1024, Model)
 	engine.model_system.model_map = make(map[string]ModelHandle)
-	engine.model_system.instances = pool_init(MAX_MODEL_INSTANCES, Instance)
-	total_size := vk.DeviceSize(size_of(GpuTransform) * MAX_MODEL_INSTANCES)
-	engine.model_system.transforms_buffer = create_buffer(&engine.vk_ctx, total_size, .MappedStorage)
+	engine.scene.instances = pool_init(MAX_MODEL_INSTANCES, Instance)
 }
 
 destroy_model_system :: proc(engine: ^Engine) {
 	ms := &engine.model_system
-	for &slot in ms.models.slots {
-		if slot.alive {
-			for &mesh in slot.value.meshes {
+	for &model, i in ms.models.values {
+		if pool_is_alive(&ms.models, u32(i)) {
+			for &mesh in model.meshes {
 				vma.destroy_buffer(engine.vk_ctx.vma_allocator, mesh.vertex_buffer, mesh.vertex_allocation)
 				vma.destroy_buffer(engine.vk_ctx.vma_allocator, mesh.index_buffer, mesh.index_allocation)
 			}
-			delete(slot.value.meshes)
+			delete(model.meshes)
 		}
 	}
-	destroy_buffer(&engine.vk_ctx, ms.transforms_buffer)
 	pool_destroy(&ms.models)
 	delete(ms.model_map)
-	pool_destroy(&ms.instances)
+	pool_destroy(&engine.scene.instances)
 }
 
 load_model :: proc(engine: ^Engine, path: string, material: MaterialHandle = INVALID_MATERIAL) -> ModelHandle {
@@ -110,7 +105,6 @@ load_model :: proc(engine: ^Engine, path: string, material: MaterialHandle = INV
 					obj.attrib.texcoords[2 * index.vt_idx + 0],
 					1.0 - obj.attrib.texcoords[2 * index.vt_idx + 1],
 				},
-				color  = {1, 1, 1},
 				normal = normal,
 			}
 
@@ -165,9 +159,9 @@ register_model :: proc(
 }
 
 get_instance :: proc(engine: ^Engine, handle: InstanceHandle) -> ^Instance {
-	return pool_get(&engine.model_system.instances, handle)
+	return pool_get(&engine.scene.instances, handle)
 }
 
 spawn :: proc(engine: ^Engine, model: ModelHandle, transform: Transform) -> InstanceHandle {
-	return pool_alloc(&engine.model_system.instances, Instance{model = model, transform = transform})
+	return pool_alloc(&engine.scene.instances, Instance{model = model, transform = transform})
 }
