@@ -250,7 +250,7 @@ texture_upload :: proc(
 	h := texture.extent.height
 	image_size := vk.DeviceSize(w * h * u32(texture.channel_count))
 
-	staging := buffer_create(ctx, image_size, .Staging)
+	staging := buffer_create(u8, ctx, int(image_size), .Staging)
 	defer buffer_destroy(ctx, staging)
 	mem.copy(staging.alloc_info.mapped_data, pixels, int(image_size))
 
@@ -328,7 +328,7 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 		{3, 1}, // -Z
 	}
 
-	staging := buffer_create(&engine.vk_ctx, face_size * 6, .Staging)
+	staging := buffer_create(u8, &engine.vk_ctx, int(face_size * 6), .Staging)
 	defer buffer_destroy(&engine.vk_ctx, staging)
 
 	src := ([^]u8)(pixels)

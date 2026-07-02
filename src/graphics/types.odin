@@ -36,9 +36,9 @@ FrameResources :: struct {
 	command_buffer:            vk.CommandBuffer,
 	image_acquired_semaphore:  vk.Semaphore,
 	render_complete_semaphore: vk.Semaphore,
-	scene_data_buffer:         GpuBuffer,
-	particle_buffer:           GpuBuffer,
-	transforms_buffer:         GpuBuffer,
+	scene_data_buffer:         GpuBuffer(SceneData),
+	particle_buffer:           GpuBuffer(Particle),
+	transforms_buffer:         GpuBuffer(GpuTransform),
 }
 
 Clock :: struct {
@@ -189,31 +189,31 @@ Vertex :: struct {
 }
 
 ShadowPushConstants :: struct {
-	scene_data:       vk.DeviceAddress,
-	vertex_buffer:    vk.DeviceAddress,
-	transform_buffer: vk.DeviceAddress,
+	scene_data:       GPUPtr(SceneData),
+	vertex_buffer:    GPUPtr(Vertex),
+	transform_buffer: GPUPtr(GpuTransform),
 	instance_index:   u32,
 	face_index:       u32,
 	light_index:      u32,
 }
 
 PushConstants :: struct {
-	scene_data:       vk.DeviceAddress,
-	vertex_buffer:    vk.DeviceAddress,
-	material_buffer:  vk.DeviceAddress,
-	transform_buffer: vk.DeviceAddress,
+	scene_data:       GPUPtr(SceneData),
+	vertex_buffer:    GPUPtr(Vertex),
+	material_buffer:  GPUPtr(GpuMaterial),
+	transform_buffer: GPUPtr(GpuTransform),
 	material_index:   u32,
 	instance_index:   u32,
 }
 
 SkyboxPushConstants :: struct {
-	scene_data: vk.DeviceAddress,
+	scene_data: GPUPtr(SceneData),
 }
 
 ParticlePushConstants :: struct {
-	scene_data:    vk.DeviceAddress,
-	particles_in:  vk.DeviceAddress,
-	particles_out: vk.DeviceAddress,
+	scene_data:    GPUPtr(SceneData),
+	particles_in:  GPUPtr(Particle),
+	particles_out: GPUPtr(Particle),
 	delta_time:    f32,
 }
 

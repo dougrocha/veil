@@ -11,7 +11,7 @@ import vk "vendor:vulkan"
 Mesh :: struct {
 	vertex_buffer:     vk.Buffer,
 	vertex_allocation: vma.Allocation,
-	vertex_address:    vk.DeviceAddress,
+	vertex_address:    GPUPtr(Vertex),
 	index_buffer:      vk.Buffer,
 	index_allocation:  vma.Allocation,
 	index_count:       u32,
@@ -129,13 +129,8 @@ register_model :: proc(
 	indices: []u32,
 	material: MaterialHandle = INVALID_MATERIAL,
 ) -> ModelHandle {
-	vertex_buf := buffer_upload(
-		&engine.vk_ctx,
-		raw_data(vertices),
-		vk.DeviceSize(size_of(Vertex) * len(vertices)),
-		.Storage,
-	)
-	index_buf := buffer_upload(&engine.vk_ctx, raw_data(indices), vk.DeviceSize(size_of(u32) * len(indices)), .Index)
+	vertex_buf := buffer_upload(&engine.vk_ctx, vertices, .Storage)
+	index_buf := buffer_upload(&engine.vk_ctx, indices, .Index)
 
 	material_handle := get_default_material(engine) if material == INVALID_MATERIAL else material
 

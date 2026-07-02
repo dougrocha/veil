@@ -7,11 +7,15 @@ import "core:mem"
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
-GpuBuffer :: struct {
+GpuBuffer :: struct($T: typeid) {
 	buffer:     vk.Buffer,
 	alloc:      vma.Allocation,
 	alloc_info: vma.Allocation_Info,
-	ptr:        vk.DeviceAddress,
+	ptr:        GPUPtr(T),
+}
+
+GPUPtr :: struct($T: typeid) {
+	address: vk.DeviceAddress,
 }
 
 Buffer_Flags :: struct {
@@ -37,10 +41,11 @@ BUFFER_FLAGS := [BufferKind]Buffer_Flags {
 	.ParticleSSBO  = {{.TRANSFER_DST, .STORAGE_BUFFER, .VERTEX_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},
 }
 
-buffer_create :: proc(ctx: ^VulkanContext, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
+buffer_create :: proc($T: typeid, ctx: ^VulkanContext, count: int, kind: BufferKind) -> GpuBuffer(T) {
 	buffer_flags := BUFFER_FLAGS[kind]
+	size := vk.DeviceSize(size_of(T) * count)
 
-	gpu_buf: GpuBuffer
+	gpu_buf: GpuBuffer(T)
 	vk_check(
 		vma.create_buffer(
 			ctx.vma_allocator,
@@ -57,23 +62,25 @@ buffer_create :: proc(ctx: ^VulkanContext, size: vk.DeviceSize, kind: BufferKind
 			sType  = .BUFFER_DEVICE_ADDRESS_INFO,
 			buffer = gpu_buf.buffer,
 		}
-		gpu_buf.ptr = vk.GetBufferDeviceAddress(ctx.device, &addr_info)
+		gpu_buf.ptr.address = vk.GetBufferDeviceAddress(ctx.device, &addr_info)
 	}
 
 	return gpu_buf
 }
 
-buffer_destroy :: proc(ctx: ^VulkanContext, buffer: GpuBuffer) {
+buffer_destroy :: proc(ctx: ^VulkanContext, buffer: GpuBuffer($T)) {
 	vma.destroy_buffer(ctx.vma_allocator, buffer.buffer, buffer.alloc)
 }
 
-buffer_upload :: proc(ctx: ^VulkanContext, data: rawptr, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
-	staging := buffer_create(ctx, size, .Staging)
+buffer_upload :: proc(ctx: ^VulkanContext, data: []$T, kind: BufferKind) -> GpuBuffer(T) {
+	size := vk.DeviceSize(size_of(T) * len(data))
+
+	staging := buffer_create(T, ctx, len(data), .Staging)
 	defer buffer_destroy(ctx, staging)
 
-	mem.copy(staging.alloc_info.mapped_data, data, int(size))
+	mem.copy(staging.alloc_info.mapped_data, raw_data(data), int(size))
 
-	dest := buffer_create(ctx, size, kind)
+	dest := buffer_create(T, ctx, len(data), kind)
 	buffer_copy(ctx, staging.buffer, dest.buffer, size)
 	return dest
 }
@@ -88,16 +95,19 @@ buffer_copy :: proc(ctx: ^VulkanContext, src, dst: vk.Buffer, size: vk.DeviceSiz
 }
 
 create_scene_data_buffer :: proc(engine: ^Engine) {
-	size := vk.DeviceSize(size_of(SceneData))
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.frame_resources[i].scene_data_buffer = buffer_create(&engine.vk_ctx, size, .MappedUniform)
+		engine.frame_resources[i].scene_data_buffer = buffer_create(SceneData, &engine.vk_ctx, 1, .MappedUniform)
 	}
 }
 
 create_transforms_buffer :: proc(engine: ^Engine) {
-	size := vk.DeviceSize(size_of(GpuTransform) * MAX_MODEL_INSTANCES)
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.frame_resources[i].transforms_buffer = buffer_create(&engine.vk_ctx, size, .MappedStorage)
+		engine.frame_resources[i].transforms_buffer = buffer_create(
+			GpuTransform,
+			&engine.vk_ctx,
+			MAX_MODEL_INSTANCES,
+			.MappedStorage,
+		)
 	}
 }
 
@@ -115,14 +125,8 @@ create_particle_buffer :: proc(engine: ^Engine) {
 		p.color = {brightness * 0.6, brightness * 0.8, brightness, 0.8}
 	}
 
-	size := vk.DeviceSize(size_of(Particle) * len(particles))
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.frame_resources[i].particle_buffer = buffer_upload(
-			&engine.vk_ctx,
-			raw_data(particles),
-			size,
-			.ParticleSSBO,
-		)
+		engine.frame_resources[i].particle_buffer = buffer_upload(&engine.vk_ctx, particles, .ParticleSSBO)
 	}
 }
 

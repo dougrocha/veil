@@ -42,7 +42,7 @@ MaterialSystemConfig :: struct {
 MaterialSystem :: struct {
 	materials:    Pool(Material),
 	material_map: map[string]MaterialHandle,
-	buffer:       GpuBuffer,
+	buffer:       GpuBuffer(GpuMaterial),
 	config:       MaterialSystemConfig,
 }
 
@@ -51,8 +51,12 @@ create_material_system :: proc(engine: ^Engine, config: MaterialSystemConfig) {
 	engine.material_system.materials = pool_init(config.max_material_count, Material)
 	engine.material_system.material_map = make(map[string]MaterialHandle)
 
-	total_size := vk.DeviceSize(size_of(GpuMaterial) * u64(config.max_material_count))
-	engine.material_system.buffer = buffer_create(&engine.vk_ctx, total_size, .MappedStorage)
+	engine.material_system.buffer = buffer_create(
+		GpuMaterial,
+		&engine.vk_ctx,
+		int(config.max_material_count),
+		.MappedStorage,
+	)
 
 	create_default_material(engine)
 }
