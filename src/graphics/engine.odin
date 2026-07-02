@@ -407,12 +407,20 @@ draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer, light_i: u32
 	vk.CmdSetDepthBias(cmd, 0, 0, 0)
 
 	frame := current_frame(engine)
+
+	scene_data := (^SceneData)(current_frame(engine).scene_data_buffer.alloc_info.mapped_data)
+	frustum := frustum_from_view_proj(scene_data.light_view_proj[light_i][face_i])
+
 	for &instance, slot_i in engine.scene.instances.values {
 		if !pool_is_alive(&engine.scene.instances, u32(slot_i)) do continue
 
-		model_ptr := &pool_get(&engine.model_system.models, instance.model)^
+		model := &pool_get(&engine.model_system.models, instance.model)^
 
-		for &mesh in model_ptr.meshes {
+		if !volume_is_on_frustum(frustum, model.bounds, instance.transform) {
+			continue
+		}
+
+		for &mesh in model.meshes {
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode == .Blend do continue
 
@@ -439,6 +447,8 @@ draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer, light_i: u32
 }
 
 draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
+	engine.drawn_instance_count = 0
+
 	mesh_pipeline := get_pipeline(&engine.pipeline_registry, .Mesh)
 
 	vk.CmdBindPipeline(cmd, .GRAPHICS, mesh_pipeline.pipeline)
@@ -449,9 +459,23 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	}
 	vk.CmdBindDescriptorSets(cmd, .GRAPHICS, mesh_pipeline.layout, 0, 2, &sets[0], 0, nil)
 
-	draw_instance :: proc(engine: ^Engine, cmd: vk.CommandBuffer, i: int, blend: bool) {
+	frustum := frustum_create_from_camera(
+		&engine.scene.camera,
+		f32(engine.swapchain.extent.width) / f32(engine.swapchain.extent.height),
+		linalg.to_radians(engine.scene.camera.zoom),
+		0.1,
+		5000.0,
+	)
+
+	draw_instance :: proc(engine: ^Engine, frustum: Frustum, cmd: vk.CommandBuffer, i: int, blend: bool) {
 		instance := &engine.scene.instances.values[i]
-		model := &pool_get(&engine.model_system.models, instance.model)^
+		model := pool_get(&engine.model_system.models, instance.model)
+
+		if !volume_is_on_frustum(frustum, model.bounds, instance.transform) {
+			return
+		}
+		engine.drawn_instance_count += 1
+
 		frame := current_frame(engine)
 		for &mesh in model.meshes {
 			mat := pool_get(&engine.material_system.materials, mesh.material)
@@ -485,7 +509,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		for &mesh in model.meshes {
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode == .Blend do continue
-			draw_instance(engine, cmd, i, false)
+			draw_instance(engine, frustum, cmd, i, false)
 			break
 		}
 	}
@@ -512,7 +536,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 
 	slice.sort_by(transparent[:], proc(a, b: TransparentEntry) -> bool {return a.dist > b.dist})
 	for entry in transparent {
-		draw_instance(engine, cmd, entry.index, true)
+		draw_instance(engine, frustum, cmd, entry.index, true)
 	}
 }
 

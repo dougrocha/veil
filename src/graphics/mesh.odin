@@ -1,6 +1,7 @@
 package graphics
 
 import "core:log"
+import "core:math/linalg"
 import "core:path/filepath"
 
 import vma "shared:odin-vma"
@@ -28,6 +29,7 @@ INVALID_INSTANCE :: InstanceHandle{}
 Model :: struct {
 	meshes: [dynamic]Mesh,
 	name:   string,
+	bounds: BoundingSphere,
 }
 
 Instance :: struct {
@@ -147,8 +149,22 @@ register_model :: proc(
 		material          = material_handle,
 	}
 
+	center := Vec3{0, 0, 0}
+	for v in vertices {
+		center += v.pos
+	}
+	center /= f32(len(vertices))
+
+	radius: f32 = 0
+	for v in vertices {
+		radius = max(radius, linalg.length(v.pos - center))
+	}
+
+	bounds := BoundingSphere{center, radius}
+
 	model := Model {
-		name = name,
+		name   = name,
+		bounds = bounds,
 	}
 	append(&model.meshes, mesh)
 

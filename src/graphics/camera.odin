@@ -1,4 +1,4 @@
-package graphics
+package camera
 
 import "core:math/linalg"
 

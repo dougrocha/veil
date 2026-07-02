@@ -216,7 +216,7 @@ main :: proc() {
 		app.engine.clock.fps_frame_count += 1
 		app.engine.clock.fps_timer += app.engine.clock.delta_time
 		if app.engine.clock.fps_timer >= 1.0 {
-			log.infof("FPS: %d", app.engine.clock.fps_frame_count)
+			log.infof("FPS: %d, models drawn: %d", app.engine.clock.fps_frame_count, app.engine.drawn_instance_count)
 			app.engine.clock.fps_frame_count = 0
 			app.engine.clock.fps_timer = 0
 		}

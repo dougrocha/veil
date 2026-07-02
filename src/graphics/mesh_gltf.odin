@@ -2,6 +2,7 @@ package graphics
 
 import "core:fmt"
 import "core:log"
+import "core:math/linalg"
 import "core:path/filepath"
 import "core:strings"
 
@@ -28,6 +29,9 @@ load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 	model := Model {
 		name = path,
 	}
+
+	bounds_min := Vec3{max(f32), max(f32), max(f32)}
+	bounds_max := Vec3{min(f32), min(f32), min(f32)}
 
 	for &mesh in gltf_data.meshes {
 		for &prim in mesh.primitives {
@@ -62,6 +66,9 @@ load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 				pos: [3]f32
 				_ = cgltf.accessor_read_float(pos_acc, i, raw_data(pos[:]), 3)
 				vertices[i].pos = pos
+
+				bounds_min = linalg.min(bounds_min, pos)
+				bounds_max = linalg.max(bounds_max, pos)
 
 				if uv_acc != nil {
 					uv: [2]f32
@@ -128,6 +135,9 @@ load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 		log.warnf("cgltf: no meshes found in {}", path)
 		return INVALID_MODEL
 	}
+
+	center := (bounds_min + bounds_max) * 0.5
+	model.bounds = BoundingSphere{center, linalg.length(bounds_max - center)}
 
 	handle := pool_alloc(&engine.model_system.models, model)
 	engine.model_system.model_map[path] = handle

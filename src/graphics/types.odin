@@ -105,6 +105,9 @@ Engine :: struct {
 
 	// simulation state — no Vulkan types
 	scene:               Scene,
+
+	// stats
+	drawn_instance_count: u32,
 }
 
 // Everything the game mutates. No Vulkan types in here.
@@ -241,6 +244,23 @@ transform_matrix :: proc(transform: Transform) -> Mat4x4 {
 
 	return translation * rot * scale
 }
+
+transform_global_scale :: proc(transform: Transform) -> Vec3 {
+	return transform.scale
+}
+
+transform_right :: proc(transform: Transform) -> Vec3 {
+	return linalg.quaternion_mul_vector3(transform.rotation, Vec3{1, 0, 0})
+}
+
+transform_up :: proc(transform: Transform) -> Vec3 {
+	return linalg.quaternion_mul_vector3(transform.rotation, Vec3{0, 1, 0})
+}
+
+transform_forward :: proc(transform: Transform) -> Vec3 {
+	return linalg.quaternion_mul_vector3(transform.rotation, Vec3{0, 0, -1})
+}
+
 
 Particle :: struct {
 	position: Vec4,
