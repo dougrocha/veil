@@ -37,7 +37,7 @@ BUFFER_FLAGS := [BufferKind]Buffer_Flags {
 	.ParticleSSBO  = {{.TRANSFER_DST, .STORAGE_BUFFER, .VERTEX_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},
 }
 
-create_buffer :: proc(ctx: ^VulkanContext, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
+buffer_create :: proc(ctx: ^VulkanContext, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
 	buffer_flags := BUFFER_FLAGS[kind]
 
 	gpu_buf: GpuBuffer
@@ -63,22 +63,22 @@ create_buffer :: proc(ctx: ^VulkanContext, size: vk.DeviceSize, kind: BufferKind
 	return gpu_buf
 }
 
-destroy_buffer :: proc(ctx: ^VulkanContext, buffer: GpuBuffer) {
+buffer_destroy :: proc(ctx: ^VulkanContext, buffer: GpuBuffer) {
 	vma.destroy_buffer(ctx.vma_allocator, buffer.buffer, buffer.alloc)
 }
 
-upload_buffer :: proc(ctx: ^VulkanContext, data: rawptr, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
-	staging := create_buffer(ctx, size, .Staging)
-	defer destroy_buffer(ctx, staging)
+buffer_upload :: proc(ctx: ^VulkanContext, data: rawptr, size: vk.DeviceSize, kind: BufferKind) -> GpuBuffer {
+	staging := buffer_create(ctx, size, .Staging)
+	defer buffer_destroy(ctx, staging)
 
 	mem.copy(staging.alloc_info.mapped_data, data, int(size))
 
-	dest := create_buffer(ctx, size, kind)
-	copy_buffer(ctx, staging.buffer, dest.buffer, size)
+	dest := buffer_create(ctx, size, kind)
+	buffer_copy(ctx, staging.buffer, dest.buffer, size)
 	return dest
 }
 
-copy_buffer :: proc(ctx: ^VulkanContext, src, dst: vk.Buffer, size: vk.DeviceSize) {
+buffer_copy :: proc(ctx: ^VulkanContext, src, dst: vk.Buffer, size: vk.DeviceSize) {
 	cmd := begin_single_time_commands(ctx)
 	region := vk.BufferCopy {
 		size = size,
@@ -90,14 +90,14 @@ copy_buffer :: proc(ctx: ^VulkanContext, src, dst: vk.Buffer, size: vk.DeviceSiz
 create_scene_data_buffer :: proc(engine: ^Engine) {
 	size := vk.DeviceSize(size_of(SceneData))
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.frame_resources[i].scene_data_buffer = create_buffer(&engine.vk_ctx, size, .MappedUniform)
+		engine.frame_resources[i].scene_data_buffer = buffer_create(&engine.vk_ctx, size, .MappedUniform)
 	}
 }
 
 create_transforms_buffer :: proc(engine: ^Engine) {
 	size := vk.DeviceSize(size_of(GpuTransform) * MAX_MODEL_INSTANCES)
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.frame_resources[i].transforms_buffer = create_buffer(&engine.vk_ctx, size, .MappedStorage)
+		engine.frame_resources[i].transforms_buffer = buffer_create(&engine.vk_ctx, size, .MappedStorage)
 	}
 }
 
@@ -117,7 +117,7 @@ create_particle_buffer :: proc(engine: ^Engine) {
 
 	size := vk.DeviceSize(size_of(Particle) * len(particles))
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.frame_resources[i].particle_buffer = upload_buffer(
+		engine.frame_resources[i].particle_buffer = buffer_upload(
 			&engine.vk_ctx,
 			raw_data(particles),
 			size,
@@ -126,7 +126,7 @@ create_particle_buffer :: proc(engine: ^Engine) {
 	}
 }
 
-update_scene_data_buffer :: proc(engine: ^Engine) {
+scene_data_buffer_update :: proc(engine: ^Engine) {
 	frame_index := current_frame_res_index(engine)
 	scene := SceneData {
 		view                    = camera_get_view_matrix(engine.scene.camera),

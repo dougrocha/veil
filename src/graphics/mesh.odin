@@ -129,13 +129,13 @@ register_model :: proc(
 	indices: []u32,
 	material: MaterialHandle = INVALID_MATERIAL,
 ) -> ModelHandle {
-	vertex_buf := upload_buffer(
+	vertex_buf := buffer_upload(
 		&engine.vk_ctx,
 		raw_data(vertices),
 		vk.DeviceSize(size_of(Vertex) * len(vertices)),
 		.Storage,
 	)
-	index_buf := upload_buffer(&engine.vk_ctx, raw_data(indices), vk.DeviceSize(size_of(u32) * len(indices)), .Index)
+	index_buf := buffer_upload(&engine.vk_ctx, raw_data(indices), vk.DeviceSize(size_of(u32) * len(indices)), .Index)
 
 	material_handle := get_default_material(engine) if material == INVALID_MATERIAL else material
 

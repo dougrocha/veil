@@ -181,9 +181,9 @@ engine_shutdown :: proc(self: ^Engine) {
 
 	vk.DestroySemaphore(self.vk_ctx.device, self.timeline_semaphore, nil)
 	for &res in self.frame_resources {
-		destroy_buffer(&self.vk_ctx, res.scene_data_buffer)
-		destroy_buffer(&self.vk_ctx, res.particle_buffer)
-		destroy_buffer(&self.vk_ctx, res.transforms_buffer)
+		buffer_destroy(&self.vk_ctx, res.scene_data_buffer)
+		buffer_destroy(&self.vk_ctx, res.particle_buffer)
+		buffer_destroy(&self.vk_ctx, res.transforms_buffer)
 		vk.DestroySemaphore(self.vk_ctx.device, res.image_acquired_semaphore, nil)
 		vk.DestroySemaphore(self.vk_ctx.device, res.render_complete_semaphore, nil)
 		vk.DestroyCommandPool(self.vk_ctx.device, res.command_pool, nil)
@@ -253,7 +253,7 @@ engine_render :: proc(app: ^App) {
 
 	signal_value := next_signal_value
 
-	update_scene_data_buffer(&app.engine)
+	scene_data_buffer_update(&app.engine)
 	update_transforms_buffer(&app.engine)
 	check_shader_hotreload(&app.engine)
 

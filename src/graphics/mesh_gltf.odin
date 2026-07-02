@@ -103,13 +103,13 @@ load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 				prim_mat = get_default_material(engine)
 			}
 
-			vertex_buf := upload_buffer(
+			vertex_buf := buffer_upload(
 				&engine.vk_ctx,
 				raw_data(vertices[:]),
 				vk.DeviceSize(size_of(Vertex) * len(vertices)),
 				.Storage,
 			)
-			index_buf := upload_buffer(
+			index_buf := buffer_upload(
 				&engine.vk_ctx,
 				raw_data(indices[:]),
 				vk.DeviceSize(size_of(u32) * len(indices)),

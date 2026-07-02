@@ -72,39 +72,39 @@ VulkanContext :: struct {
 }
 
 Engine :: struct {
-	vk_ctx:              VulkanContext,
+	vk_ctx:               VulkanContext,
 
 	// swapchain
-	swapchain:           Swapchain,
+	swapchain:            Swapchain,
 
 	// shaders
-	shader_system:       ShaderSystem,
+	shader_system:        ShaderSystem,
 
 	// graphics pipeline
-	pipeline_registry:   PipelineRegistry,
+	pipeline_registry:    PipelineRegistry,
 
 	// frame and sync resources
-	timeline_semaphore:  vk.Semaphore,
-	frame_resources:     [MAX_FRAMES_IN_FLIGHT]FrameResources,
-	frame_index:         u64,
-	current_image_index: u32,
+	timeline_semaphore:   vk.Semaphore,
+	frame_resources:      [MAX_FRAMES_IN_FLIGHT]FrameResources,
+	frame_index:          u64,
+	current_image_index:  u32,
 
 	// buffers
-	model_system:        ModelSystem,
-	material_system:     MaterialSystem,
+	model_system:         ModelSystem,
+	material_system:      MaterialSystem,
 
 	// timers
-	clock:               Clock,
+	clock:                Clock,
 
 	// texture
-	texture_system:      TextureSystem,
+	texture_system:       TextureSystem,
 
 	// global resources (binding 0 = shadow map, binding 1 = skybox)
-	global_descriptor:   DescriptorSet,
-	shadow_atlas:        ShadowAtlas,
+	global_descriptor:    DescriptorSet,
+	shadow_atlas:         ShadowAtlas,
 
 	// simulation state — no Vulkan types
-	scene:               Scene,
+	scene:                Scene,
 
 	// stats
 	drawn_instance_count: u32,

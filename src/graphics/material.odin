@@ -52,7 +52,7 @@ create_material_system :: proc(engine: ^Engine, config: MaterialSystemConfig) {
 	engine.material_system.material_map = make(map[string]MaterialHandle)
 
 	total_size := vk.DeviceSize(size_of(GpuMaterial) * u64(config.max_material_count))
-	engine.material_system.buffer = create_buffer(&engine.vk_ctx, total_size, .MappedStorage)
+	engine.material_system.buffer = buffer_create(&engine.vk_ctx, total_size, .MappedStorage)
 
 	create_default_material(engine)
 }
@@ -121,7 +121,7 @@ create_material :: proc(
 
 destroy_material_system :: proc(engine: ^Engine) {
 	ms := &engine.material_system
-	destroy_buffer(&engine.vk_ctx, ms.buffer)
+	buffer_destroy(&engine.vk_ctx, ms.buffer)
 	pool_destroy(&ms.materials)
 	delete(ms.material_map)
 }
