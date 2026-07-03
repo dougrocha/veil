@@ -223,17 +223,16 @@ check_shader_hotreload :: proc(self: ^Engine) {
 			continue
 		}
 
-		if _, ok := ss.name_to_handle[module_name]; !ok {
+		handle, ok := ss.name_to_handle[module_name]
+		if !ok {
 			continue
 		}
 
 		log.infof("Shader changed: %s — reloading pipelines", filename)
 
-		// find all pipelines using this shader and reload them
-		handle := ss.name_to_handle[module_name]
 		for kind in PipelineKind {
-			if self.pipeline_registry.descriptors[kind].shader == handle {
-				reload_pipeline(self, kind)
+			if self.pipeline_registry.shaders[kind] == handle {
+				pipeline_reload(self, kind)
 			}
 		}
 	}

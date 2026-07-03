@@ -107,21 +107,8 @@ begin_render_pass :: proc(engine: ^Engine, cmd: vk.CommandBuffer, config: PassCo
 
 	vk.CmdBeginRendering(cmd, &rendering_info)
 
-	viewport := vk.Viewport {
-		x        = 0,
-		y        = 0,
-		width    = f32(extent.width),
-		height   = f32(extent.height),
-		minDepth = 0,
-		maxDepth = 1,
-	}
-	vk.CmdSetViewport(cmd, 0, 1, &viewport)
-
-	scissor := vk.Rect2D {
-		offset = {x = 0, y = 0},
-		extent = extent,
-	}
-	vk.CmdSetScissor(cmd, 0, 1, &scissor)
+	pipeline_set_viewport(cmd, f32(extent.width), f32(extent.height))
+	pipeline_set_scissor(cmd, extent.width, extent.height)
 }
 
 end_render_pass :: proc(cmd: vk.CommandBuffer) {
