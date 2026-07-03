@@ -9,13 +9,10 @@ import "shared:tinyobj"
 import vk "vendor:vulkan"
 
 Mesh :: struct {
-	vertex_buffer:     vk.Buffer,
-	vertex_allocation: vma.Allocation,
-	vertex_address:    GPUPtr(Vertex),
-	index_buffer:      vk.Buffer,
-	index_allocation:  vma.Allocation,
-	index_count:       u32,
-	material:          MaterialHandle,
+	vertex_buffer: GpuBuffer(Vertex),
+	index_buffer:  GpuBuffer(u32),
+	index_count:   u32,
+	material:      MaterialHandle,
 }
 
 ModelHandle :: Handle(Model)
@@ -55,8 +52,8 @@ destroy_model_system :: proc(engine: ^Engine) {
 	for &model, i in ms.models.values {
 		if pool_is_alive(&ms.models, u32(i)) {
 			for &mesh in model.meshes {
-				vma.destroy_buffer(engine.vk_ctx.vma_allocator, mesh.vertex_buffer, mesh.vertex_allocation)
-				vma.destroy_buffer(engine.vk_ctx.vma_allocator, mesh.index_buffer, mesh.index_allocation)
+				buffer_destroy(&engine.vk_ctx, mesh.vertex_buffer)
+				buffer_destroy(&engine.vk_ctx, mesh.index_buffer)
 			}
 			delete(model.meshes)
 		}
@@ -135,13 +132,10 @@ register_model :: proc(
 	material_handle := get_default_material(engine) if material == INVALID_MATERIAL else material
 
 	mesh := Mesh {
-		vertex_buffer     = vertex_buf.buffer,
-		vertex_allocation = vertex_buf.alloc,
-		vertex_address    = vertex_buf.ptr,
-		index_buffer      = index_buf.buffer,
-		index_allocation  = index_buf.alloc,
-		index_count       = u32(len(indices)),
-		material          = material_handle,
+		vertex_buffer = vertex_buf,
+		index_buffer  = index_buf,
+		index_count   = u32(len(indices)),
+		material      = material_handle,
 	}
 
 	center := Vec3{0, 0, 0}

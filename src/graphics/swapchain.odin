@@ -54,10 +54,10 @@ swapchain_create :: proc(self: ^Engine, width, height: u32) {
 
 }
 
-swapchain_destroy :: proc(self: ^Engine) {
-	render_targets_destroy(&self.vk_ctx, &self.swapchain.render_targets)
-	delete(self.swapchain.images)
-	vk.DestroySwapchainKHR(self.vk_ctx.device, self.swapchain.handle, nil)
+swapchain_destroy :: proc(ctx: ^VulkanContext, swapchain: ^Swapchain) {
+	render_targets_destroy(ctx, &swapchain.render_targets)
+	delete(swapchain.images)
+	vk.DestroySwapchainKHR(ctx.device, swapchain.handle, nil)
 }
 
 render_target_create :: proc(

@@ -293,7 +293,7 @@ engine_shutdown :: proc(self: ^Engine) {
 		vk.DestroySemaphore(self.vk_ctx.device, res.render_complete_semaphore, nil)
 		vk.DestroyCommandPool(self.vk_ctx.device, res.command_pool, nil)
 	}
-	swapchain_destroy(self)
+	swapchain_destroy(&self.vk_ctx, &self.swapchain)
 
 	destroy_vulkan_context(&self.vk_ctx)
 }
@@ -310,9 +310,7 @@ engine_render :: proc(app: ^App) {
 	// recreate swapchain
 	if app.engine.swapchain.require_recreate {
 		vk.DeviceWaitIdle(app.engine.vk_ctx.device)
-		render_targets_destroy(&app.engine.vk_ctx, &app.engine.swapchain.render_targets)
-		delete(app.engine.swapchain.images)
-		vk.DestroySwapchainKHR(app.engine.vk_ctx.device, app.engine.swapchain.handle, nil)
+		swapchain_destroy(&app.engine.vk_ctx, &app.engine.swapchain)
 		swapchain_create(&app.engine, app.width, app.height)
 		app.engine.swapchain.render_targets = render_targets_create(
 			&app.engine.vk_ctx,
@@ -531,14 +529,14 @@ draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer, light_i: u32
 
 			pc := ShadowPushConstants {
 				scene_data       = frame.scene_data_buffer.ptr,
-				vertex_buffer    = mesh.vertex_address,
+				vertex_buffer    = mesh.vertex_buffer.ptr,
 				transform_buffer = frame.transforms_buffer.ptr,
 				instance_index   = u32(slot_i),
 				face_index       = face_i,
 				light_index      = light_i,
 			}
 			pipeline_push(cmd, shadow_map_pipeline, {.VERTEX, .FRAGMENT}, &pc)
-			vk.CmdBindIndexBuffer(cmd, mesh.index_buffer, 0, .UINT32)
+			vk.CmdBindIndexBuffer(cmd, mesh.index_buffer.buffer, 0, .UINT32)
 			vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)
 		}
 	}
@@ -580,14 +578,14 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 
 			pc := PushConstants {
 				scene_data       = frame.scene_data_buffer.ptr,
-				vertex_buffer    = mesh.vertex_address,
+				vertex_buffer    = mesh.vertex_buffer.ptr,
 				material_buffer  = engine.material_system.buffer.ptr,
 				transform_buffer = frame.transforms_buffer.ptr,
 				material_index   = u32(mesh.material.index),
 				instance_index   = u32(i),
 			}
 			pipeline_push(cmd, get_pipeline(&engine.pipeline_registry, .Mesh), {.VERTEX, .FRAGMENT}, &pc)
-			vk.CmdBindIndexBuffer(cmd, mesh.index_buffer, 0, .UINT32)
+			vk.CmdBindIndexBuffer(cmd, mesh.index_buffer.buffer, 0, .UINT32)
 			vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)
 		}
 	}

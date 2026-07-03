@@ -109,11 +109,8 @@ load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 			append(
 				&model.meshes,
 				Mesh {
-					vertex_buffer = vertex_buf.buffer,
-					vertex_allocation = vertex_buf.alloc,
-					vertex_address = vertex_buf.ptr,
-					index_buffer = index_buf.buffer,
-					index_allocation = index_buf.alloc,
+					vertex_buffer = vertex_buf,
+					index_buffer = index_buf,
 					index_count = u32(len(indices)),
 					material = prim_mat,
 				},
