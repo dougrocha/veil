@@ -7,7 +7,6 @@ import "core:path/filepath"
 import "core:strings"
 
 import cgltf "vendor:cgltf"
-import vk "vendor:vulkan"
 
 load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle) -> ModelHandle {
 	c_path := strings.clone_to_cstring(path, context.temp_allocator)

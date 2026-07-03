@@ -43,10 +43,14 @@ frustum_from_view_proj :: proc(proj: Mat4x4) -> Frustum {
 	return frustum
 }
 
-frustum_create_from_camera :: proc(camera: ^Camera, aspect: f32, fov: f32, near: f32, far: f32) -> Frustum {
+frustum_create_from_camera :: proc(camera: ^Camera, aspect: f32) -> Frustum {
 	frustum: Frustum
 
-	half_v_side := far * math.tan_f32(fov * 0.5)
+	fov_y := camera.fov_y
+	near := camera.near
+	far := camera.far
+
+	half_v_side := far * math.tan_f32(fov_y * 0.5)
 	half_h_side := half_v_side * aspect
 
 	front_mul_far := far * camera.front

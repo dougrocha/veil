@@ -29,7 +29,11 @@ Camera :: struct {
 	// user stuff
 	movement_speed:    f32,
 	mouse_sensitivity: f32,
-	zoom:              f32, // fov control for perspective
+
+	// projection stuff
+	fov_y:             f32, // fov control for perspective, in radians
+	near:              f32,
+	far:               f32,
 }
 
 camera_create :: proc(
@@ -45,7 +49,9 @@ camera_create :: proc(
 		pitch             = pitch,
 		movement_speed    = 10,
 		mouse_sensitivity = 0.1,
-		zoom              = 45,
+		fov_y             = linalg.to_radians(f32(60)),
+		near              = 0.1,
+		far               = 5000.0,
 	}
 	camera_update_vectors(&c)
 	return c
@@ -67,13 +73,8 @@ camera_get_view_matrix :: proc(c: Camera) -> Mat4x4 {
 	return linalg.matrix4_look_at_f32(c.position, c.position + c.front, c.up)
 }
 
-camera_get_projection_matrix :: proc(
-	c: Camera,
-	aspect_ratio: f32,
-	near_plane: f32 = 0.1,
-	far_plane: f32 = 5000.0,
-) -> Mat4x4 {
-	return linalg.matrix4_perspective_f32(linalg.to_radians(c.zoom), aspect_ratio, near_plane, far_plane, true)
+camera_get_projection_matrix :: proc(c: Camera, aspect: f32) -> Mat4x4 {
+	return linalg.matrix4_perspective_f32(c.fov_y, aspect, c.near, c.far, true)
 }
 
 CameraMovement :: enum {
@@ -116,6 +117,6 @@ camera_process_mouse_movement :: proc(c: ^Camera, x_offset: f32, y_offset: f32, 
 }
 
 camera_process_mouse_scroll :: proc(c: ^Camera, y_offset: f32) {
-	c.zoom = clamp(c.zoom - y_offset, 1.0, 90.0)
+	c.fov_y = clamp(c.fov_y - linalg.to_radians(y_offset), linalg.to_radians(f32(1)), linalg.to_radians(f32(90)))
 }
 

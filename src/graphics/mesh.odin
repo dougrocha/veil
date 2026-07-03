@@ -4,9 +4,7 @@ import "core:log"
 import "core:math/linalg"
 import "core:path/filepath"
 
-import vma "shared:odin-vma"
 import "shared:tinyobj"
-import vk "vendor:vulkan"
 
 Mesh :: struct {
 	vertex_buffer: GpuBuffer(Vertex),

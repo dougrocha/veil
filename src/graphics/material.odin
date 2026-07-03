@@ -3,8 +3,6 @@ package graphics
 import "core:log"
 import "core:mem"
 
-import vk "vendor:vulkan"
-
 DEFAULT_MATERIAL_NAME :: "default"
 
 MAX_MATERIALS :: 1024

@@ -14,7 +14,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	engine.clock.start_time = time.now()
 	engine.clock.last_frame_time = engine.clock.start_time
-	engine.scene.camera = camera_create({2, 2, 4}, yaw = -90, pitch = -15)
+	engine.scene.camera = camera_create({-9, 5, 1}, yaw = -6, pitch = -29)
 	engine.scene.ambient_light = AmbientLight {
 		color      = {1, 1, 1, 1},
 		brightness = 0.03,
@@ -557,9 +557,6 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	frustum := frustum_create_from_camera(
 		&engine.scene.camera,
 		f32(engine.swapchain.extent.width) / f32(engine.swapchain.extent.height),
-		linalg.to_radians(engine.scene.camera.zoom),
-		0.1,
-		5000.0,
 	)
 
 	draw_instance :: proc(engine: ^Engine, frustum: Frustum, cmd: vk.CommandBuffer, i: int, blend: bool) {
