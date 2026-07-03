@@ -2,7 +2,7 @@ package graphics
 
 import vk "vendor:vulkan"
 
-SHADOW_MAP_SIZE :: 2048
+SHADOW_MAP_SIZE :: 1024
 
 ShadowAtlas :: struct {
 	using gpu_image: GpuImage,
