@@ -1,0 +1,29 @@
+package backend
+
+import vma "shared:odin-vma"
+import vk "vendor:vulkan"
+
+SWAPCHAIN_FORMAT :: vk.Format.B8G8R8A8_SRGB
+DEPTH_FORMAT :: vk.Format.D32_SFLOAT
+DRAW_FORMAT :: vk.Format.R16G16B16A16_SFLOAT
+
+MAX_FRAMES_IN_FLIGHT :: 2
+
+VulkanContext :: struct {
+	// core
+	instance:           vk.Instance,
+	surface:            vk.SurfaceKHR,
+	physical_device:    vk.PhysicalDevice,
+	device:             vk.Device,
+	vma_allocator:      vma.Allocator,
+
+	// queue
+	gfx_queue_fam_idx:  u32,
+	graphics_queue:     vk.Queue,
+	msaa_samples:       vk.SampleCountFlags,
+	upload_pool:        vk.CommandPool,
+
+	// sync
+	timeline_semaphore: vk.Semaphore,
+	frame_sync:         [MAX_FRAMES_IN_FLIGHT]FrameSync,
+}

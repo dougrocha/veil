@@ -1,4 +1,4 @@
-package graphics
+package backend
 
 import vk "vendor:vulkan"
 
@@ -16,26 +16,25 @@ Swapchain :: struct {
 	render_targets:   RenderTargets,
 }
 
-swapchain_create :: proc(self: ^Engine, width, height: u32) {
-	self.swapchain.extent = {width, height}
+swapchain_create :: proc(ctx: ^VulkanContext, width, height: u32) -> Swapchain {
+	swapchain: Swapchain
+	swapchain.extent = {width, height}
 
 	surface_caps: vk.SurfaceCapabilitiesKHR
-	vk_check(
-		vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(self.vk_ctx.physical_device, self.vk_ctx.surface, &surface_caps),
-	)
+	vk_check(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.physical_device, ctx.surface, &surface_caps))
 
 	requested_image_count := max(2, surface_caps.minImageCount)
 	if surface_caps.maxImageCount > 0 {
 		requested_image_count = min(requested_image_count, surface_caps.maxImageCount)
 	}
 
-	swapchain_create_info := vk.SwapchainCreateInfoKHR {
+	create_info := vk.SwapchainCreateInfoKHR {
 		sType            = .SWAPCHAIN_CREATE_INFO_KHR,
-		surface          = self.vk_ctx.surface,
+		surface          = ctx.surface,
 		minImageCount    = u32(requested_image_count),
 		imageFormat      = SWAPCHAIN_FORMAT,
 		imageColorSpace  = .SRGB_NONLINEAR,
-		imageExtent      = self.swapchain.extent,
+		imageExtent      = swapchain.extent,
 		imageArrayLayers = 1,
 		imageUsage       = {.COLOR_ATTACHMENT, .TRANSFER_DST},
 		imageSharingMode = .EXCLUSIVE,
@@ -44,14 +43,14 @@ swapchain_create :: proc(self: ^Engine, width, height: u32) {
 		presentMode      = .FIFO,
 		clipped          = true,
 	}
-
-	vk_check(vk.CreateSwapchainKHR(self.vk_ctx.device, &swapchain_create_info, nil, &self.swapchain.handle))
+	vk_check(vk.CreateSwapchainKHR(ctx.device, &create_info, nil, &swapchain.handle))
 
 	image_count: u32 = 0
-	vk.GetSwapchainImagesKHR(self.vk_ctx.device, self.swapchain.handle, &image_count, nil)
-	self.swapchain.images = make([]vk.Image, image_count)
-	vk.GetSwapchainImagesKHR(self.vk_ctx.device, self.swapchain.handle, &image_count, raw_data(self.swapchain.images))
+	vk.GetSwapchainImagesKHR(ctx.device, swapchain.handle, &image_count, nil)
+	swapchain.images = make([]vk.Image, image_count)
+	vk.GetSwapchainImagesKHR(ctx.device, swapchain.handle, &image_count, raw_data(swapchain.images))
 
+	return swapchain
 }
 
 swapchain_destroy :: proc(ctx: ^VulkanContext, swapchain: ^Swapchain) {
@@ -65,48 +64,39 @@ render_target_create :: proc(
 	extent: vk.Extent3D,
 	format: vk.Format,
 	usage: vk.ImageUsageFlags,
-	aspect: vk.ImageAspectFlags,
 	samples: vk.SampleCountFlags = {._1},
 ) -> GpuImage {
-	img := image_create(ctx, extent, format, usage, samples = samples)
-	img.image_view = image_view_create(ctx, img.image, format, aspect)
+	desc := image_desc_default(extent, format, usage)
+	desc.samples = samples
+	img := image_create(ctx, desc)
+
+	view_desc := image_view_desc_default(img)
+	img.image_view = image_view_create(ctx, img, view_desc)
 	return img
 }
 
 render_targets_create :: proc(ctx: ^VulkanContext, extent: vk.Extent2D, msaa: vk.SampleCountFlags) -> RenderTargets {
 	extent_3d := vk.Extent3D{extent.width, extent.height, 1}
-
-	targets := RenderTargets {
+	return RenderTargets {
 		color = render_target_create(
 			ctx,
 			extent_3d,
 			DRAW_FORMAT,
 			{.TRANSIENT_ATTACHMENT, .COLOR_ATTACHMENT},
-			{.COLOR},
 			samples = msaa,
 		),
-		depth = render_target_create(
-			ctx,
-			extent_3d,
-			DEPTH_FORMAT,
-			{.DEPTH_STENCIL_ATTACHMENT},
-			{.DEPTH},
-			samples = msaa,
-		),
-		draw  = render_target_create(
+		depth = render_target_create(ctx, extent_3d, DEPTH_FORMAT, {.DEPTH_STENCIL_ATTACHMENT}, samples = msaa),
+		draw = render_target_create(
 			ctx,
 			extent_3d,
 			DRAW_FORMAT,
 			{.COLOR_ATTACHMENT, .TRANSFER_SRC, .TRANSFER_DST, .STORAGE},
-			{.COLOR},
 		),
 	}
-
-	return targets
 }
 
 render_targets_destroy :: proc(ctx: ^VulkanContext, targets: ^RenderTargets) {
-	destroy_image(ctx, targets.color)
-	destroy_image(ctx, targets.depth)
-	destroy_image(ctx, targets.draw)
+	image_destroy(ctx, targets.color)
+	image_destroy(ctx, targets.depth)
+	image_destroy(ctx, targets.draw)
 }

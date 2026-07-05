@@ -1,20 +1,10 @@
 package graphics
 
-import "base:runtime"
 import "core:math/linalg"
 import "core:time"
 
-import vma "shared:odin-vma"
 import sdl "vendor:sdl3"
-import vk "vendor:vulkan"
 
-SWAPCHAIN_FORMAT :: vk.Format.B8G8R8A8_SRGB
-DEPTH_FORMAT :: vk.Format.D32_SFLOAT
-TEXTURE_FORMAT :: vk.Format.R8G8B8A8_SRGB
-TEXTURE_FORMAT_LINEAR :: vk.Format.R8G8B8A8_UNORM
-DRAW_FORMAT :: vk.Format.R16G16B16A16_SFLOAT
-
-MAX_FRAMES_IN_FLIGHT :: 2
 MAX_SHADOW_LIGHTS :: 6
 
 PARTICLE_COUNT :: 8192
@@ -28,18 +18,6 @@ Mat4x4 :: matrix[4, 4]f32
 Mat4x3 :: matrix[4, 3]f32
 
 vec3_splat :: proc(v: f32) -> Vec3 {return {v, v, v}}
-
-g_ctx: runtime.Context
-
-FrameResources :: struct {
-	command_pool:              vk.CommandPool,
-	command_buffer:            vk.CommandBuffer,
-	image_acquired_semaphore:  vk.Semaphore,
-	render_complete_semaphore: vk.Semaphore,
-	scene_data_buffer:         GpuBuffer(SceneData),
-	particle_buffer:           GpuBuffer(Particle),
-	transforms_buffer:         GpuBuffer(GpuTransform),
-}
 
 Clock :: struct {
 	start_time:      time.Time,
@@ -56,21 +34,6 @@ App :: struct {
 	engine: Engine,
 }
 
-VulkanContext :: struct {
-	// core
-	instance:          vk.Instance,
-	surface:           vk.SurfaceKHR,
-	physical_device:   vk.PhysicalDevice,
-	device:            vk.Device,
-	vma_allocator:     vma.Allocator,
-
-	// queue
-	gfx_queue_fam_idx: u32,
-	graphics_queue:    vk.Queue,
-	msaa_samples:      vk.SampleCountFlags,
-	upload_pool:       vk.CommandPool,
-}
-
 Engine :: struct {
 	vk_ctx:               VulkanContext,
 
@@ -84,8 +47,7 @@ Engine :: struct {
 	pipeline_registry:    PipelineRegistry,
 
 	// frame and sync resources
-	timeline_semaphore:   vk.Semaphore,
-	frame_resources:      [MAX_FRAMES_IN_FLIGHT]FrameResources,
+	frame_data:           [MAX_FRAMES_IN_FLIGHT]FrameData,
 	frame_index:          u64,
 	current_image_index:  u32,
 

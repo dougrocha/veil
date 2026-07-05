@@ -3,6 +3,8 @@ package graphics
 import "core:log"
 import "core:mem"
 
+import "backend"
+
 DEFAULT_MATERIAL_NAME :: "default"
 
 MAX_MATERIALS :: 1024
@@ -30,7 +32,6 @@ Material :: struct {
 }
 
 MaterialHandle :: Handle(Material)
-
 INVALID_MATERIAL :: MaterialHandle{}
 
 MaterialSystemConfig :: struct {
@@ -44,22 +45,22 @@ MaterialSystem :: struct {
 	config:       MaterialSystemConfig,
 }
 
-create_material_system :: proc(engine: ^Engine, config: MaterialSystemConfig) {
+material_system_create :: proc(engine: ^Engine, config: MaterialSystemConfig) {
 	engine.material_system.config = config
 	engine.material_system.materials = pool_init(config.max_material_count, Material)
 	engine.material_system.material_map = make(map[string]MaterialHandle)
 
-	engine.material_system.buffer = buffer_create(
+	engine.material_system.buffer = backend.buffer_create(
 		GpuMaterial,
 		&engine.vk_ctx,
 		int(config.max_material_count),
 		.MappedStorage,
 	)
 
-	create_default_material(engine)
+	material_create_default(engine)
 }
 
-create_material :: proc(
+material_create :: proc(
 	engine: ^Engine,
 	name: string,
 	base_color: Vec4 = {1, 1, 1, 1},
@@ -72,6 +73,7 @@ create_material :: proc(
 	alpha_mode: AlphaMode = .Opaque,
 ) -> MaterialHandle {
 	if handle, ok := engine.material_system.material_map[name]; ok {
+		log.warnf("Material \"%s\" already exists; returning existing material", name)
 		return handle
 	}
 
@@ -121,19 +123,19 @@ create_material :: proc(
 	return handle
 }
 
-destroy_material_system :: proc(engine: ^Engine) {
+material_system_destroy :: proc(engine: ^Engine) {
 	ms := &engine.material_system
-	buffer_destroy(&engine.vk_ctx, ms.buffer)
+	backend.buffer_destroy(&engine.vk_ctx, ms.buffer)
 	pool_destroy(&ms.materials)
 	delete(ms.material_map)
 }
 
-get_default_material :: proc(engine: ^Engine) -> MaterialHandle {
+material_get_default :: proc(engine: ^Engine) -> MaterialHandle {
 	return engine.material_system.material_map[DEFAULT_MATERIAL_NAME]
 }
 
-create_default_material :: proc(engine: ^Engine) {
-	create_material(
+material_create_default :: proc(engine: ^Engine) {
+	material_create(
 		engine,
 		DEFAULT_MATERIAL_NAME,
 		perceptual_roughness = 0.5,

@@ -5,6 +5,8 @@ import "core:slice"
 import "core:strings"
 import linux "core:sys/linux"
 
+import "backend"
+
 import sp "shared:odin-slang/slang"
 import vk "vendor:vulkan"
 
@@ -59,7 +61,7 @@ destroy_shader_system :: proc(self: ^Engine) {
 	ss := &self.shader_system
 	for &module, i in ss.modules.values {
 		if pool_is_alive(&ss.modules, u32(i)) {
-			vk.DestroyShaderModule(self.vk_ctx.device, module, nil)
+			backend.shader_module_destroy(&self.vk_ctx, module)
 		}
 	}
 	if ss.inotify_fd != linux.Fd(-1) {
@@ -164,14 +166,8 @@ load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	defer target_code->release()
 
 	spv := slice.bytes_from_ptr(target_code->getBufferPointer(), int(target_code->getBufferSize()))
-	module_info := vk.ShaderModuleCreateInfo {
-		sType    = .SHADER_MODULE_CREATE_INFO,
-		codeSize = len(spv),
-		pCode    = raw_data(slice.reinterpret([]u32, spv)),
-	}
-
-	vk_module: vk.ShaderModule
-	vk_check(vk.CreateShaderModule(self.vk_ctx.device, &module_info, nil, &vk_module))
+	spv_u32 := slice.reinterpret([]u32, spv)
+	vk_module := backend.shader_module_create(&self.vk_ctx, spv_u32)
 
 	// check if this module is being reloaded (update in place) or is new
 	if existing, ok := ss.name_to_handle[module_name]; ok {

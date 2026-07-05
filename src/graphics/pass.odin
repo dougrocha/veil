@@ -1,5 +1,7 @@
 package graphics
 
+import "backend"
+
 import vk "vendor:vulkan"
 
 PassConfig :: struct {
@@ -15,46 +17,17 @@ PassConfig :: struct {
 
 begin_render_pass :: proc(engine: ^Engine, cmd: vk.CommandBuffer, config: PassConfig) {
 	if config.color_target != nil {
-		src_layout: vk.ImageLayout = .COLOR_ATTACHMENT_OPTIMAL if config.load_op == .LOAD else .UNDEFINED
-		transition_image_layout(
-			cmd,
-			config.color_target.image,
-			src_layout,
-			.COLOR_ATTACHMENT_OPTIMAL,
-			{.COLOR_ATTACHMENT_WRITE} if config.load_op == .LOAD else {},
-			{.COLOR_ATTACHMENT_WRITE},
-			{.COLOR_ATTACHMENT_OUTPUT},
-			{.COLOR_ATTACHMENT_OUTPUT},
-			{.COLOR},
-		)
+		from: backend.ImageStateKind = .Color_Write if config.load_op == .LOAD else .Undefined
+		backend.image_barrier(cmd, config.color_target.image, from, .Color_Write, {.COLOR})
 	}
 
 	if config.resolve_target != nil && config.load_op != .LOAD {
-		transition_image_layout(
-			cmd,
-			config.resolve_target.image,
-			.UNDEFINED,
-			.COLOR_ATTACHMENT_OPTIMAL,
-			{},
-			{.COLOR_ATTACHMENT_WRITE},
-			{.COLOR_ATTACHMENT_OUTPUT},
-			{.COLOR_ATTACHMENT_OUTPUT},
-			{.COLOR},
-		)
+		backend.image_barrier(cmd, config.resolve_target.image, .Undefined, .Color_Write, {.COLOR})
 	}
 
 	if config.depth_target != nil && !config.skip_depth_transition {
-		transition_image_layout(
-			cmd,
-			config.depth_target.image,
-			.UNDEFINED,
-			.DEPTH_ATTACHMENT_OPTIMAL,
-			{},
-			{.DEPTH_STENCIL_ATTACHMENT_WRITE},
-			{.EARLY_FRAGMENT_TESTS},
-			{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
-			{.DEPTH},
-		)
+		from: backend.ImageStateKind = .Depth_Write if config.load_op == .LOAD else .Undefined
+		backend.image_barrier(cmd, config.depth_target.image, from, .Depth_Write, {.DEPTH})
 	}
 
 	color_attach_info: vk.RenderingAttachmentInfo
@@ -107,8 +80,8 @@ begin_render_pass :: proc(engine: ^Engine, cmd: vk.CommandBuffer, config: PassCo
 
 	vk.CmdBeginRendering(cmd, &rendering_info)
 
-	pipeline_set_viewport(cmd, f32(extent.width), f32(extent.height))
-	pipeline_set_scissor(cmd, extent.width, extent.height)
+	backend.pipeline_set_viewport(cmd, f32(extent.width), f32(extent.height))
+	backend.pipeline_set_scissor(cmd, extent.width, extent.height)
 }
 
 end_render_pass :: proc(cmd: vk.CommandBuffer) {

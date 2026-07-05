@@ -6,6 +6,8 @@ import "core:path/filepath"
 
 import "shared:tinyobj"
 
+import "backend"
+
 Mesh :: struct {
 	vertex_buffer: GpuBuffer(Vertex),
 	index_buffer:  GpuBuffer(u32),
@@ -50,8 +52,8 @@ destroy_model_system :: proc(engine: ^Engine) {
 	for &model, i in ms.models.values {
 		if pool_is_alive(&ms.models, u32(i)) {
 			for &mesh in model.meshes {
-				buffer_destroy(&engine.vk_ctx, mesh.vertex_buffer)
-				buffer_destroy(&engine.vk_ctx, mesh.index_buffer)
+				backend.buffer_destroy(&engine.vk_ctx, mesh.vertex_buffer)
+				backend.buffer_destroy(&engine.vk_ctx, mesh.index_buffer)
 			}
 			delete(model.meshes)
 		}
@@ -124,10 +126,10 @@ register_model :: proc(
 	indices: []u32,
 	material: MaterialHandle = INVALID_MATERIAL,
 ) -> ModelHandle {
-	vertex_buf := buffer_upload(&engine.vk_ctx, vertices, .Storage)
-	index_buf := buffer_upload(&engine.vk_ctx, indices, .Index)
+	vertex_buf := backend.buffer_upload(&engine.vk_ctx, vertices, .Storage)
+	index_buf := backend.buffer_upload(&engine.vk_ctx, indices, .Index)
 
-	material_handle := get_default_material(engine) if material == INVALID_MATERIAL else material
+	material_handle := material_get_default(engine) if material == INVALID_MATERIAL else material
 
 	mesh := Mesh {
 		vertex_buffer = vertex_buf,

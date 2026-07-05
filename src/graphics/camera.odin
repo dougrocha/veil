@@ -3,6 +3,8 @@ package graphics
 import "core:math/linalg"
 
 // right-hand rule: thumb=+X (right), index=+Y (up), middle=+Z (toward you/outside screen)
+
+// TODO: wire up later
 CameraType :: enum {
 	FirstPerson,
 	ThirdPerson,
@@ -58,10 +60,13 @@ camera_create :: proc(
 }
 
 camera_update_vectors :: proc(camera: ^Camera) {
+	yaw_r := linalg.to_radians(camera.yaw)
+	pitch_r := linalg.to_radians(camera.pitch)
+
 	front := Vec3 {
-		linalg.cos(linalg.to_radians(camera.yaw)) * linalg.cos(linalg.to_radians(camera.pitch)),
-		linalg.sin(linalg.to_radians(camera.pitch)),
-		linalg.sin(linalg.to_radians(camera.yaw)) * linalg.cos(linalg.to_radians(camera.pitch)),
+		linalg.cos(yaw_r) * linalg.cos(pitch_r),
+		linalg.sin(pitch_r),
+		linalg.sin(yaw_r) * linalg.cos(pitch_r),
 	}
 	camera.front = linalg.normalize(front)
 

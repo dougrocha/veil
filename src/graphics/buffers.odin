@@ -5,111 +5,28 @@ import "core:math/linalg"
 import "core:math/rand"
 import "core:mem"
 
-import vma "shared:odin-vma"
+import "backend"
+
 import vk "vendor:vulkan"
 
-GpuBuffer :: struct($T: typeid) {
-	buffer:     vk.Buffer,
-	alloc:      vma.Allocation,
-	alloc_info: vma.Allocation_Info,
-	ptr:        GPUPtr(T),
+FrameData :: struct {
+	scene_data_buffer: GpuBuffer(SceneData),
+	particle_buffer:   GpuBuffer(Particle),
+	transforms_buffer: GpuBuffer(GpuTransform),
 }
 
-GPUPtr :: struct($T: typeid) {
-	address: vk.DeviceAddress,
-}
-
-Buffer_Flags :: struct {
-	usage: vk.BufferUsageFlags,
-	alloc: vma.Allocation_Create_Flags,
-}
-
-BufferKind :: enum {
-	Storage,
-	MappedUniform,
-	MappedStorage,
-	Index,
-	Staging,
-	ParticleSSBO,
-}
-
-BUFFER_FLAGS := [BufferKind]Buffer_Flags {
-	.Storage       = {{.TRANSFER_DST, .STORAGE_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},
-	.MappedUniform = {{.TRANSFER_DST, .UNIFORM_BUFFER, .SHADER_DEVICE_ADDRESS}, {.Mapped, .Host_Access_Random}},
-	.MappedStorage = {{.TRANSFER_DST, .STORAGE_BUFFER, .SHADER_DEVICE_ADDRESS}, {.Mapped, .Host_Access_Random}},
-	.Index         = {{.TRANSFER_DST, .INDEX_BUFFER}, {}},
-	.Staging       = {{.TRANSFER_SRC}, {.Mapped, .Host_Access_Sequential_Write}},
-	.ParticleSSBO  = {{.TRANSFER_DST, .STORAGE_BUFFER, .VERTEX_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},
-}
-
-buffer_create :: proc($T: typeid, ctx: ^VulkanContext, count: int, kind: BufferKind) -> GpuBuffer(T) {
-	buffer_flags := BUFFER_FLAGS[kind]
-	size := vk.DeviceSize(size_of(T) * count)
-
-	gpu_buf: GpuBuffer(T)
-	vk_check(
-		vma.create_buffer(
-			ctx.vma_allocator,
-			vk.BufferCreateInfo{sType = .BUFFER_CREATE_INFO, size = size, usage = buffer_flags.usage},
-			vma.Allocation_Create_Info{usage = .Auto, flags = buffer_flags.alloc},
-			&gpu_buf.buffer,
-			&gpu_buf.alloc,
-			&gpu_buf.alloc_info,
-		),
-	)
-
-	if .SHADER_DEVICE_ADDRESS in buffer_flags.usage {
-		addr_info := vk.BufferDeviceAddressInfo {
-			sType  = .BUFFER_DEVICE_ADDRESS_INFO,
-			buffer = gpu_buf.buffer,
-		}
-		gpu_buf.ptr.address = vk.GetBufferDeviceAddress(ctx.device, &addr_info)
-	}
-
-	return gpu_buf
-}
-
-buffer_destroy :: proc(ctx: ^VulkanContext, buffer: GpuBuffer($T)) {
-	vma.destroy_buffer(ctx.vma_allocator, buffer.buffer, buffer.alloc)
-}
-
-buffer_upload :: proc(ctx: ^VulkanContext, data: []$T, kind: BufferKind) -> GpuBuffer(T) {
-	size := vk.DeviceSize(size_of(T) * len(data))
-
-	staging := buffer_create(T, ctx, len(data), .Staging)
-	defer buffer_destroy(ctx, staging)
-
-	mem.copy(staging.alloc_info.mapped_data, raw_data(data), int(size))
-
-	dest := buffer_create(T, ctx, len(data), kind)
-	buffer_copy(ctx, staging.buffer, dest.buffer, size)
-	return dest
-}
-
-buffer_copy :: proc(ctx: ^VulkanContext, src, dst: vk.Buffer, size: vk.DeviceSize) {
-	cmd := begin_single_time_commands(ctx)
-	region := vk.BufferCopy {
-		size = size,
-	}
-	vk.CmdCopyBuffer(cmd, src, dst, 1, &region)
-	end_single_time_commands(ctx, &cmd)
-}
-
-create_scene_data_buffer :: proc(engine: ^Engine) {
+frame_data_create :: proc(engine: ^Engine) {
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.frame_resources[i].scene_data_buffer = buffer_create(SceneData, &engine.vk_ctx, 1, .MappedUniform)
-	}
-}
-
-create_transforms_buffer :: proc(engine: ^Engine) {
-	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.frame_resources[i].transforms_buffer = buffer_create(
+		engine.frame_data[i].scene_data_buffer = backend.buffer_create(SceneData, &engine.vk_ctx, 1, .MappedUniform)
+		engine.frame_data[i].transforms_buffer = backend.buffer_create(
 			GpuTransform,
 			&engine.vk_ctx,
 			MAX_MODEL_INSTANCES,
 			.MappedStorage,
 		)
 	}
+
+	create_particle_buffer(engine)
 }
 
 create_particle_buffer :: proc(engine: ^Engine) {
@@ -127,7 +44,7 @@ create_particle_buffer :: proc(engine: ^Engine) {
 	}
 
 	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
-		engine.frame_resources[i].particle_buffer = buffer_upload(&engine.vk_ctx, particles, .ParticleSSBO)
+		engine.frame_data[i].particle_buffer = backend.buffer_upload(&engine.vk_ctx, particles, .ParticleSSBO)
 	}
 }
 
@@ -202,7 +119,8 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		center_light_space := (snap_view * Vec4{center.x, center.y, center.z, 1.0}).xyz
 		center_light_space.x = math.floor(center_light_space.x / texel_size) * texel_size
 		center_light_space.y = math.floor(center_light_space.y / texel_size) * texel_size
-		center = (linalg.inverse(snap_view) * Vec4{center_light_space.x, center_light_space.y, center_light_space.z, 1.0}).xyz
+		center =
+			(linalg.inverse(snap_view) * Vec4{center_light_space.x, center_light_space.y, center_light_space.z, 1.0}).xyz
 
 		eye := center - light.direction * radius * 2
 		dir_view := linalg.matrix4_look_at(eye, center, up, true)
@@ -214,6 +132,6 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		scene.dir_light_view_proj[light_i] = dir_proj * dir_view
 	}
 
-	mem.copy(engine.frame_resources[frame_index].scene_data_buffer.alloc_info.mapped_data, &scene, size_of(SceneData))
+	mem.copy(engine.frame_data[frame_index].scene_data_buffer.alloc_info.mapped_data, &scene, size_of(SceneData))
 }
 

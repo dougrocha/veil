@@ -1,5 +1,6 @@
 package main
 
+import "base:runtime"
 import "core:log"
 import "core:math"
 import "core:math/linalg"
@@ -9,9 +10,11 @@ import sdl "vendor:sdl3"
 
 import gfx "graphics"
 
+g_ctx: runtime.Context
+
 main :: proc() {
 	context.logger = log.create_console_logger()
-	gfx.g_ctx = context
+	g_ctx = context
 
 	ok := sdl.InitSubSystem({.VIDEO})
 	if !ok {
@@ -43,7 +46,7 @@ main :: proc() {
 	}
 	defer gfx.engine_shutdown(&app.engine)
 
-	wood_gate_mat := gfx.create_material(
+	wood_gate_mat := gfx.material_create(
 		&app.engine,
 		"wood_gate",
 		base_color_texture = gfx.texture_load(&app.engine, "assets/textures/wooden_gate_diff_4k.jpg"),
@@ -54,7 +57,7 @@ main :: proc() {
 	wood_gate := gfx.load_model(&app.engine, "assets/models/wooden_gate_4k.gltf", wood_gate_mat)
 	gfx.spawn(&app.engine, wood_gate, gfx.transform_create(translation = {0, 1, -2}))
 
-	lion_head_mat := gfx.create_material(
+	lion_head_mat := gfx.material_create(
 		&app.engine,
 		"lion_head",
 		base_color_texture = gfx.texture_load(&app.engine, "assets/models/textures/lion_head_diff_4k.jpg"),
@@ -69,7 +72,7 @@ main :: proc() {
 	lion_head := gfx.load_model(&app.engine, "assets/models/lion_head_4k.gltf", lion_head_mat)
 	gfx.spawn(&app.engine, lion_head, gfx.transform_create(translation = {0, 1.5, 0}))
 
-	boulder_mat := gfx.create_material(
+	boulder_mat := gfx.material_create(
 		&app.engine,
 		"boulder",
 		base_color_texture = gfx.texture_load(
@@ -95,7 +98,7 @@ main :: proc() {
 	boulder := gfx.load_model(&app.engine, "assets/models/namaqualand_boulder_02_4k.gltf", boulder_mat)
 	gfx.spawn(&app.engine, boulder, gfx.transform_create(translation = {3, 0.06, 2}))
 
-	duck_mat := gfx.create_material(
+	duck_mat := gfx.material_create(
 		&app.engine,
 		"duck",
 		base_color_texture = gfx.texture_load(&app.engine, "assets/models/textures/rubber_duck_toy_diff_4k.jpg"),
@@ -115,8 +118,8 @@ main :: proc() {
 	gfx.spawn(&app.engine, duck, gfx.transform_create(translation = {-3, 0, 2}))
 
 
-	shiny_mat := gfx.create_material(&app.engine, "shiny_mat", perceptual_roughness = 0.0)
-	rough_mat := gfx.create_material(&app.engine, "rough_mat", perceptual_roughness = 1.0)
+	shiny_mat := gfx.material_create(&app.engine, "shiny_mat", perceptual_roughness = 0.0)
+	rough_mat := gfx.material_create(&app.engine, "rough_mat", perceptual_roughness = 1.0)
 	shiny_cube := gfx.create_cube(&app.engine, "shiny_cube", shiny_mat)
 	rough_cube := gfx.create_cube(&app.engine, "rough_cube", rough_mat)
 	gfx.spawn(&app.engine, shiny_cube, gfx.transform_create(translation = {-2, 1, 0}))
@@ -168,7 +171,7 @@ main :: proc() {
 	// sphere_model := gfx.create_sphere(&app.engine, "sphere")
 	// sphere := gfx.spawn(&app.engine, sphere_model, gfx.transform_create(translation = {0, 2.5, 0}))
 
-	yellow_mat := gfx.create_material(&app.engine, "yellow_mat", base_color = {1, 1, 0, 1})
+	yellow_mat := gfx.material_create(&app.engine, "yellow_mat", base_color = {1, 1, 0, 1})
 	light_sphere_model := gfx.create_sphere(&app.engine, "light_sphere", material = yellow_mat)
 	light_sphere := gfx.spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
 

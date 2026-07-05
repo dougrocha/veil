@@ -6,6 +6,8 @@ import "core:math/linalg"
 import "core:path/filepath"
 import "core:strings"
 
+import "backend"
+
 import cgltf "vendor:cgltf"
 
 load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle) -> ModelHandle {
@@ -99,11 +101,11 @@ load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 			} else if prim.material != nil {
 				prim_mat = gltf_extract_material(engine, path, gltf_data, prim.material)
 			} else {
-				prim_mat = get_default_material(engine)
+				prim_mat = material_get_default(engine)
 			}
 
-			vertex_buf := buffer_upload(&engine.vk_ctx, vertices[:], .Storage)
-			index_buf := buffer_upload(&engine.vk_ctx, indices[:], .Index)
+			vertex_buf := backend.buffer_upload(&engine.vk_ctx, vertices[:], .Storage)
+			index_buf := backend.buffer_upload(&engine.vk_ctx, indices[:], .Index)
 
 			append(
 				&model.meshes,
@@ -185,7 +187,7 @@ gltf_extract_material :: proc(
 		pbr.base_color_factor[3],
 	}
 
-	return create_material(
+	return material_create(
 		engine,
 		name,
 		base_color = base_color,

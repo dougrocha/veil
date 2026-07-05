@@ -1,4 +1,4 @@
-package graphics
+package backend
 
 import "base:runtime"
 
@@ -10,7 +10,45 @@ import vk "vendor:vulkan"
 
 VALIDATION_LAYER_NAME :: "VK_LAYER_KHRONOS_validation"
 
-create_vulkan_instance :: proc(ctx: ^VulkanContext) {
+g_ctx: runtime.Context
+
+context_init :: proc(ctx: ^VulkanContext, window: ^sdl.Window) -> bool {
+	instance_create(ctx)
+
+	surface, surface_ok := surface_create(ctx.instance, window)
+	if !surface_ok {
+		return false
+	}
+	ctx.surface = surface
+
+	physical_device, pd_ok := physical_device_find(ctx)
+	if !pd_ok {
+		return false
+	}
+	ctx.physical_device = physical_device
+
+	if !graphics_queue_find(ctx) {
+		return false
+	}
+	if !logical_device_create(ctx) {
+		return false
+	}
+	vma_init(ctx)
+
+	ctx.msaa_samples = get_max_usable_sample_count(ctx)
+
+	return true
+}
+
+context_destroy :: proc(ctx: ^VulkanContext) {
+	vk.DestroyCommandPool(ctx.device, ctx.upload_pool, nil)
+	vma.destroy_allocator(ctx.vma_allocator)
+	vk.DestroyDevice(ctx.device, nil)
+	vk.DestroySurfaceKHR(ctx.instance, ctx.surface, nil)
+	vk.DestroyInstance(ctx.instance, nil)
+}
+
+instance_create :: proc(ctx: ^VulkanContext) {
 	vk.load_proc_addresses_global(rawptr(sdl.Vulkan_GetVkGetInstanceProcAddr()))
 	assert(vk.CreateInstance != nil, "vulkan function pointers not loaded")
 
@@ -23,7 +61,7 @@ create_vulkan_instance :: proc(ctx: ^VulkanContext) {
 
 	extension_count: u32 = 0
 	sdl_extensions := sdl.Vulkan_GetInstanceExtensions(&extension_count)
-	extensions := make([dynamic]cstring, context.temp_allocator)
+	extensions := make([dynamic]cstring)
 	append(&extensions, vk.EXT_DEBUG_UTILS_EXTENSION_NAME)
 	for i in 0 ..< int(extension_count) {
 		append(&extensions, sdl_extensions[i])
@@ -49,29 +87,29 @@ create_vulkan_instance :: proc(ctx: ^VulkanContext) {
 	}
 
 	vk_check(vk.CreateInstance(&create_info, nil, &ctx.instance))
-
 	vk.load_proc_addresses_instance(ctx.instance)
 }
 
-create_vulkan_surface :: proc(app: ^App) -> (vk.SurfaceKHR, bool) {
+surface_create :: proc(instance: vk.Instance, window: ^sdl.Window) -> (vk.SurfaceKHR, bool) {
 	surface: vk.SurfaceKHR
-	if !sdl.Vulkan_CreateSurface(app.window, app.engine.vk_ctx.instance, nil, &surface) {
+	if !sdl.Vulkan_CreateSurface(window, instance, nil, &surface) {
 		log.errorf("Failed to create vulkan surface: %s", sdl.GetError())
 		return {}, false
 	}
 	return surface, true
+
 }
 
-find_physical_device :: proc(self: ^VulkanContext) -> (vk.PhysicalDevice, bool) {
+physical_device_find :: proc(ctx: ^VulkanContext) -> (vk.PhysicalDevice, bool) {
 	device_count: u32 = 0
-	vk.EnumeratePhysicalDevices(self.instance, &device_count, nil)
+	vk.EnumeratePhysicalDevices(ctx.instance, &device_count, nil)
 	if device_count == 0 {
 		log.errorf("No Vulkan physical devices found")
 		return nil, false
 	}
 
 	physical_devices := make([]vk.PhysicalDevice, device_count, context.temp_allocator)
-	vk.EnumeratePhysicalDevices(self.instance, &device_count, raw_data(physical_devices))
+	vk.EnumeratePhysicalDevices(ctx.instance, &device_count, raw_data(physical_devices))
 
 	physical_device := physical_devices[0]
 	for device in physical_devices {
@@ -84,9 +122,9 @@ find_physical_device :: proc(self: ^VulkanContext) -> (vk.PhysicalDevice, bool) 
 	}
 
 	format_count: u32 = 0
-	vk.GetPhysicalDeviceSurfaceFormatsKHR(physical_device, self.surface, &format_count, nil)
+	vk.GetPhysicalDeviceSurfaceFormatsKHR(physical_device, ctx.surface, &format_count, nil)
 	surface_formats := make([]vk.SurfaceFormatKHR, format_count, context.temp_allocator)
-	vk.GetPhysicalDeviceSurfaceFormatsKHR(physical_device, self.surface, &format_count, raw_data(surface_formats))
+	vk.GetPhysicalDeviceSurfaceFormatsKHR(physical_device, ctx.surface, &format_count, raw_data(surface_formats))
 
 	format_supported := false
 	for surface_format in surface_formats {
@@ -104,7 +142,8 @@ find_physical_device :: proc(self: ^VulkanContext) -> (vk.PhysicalDevice, bool) 
 	return physical_device, true
 }
 
-find_graphics_queue :: proc(ctx: ^VulkanContext) -> bool {
+
+graphics_queue_find :: proc(ctx: ^VulkanContext) -> bool {
 	queue_fam_count: u32 = 0
 	vk.GetPhysicalDeviceQueueFamilyProperties2(ctx.physical_device, &queue_fam_count, nil)
 	queue_fam_props := make([]vk.QueueFamilyProperties2, queue_fam_count, context.temp_allocator)
@@ -128,7 +167,7 @@ find_graphics_queue :: proc(ctx: ^VulkanContext) -> bool {
 	return false
 }
 
-create_logical_device :: proc(ctx: ^VulkanContext) -> bool {
+logical_device_create :: proc(ctx: ^VulkanContext) -> bool {
 	features_14 := vk.PhysicalDeviceVulkan14Features {
 		sType = .PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
 	}
@@ -227,7 +266,7 @@ create_logical_device :: proc(ctx: ^VulkanContext) -> bool {
 	return true
 }
 
-initialize_vma :: proc(ctx: ^VulkanContext) {
+vma_init :: proc(ctx: ^VulkanContext) {
 	vulkan_functions := vma.create_vulkan_functions()
 
 	create_info := vma.Allocator_Create_Info {
@@ -265,4 +304,3 @@ vk_messenger_callback :: proc "system" (
 	log.logf(level, "vulkan[%v]: %s", messageTypes, pCallbackData.pMessage)
 	return false
 }
-
