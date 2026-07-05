@@ -67,6 +67,13 @@ instance_create :: proc(ctx: ^VulkanContext) {
 		append(&extensions, sdl_extensions[i])
 	}
 
+	instance_flags: vk.InstanceCreateFlags
+	when ODIN_OS == .Darwin {
+		// MoltenVK is a portability driver; the loader hides it unless we opt in.
+		append(&extensions, vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)
+		instance_flags += {.ENUMERATE_PORTABILITY_KHR}
+	}
+
 	requested_layers := []cstring{VALIDATION_LAYER_NAME}
 
 	dbg_create_info := vk.DebugUtilsMessengerCreateInfoEXT {
@@ -79,6 +86,7 @@ instance_create :: proc(ctx: ^VulkanContext) {
 	create_info := vk.InstanceCreateInfo {
 		sType                   = .INSTANCE_CREATE_INFO,
 		pNext                   = &dbg_create_info,
+		flags                   = instance_flags,
 		pApplicationInfo        = &app_info,
 		enabledLayerCount       = u32(len(requested_layers)),
 		ppEnabledLayerNames     = raw_data(requested_layers),
@@ -242,7 +250,12 @@ logical_device_create :: proc(ctx: ^VulkanContext) -> bool {
 		pQueuePriorities = raw_data(queue_priorities),
 	}
 
-	device_extensions := []cstring{vk.KHR_SWAPCHAIN_EXTENSION_NAME}
+	device_extensions := make([dynamic]cstring, context.temp_allocator)
+	append(&device_extensions, vk.KHR_SWAPCHAIN_EXTENSION_NAME)
+	when ODIN_OS == .Darwin {
+		// Required by the spec whenever the device advertises it, which MoltenVK does.
+		append(&device_extensions, vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME)
+	}
 
 	dev_create_info := vk.DeviceCreateInfo {
 		sType                   = .DEVICE_CREATE_INFO,
