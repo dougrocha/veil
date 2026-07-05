@@ -2,6 +2,7 @@ package main
 
 import "core:log"
 import "core:math"
+import "core:math/linalg"
 import "core:time"
 
 import sdl "vendor:sdl3"
@@ -157,8 +158,8 @@ main :: proc() {
 	gfx.spawn_directional_light(
 		&app.engine,
 		gfx.DirectionalLight {
-			direction = {0, -1, 0},
-			color = {1.0, 0.5, 1.0},
+			direction = linalg.normalize(gfx.Vec3{-1.0, -1.0, 0.5}),
+			color = {1.0, 0.9, 0.8},
 			diffuse_intensity = 1.0,
 			specular_intensity = 1.0,
 		},
@@ -194,9 +195,22 @@ main :: proc() {
 			case .QUIT:
 				break main_loop
 			case .KEY_DOWN:
-				if ev.key.scancode == .ESCAPE {
+				#partial switch ev.key.scancode {
+				case .ESCAPE:
 					mouse_captured = !mouse_captured
 					_ = sdl.SetWindowRelativeMouseMode(app.window, mouse_captured)
+				case ._1:
+					app.engine.scene.camera.near = 0.1
+					app.engine.scene.camera.far = 5000.0
+				case ._2:
+					app.engine.scene.camera.near = 0.1
+					app.engine.scene.camera.far = 20.0
+				case ._3:
+					app.engine.scene.camera.near = 20.0
+					app.engine.scene.camera.far = 80.0
+				case ._4:
+					app.engine.scene.camera.near = 80.0
+					app.engine.scene.camera.far = 400.0
 				}
 			case .MOUSE_MOTION:
 				if mouse_captured do gfx.camera_process_mouse_movement(&app.engine.scene.camera, ev.motion.xrel, -ev.motion.yrel)

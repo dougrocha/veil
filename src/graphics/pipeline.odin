@@ -82,6 +82,7 @@ pipeline_config_disable_depth :: proc(config: ^GraphicsPipelineConfig) {
 
 PipelineKind :: enum u8 {
 	Shadow,
+	Shadow_Directional,
 	Mesh,
 	Skybox,
 	UI,
@@ -91,9 +92,10 @@ PipelineKind :: enum u8 {
 }
 
 PipelineRegistry :: struct {
-	pipelines: [PipelineKind]Pipeline,
-	configs:   [PipelineKind]PipelineConfig, // nil (no case matched) for unregistered kinds
-	shaders:   [PipelineKind]ShaderHandle,
+	pipelines:    [PipelineKind]Pipeline,
+	configs:      [PipelineKind]PipelineConfig, // nil (no case matched) for unregistered kinds
+	shaders:      [PipelineKind]ShaderHandle,
+	module_names: [PipelineKind]string,
 }
 
 pipeline_register :: proc(
@@ -163,23 +165,8 @@ destroy_pipeline_registry :: proc(device: vk.Device, reg: ^PipelineRegistry) {
 	}
 }
 
-pipeline_reload :: proc(self: ^Engine, kind: PipelineKind) {
-	old_shader_handle := self.pipeline_registry.shaders[kind]
+pipeline_reload :: proc(self: ^Engine, kind: PipelineKind, module_name: string) {
 	config := self.pipeline_registry.configs[kind]
-
-	// find the shader module name by searching name_to_handle
-	module_name: string
-	for n, h in self.shader_system.name_to_handle {
-		if h == old_shader_handle {
-			module_name = n
-			break
-		}
-	}
-
-	if module_name == "" {
-		log.errorf("pipeline_reload '%v': could not find shader module name", kind)
-		return
-	}
 
 	// load_shader reuses the same handle on a repeat load and destroys the old vk.ShaderModule
 	// itself, so there's nothing to manually destroy here.

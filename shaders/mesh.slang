@@ -97,6 +97,7 @@ float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 f
 
 [[vk_binding(0, 0)]] Sampler2D textures[];
 [[vk_binding(0, 1)]] SamplerCubeArray shadow_cubes;
+[[vk_binding(2, 1)]] Sampler2DArray dir_shadow_maps;
 
 float calc_shadow_factor(float3 frag_pos, float3 light_pos, float3 normal, uint light_index) {
     float3 light_to_frag = frag_pos - light_pos;
@@ -108,6 +109,17 @@ float calc_shadow_factor(float3 frag_pos, float3 light_pos, float3 normal, uint 
     float closest_depth = shadow_cubes.Sample(float4(light_to_frag, float(light_index))).r;
 
     return current_depth - bias > closest_depth ? 0.0 : 1.0;
+}
+
+float calc_dir_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, uint light_index) {
+    float4 light_space_pos = mul(pc.scene_data.dir_light_view_proj[light_index], float4(frag_pos, 1.0));
+    float3 proj_coords = light_space_pos.xyz / light_space_pos.w;
+    proj_coords.xy = proj_coords.xy * 0.5 + 0.5;
+
+    float bias = max(0.005 * (1.0 - dot(normal, to_light)), 0.0005);
+    float closest_depth = dir_shadow_maps.Sample(float3(proj_coords.xy, float(light_index))).r;
+
+    return proj_coords.z - bias > closest_depth ? 0.0 : 1.0;
 }
 
 [shader("fragment")]
@@ -136,8 +148,11 @@ float4 fragment_main(VSOutput vert) : SV_TARGET {
 
     float ao = textures[mat.occlusion_texture].Sample(vert.frag_uv).r;
     float3 total_light = pc.scene_data.ambient_light.color.rgb * pc.scene_data.ambient_light.brightness * ao;
-    // for (uint i = 0; i < pc.scene_data.directional_light_count; i++)
-    //     total_light += calc_dir_light(pc.scene_data.directional_lights[i], normal, view_dir, shininess, smoothness);
+    for (uint i = 0; i < pc.scene_data.directional_light_count; i++) {
+        float3 to_light = normalize(-pc.scene_data.directional_lights[i].direction);
+        float shadow = i < 6 ? calc_dir_shadow_factor(vert.frag_pos, normal, to_light, i) : 1.0;
+        total_light += calc_dir_light(pc.scene_data.directional_lights[i], normal, view_dir, shininess, smoothness) * shadow;
+    }
 
     for (uint i = 0; i < pc.scene_data.point_light_count; i++) {
         float shadow = i < 6 ? calc_shadow_factor(vert.frag_pos, pc.scene_data.point_lights[i].pos, normalize(vert.frag_normal), i) : 1.0;

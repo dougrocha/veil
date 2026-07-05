@@ -232,7 +232,7 @@ check_shader_hotreload :: proc(self: ^Engine) {
 
 		for kind in PipelineKind {
 			if self.pipeline_registry.shaders[kind] == handle {
-				pipeline_reload(self, kind)
+				pipeline_reload(self, kind, module_name)
 			}
 		}
 	}

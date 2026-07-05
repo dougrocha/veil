@@ -1,4 +1,5 @@
 [[vk_binding(0, 0)]] SamplerCubeArray shadow_cubes;
+[[vk_binding(2, 0)]] Sampler2DArray dir_shadow_maps;
 
 struct PushConstants {
     float near_plane;
@@ -39,6 +40,11 @@ float3 face_dir(uint face, float2 uv) {
 
 [shader("fragment")]
 float4 fragment_main(VSOutput input) : SV_TARGET {
+    if (pc.face_index == 6) {
+        float depth = dir_shadow_maps.Sample(float3(input.uv, float(pc.light_index))).r;
+        return float4(depth, depth, depth, 1.0);
+    }
+
     float2 uv = input.uv * 2.0 - 1.0;
     float3 dir = face_dir(pc.face_index, uv);
     float depth = shadow_cubes.Sample(float4(dir, float(pc.light_index))).r;

@@ -44,6 +44,7 @@ struct SceneData {
     float4x4 view;
     float4x4 proj;
     float4x4 light_view_proj[6][6];
+    float4x4 dir_light_view_proj[6];
     PointLight point_lights[16];
     DirectionalLight directional_lights[4];
     SpotLight spot_lights[4];

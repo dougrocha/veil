@@ -12,6 +12,29 @@ Frustum :: struct {
 	planes: [6]Plane, // order: near, far, left, right, top, bottom
 }
 
+frustum_corners_from_camera :: proc(camera: ^Camera, aspect: f32) -> [8]Vec3 {
+	cam_view_mat := camera_get_view_matrix(camera^)
+	cam_proj_mat := camera_get_projection_matrix(camera^, aspect)
+
+	inv := linalg.inverse(cam_proj_mat * cam_view_mat)
+
+	frustum_corners: [8]Vec3
+
+	i := 0
+	for x in 0 ..< 2 {
+		for y in 0 ..< 2 {
+			for z in 0 ..< 2 {
+				pt := inv * Vec4{2.0 * f32(x) - 1.0, 2.0 * f32(y) - 1.0, 2.0 * f32(z) - 1.0, 1.0}
+
+				frustum_corners[i] = pt.xyz / pt.w
+				i += 1
+			}
+		}
+	}
+
+	return frustum_corners
+}
+
 // Gribb-Hartmann plane extraction: each frustum plane is a row-combination
 // of the view-projection matrix. Works for any camera or light's view-proj.
 frustum_from_view_proj :: proc(proj: Mat4x4) -> Frustum {

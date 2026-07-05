@@ -102,6 +102,7 @@ Engine :: struct {
 	// global resources (binding 0 = shadow map, binding 1 = skybox)
 	global_descriptor:    DescriptorSet,
 	shadow_atlas:         ShadowAtlas,
+	dir_shadow_atlas:     DirShadowAtlas,
 
 	// simulation state — no Vulkan types
 	scene:                Scene,
@@ -168,6 +169,7 @@ SceneData :: struct {
 	view:                    Mat4x4,
 	proj:                    Mat4x4,
 	light_view_proj:         [MAX_SHADOW_LIGHTS][6]Mat4x4,
+	dir_light_view_proj:     [MAX_SHADOW_LIGHTS]Mat4x4,
 	point_lights:            [16]PointLight,
 	directional_lights:      [4]DirectionalLight,
 	spot_lights:             [4]SpotLight,
@@ -194,6 +196,14 @@ ShadowPushConstants :: struct {
 	transform_buffer: GPUPtr(GpuTransform),
 	instance_index:   u32,
 	face_index:       u32,
+	light_index:      u32,
+}
+
+DirShadowPushConstants :: struct {
+	scene_data:       GPUPtr(SceneData),
+	vertex_buffer:    GPUPtr(Vertex),
+	transform_buffer: GPUPtr(GpuTransform),
+	instance_index:   u32,
 	light_index:      u32,
 }
 

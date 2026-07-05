@@ -37,6 +37,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	)
 
 	create_shader_system(engine) or_return
+	dir_shadow_map_handle := load_shader(engine, "dir_shadow_map", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	shadow_map_handle := load_shader(engine, "shadow_map", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	ui_handle := load_shader(engine, "ui", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	mesh_handle := load_shader(engine, "mesh", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
@@ -59,6 +60,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 		{
 			{binding = 0, descriptorType = .COMBINED_IMAGE_SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
 			{binding = 1, descriptorType = .COMBINED_IMAGE_SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
+			{binding = 2, descriptorType = .COMBINED_IMAGE_SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
 		},
 		count = MAX_FRAMES_IN_FLIGHT,
 	)
@@ -69,12 +71,21 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 		imageLayout = .DEPTH_STENCIL_READ_ONLY_OPTIMAL,
 	}
 	write_descriptor_image(&engine.vk_ctx, &engine.global_descriptor, 0, &shadow_map_image_info)
+	engine.dir_shadow_atlas = dir_shadow_atlas_create(&engine.vk_ctx, SHADOW_MAP_SIZE)
+	dir_shadow_map_image_info := vk.DescriptorImageInfo {
+		sampler     = engine.dir_shadow_atlas.sampler,
+		imageView   = engine.dir_shadow_atlas.image_view,
+		imageLayout = .DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+	}
+	write_descriptor_image(&engine.vk_ctx, &engine.global_descriptor, 2, &dir_shadow_map_image_info)
+
 
 	// Shadow
 	{
 		config := new(GraphicsPipelineConfig)
 		pipeline_default_config(config)
 		config.rasterization_info.cullMode = {}
+		config.rasterization_info.depthBiasEnable = true
 		config.depth_stencil_info.depthCompareOp = .LESS_OR_EQUAL
 		config.rendering_info = {
 			sType                 = .PIPELINE_RENDERING_CREATE_INFO,
@@ -100,6 +111,36 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 			},
 		}
 		pipeline_register(engine, .Shadow, shadow_map_handle, config, shader_stages)
+
+		dir_config := new(GraphicsPipelineConfig)
+		pipeline_default_config(dir_config)
+		dir_config.rasterization_info.cullMode = {}
+		dir_config.rasterization_info.depthBiasEnable = true
+		dir_config.depth_stencil_info.depthCompareOp = .LESS_OR_EQUAL
+		dir_config.rendering_info = {
+			sType                 = .PIPELINE_RENDERING_CREATE_INFO,
+			colorAttachmentCount  = 0,
+			depthAttachmentFormat = DEPTH_FORMAT,
+		}
+		dir_config.push_constant_range = {
+			stageFlags = {.VERTEX, .FRAGMENT},
+			size       = size_of(ShadowPushConstants),
+		}
+		dir_shader_stages := []vk.PipelineShaderStageCreateInfo {
+			{
+				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+				stage = {.VERTEX},
+				module = get_shader(engine, dir_shadow_map_handle),
+				pName = DEFAULT_VERTEX_ENTRY,
+			},
+			{
+				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+				stage = {.FRAGMENT},
+				module = get_shader(engine, dir_shadow_map_handle),
+				pName = DEFAULT_FRAGMENT_ENTRY,
+			},
+		}
+		pipeline_register(engine, .Shadow_Directional, dir_shadow_map_handle, dir_config, dir_shader_stages)
 	}
 
 	// UI
@@ -279,6 +320,7 @@ engine_shutdown :: proc(self: ^Engine) {
 
 	destroy_descriptor_set(self, &self.global_descriptor)
 	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_atlas)
+	dir_shadow_atlas_destroy(&self.vk_ctx, &self.dir_shadow_atlas)
 
 	destroy_pipeline_registry(self.vk_ctx.device, &self.pipeline_registry)
 
@@ -507,7 +549,7 @@ draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer, light_i: u32
 	shadow_map_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow)
 
 	pipeline_bind(cmd, shadow_map_pipeline)
-	vk.CmdSetDepthBias(cmd, 0, 0, 0)
+	vk.CmdSetDepthBias(cmd, 1.25, 0, 1.75)
 
 	frame := current_frame(engine)
 
@@ -533,6 +575,44 @@ draw_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer, light_i: u32
 				transform_buffer = frame.transforms_buffer.ptr,
 				instance_index   = u32(slot_i),
 				face_index       = face_i,
+				light_index      = light_i,
+			}
+			pipeline_push(cmd, shadow_map_pipeline, {.VERTEX, .FRAGMENT}, &pc)
+			vk.CmdBindIndexBuffer(cmd, mesh.index_buffer.buffer, 0, .UINT32)
+			vk.CmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0)
+		}
+	}
+}
+
+draw_dir_shadow_casters :: proc(engine: ^Engine, cmd: vk.CommandBuffer, light_i: u32) {
+	shadow_map_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow_Directional)
+
+	pipeline_bind(cmd, shadow_map_pipeline)
+	vk.CmdSetDepthBias(cmd, 1.25, 0, 1.75)
+
+	frame := current_frame(engine)
+
+	scene_data := (^SceneData)(current_frame(engine).scene_data_buffer.alloc_info.mapped_data)
+	frustum := frustum_from_view_proj(scene_data.dir_light_view_proj[light_i])
+
+	for &instance, slot_i in engine.scene.instances.values {
+		if !pool_is_alive(&engine.scene.instances, u32(slot_i)) do continue
+
+		model := &pool_get(&engine.model_system.models, instance.model)^
+
+		if !volume_is_on_frustum(frustum, model.bounds, instance.transform) {
+			continue
+		}
+
+		for &mesh in model.meshes {
+			mat := pool_get(&engine.material_system.materials, mesh.material)
+			if mat.alpha_mode == .Blend do continue
+
+			pc := DirShadowPushConstants {
+				scene_data       = frame.scene_data_buffer.ptr,
+				vertex_buffer    = mesh.vertex_buffer.ptr,
+				transform_buffer = frame.transforms_buffer.ptr,
+				instance_index   = u32(slot_i),
 				light_index      = light_i,
 			}
 			pipeline_push(cmd, shadow_map_pipeline, {.VERTEX, .FRAGMENT}, &pc)
@@ -648,6 +728,7 @@ draw_skybox :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 
 draw_debug_shadow_map :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	DEBUG_SIZE :: 128
+
 	pipeline := get_pipeline(&engine.pipeline_registry, .Debug_Shadow)
 	begin_render_pass(engine, cmd, PassConfig{color_target = &engine.swapchain.render_targets.draw, load_op = .LOAD})
 	pipeline_bind(cmd, pipeline, .GRAPHICS, {engine.global_descriptor.sets[current_frame_res_index(engine)]})
@@ -676,6 +757,25 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		pipeline_push(cmd, pipeline, {.FRAGMENT}, &debug_pc)
 		vk.CmdDraw(cmd, 3, 1, 0, 0)
 	}
+	{
+		viewport := vk.Viewport {
+			x        = 6 * DEBUG_SIZE,
+			y        = 0,
+			width    = DEBUG_SIZE,
+			height   = DEBUG_SIZE,
+			minDepth = 0,
+			maxDepth = 1,
+		}
+		scissor := vk.Rect2D {
+			offset = {6 * DEBUG_SIZE, 0},
+			extent = {DEBUG_SIZE, DEBUG_SIZE},
+		}
+		vk.CmdSetViewport(cmd, 0, 1, &viewport)
+		vk.CmdSetScissor(cmd, 0, 1, &scissor)
+		debug_pc := DebugPC{scene_data.shadow_near, scene_data.shadow_far, 6, 0}
+		pipeline_push(cmd, pipeline, {.FRAGMENT}, &debug_pc)
+		vk.CmdDraw(cmd, 3, 1, 0, 0)
+	}
 	end_render_pass(cmd)
 }
 
@@ -689,6 +789,49 @@ draw_scene :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	// dispatch_particles(engine, cmd)
 
 	shadow_light_count := min(int(engine.scene.point_light_count), MAX_SHADOW_LIGHTS)
+	dir_shadow_light_count := min(int(engine.scene.directional_light_count), MAX_SHADOW_LIGHTS)
+
+	// directional light shadow map
+	transition_image_layout(
+		cmd,
+		engine.dir_shadow_atlas.image,
+		.UNDEFINED,
+		.DEPTH_ATTACHMENT_OPTIMAL,
+		{},
+		{.DEPTH_STENCIL_ATTACHMENT_WRITE},
+		{.EARLY_FRAGMENT_TESTS},
+		{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
+		{.DEPTH},
+		layer_count = MAX_SHADOW_LIGHTS,
+	)
+	for i in 0 ..< dir_shadow_light_count {
+		begin_render_pass(
+			engine,
+			cmd,
+			PassConfig {
+				depth_target = &engine.dir_shadow_atlas.gpu_image,
+				depth_view = engine.dir_shadow_atlas.layer_views[i],
+				load_op = .CLEAR,
+				store_depth = true,
+				skip_depth_transition = true,
+			},
+		)
+		draw_dir_shadow_casters(engine, cmd, u32(i))
+		end_render_pass(cmd)
+	}
+	// Transition directional shadow atlas to read-only for the mesh pass
+	transition_image_layout(
+		cmd,
+		engine.dir_shadow_atlas.image,
+		.DEPTH_ATTACHMENT_OPTIMAL,
+		.DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+		{.DEPTH_STENCIL_ATTACHMENT_WRITE},
+		{.SHADER_READ},
+		{.LATE_FRAGMENT_TESTS},
+		{.FRAGMENT_SHADER},
+		{.DEPTH},
+		layer_count = MAX_SHADOW_LIGHTS,
+	)
 
 	// Always transition all MAX_SHADOW_LIGHTS*6 layers so unused layers are in the
 	// expected layout when the mesh pass samples the descriptor.
