@@ -25,8 +25,7 @@ ShaderSystem :: struct {
 	global_session: ^sp.IGlobalSession,
 	modules:        Pool(vk.ShaderModule),
 	name_to_handle: map[string]ShaderHandle,
-	inotify_fd:     linux.Fd,
-	watch_fd:       linux.Wd,
+	fw:             FileWatcher,
 }
 
 create_shader_system :: proc(self: ^Engine) -> bool {
@@ -38,21 +37,9 @@ create_shader_system :: proc(self: ^Engine) -> bool {
 	ss.modules = pool_init(256, vk.ShaderModule)
 	ss.name_to_handle = make(map[string]ShaderHandle)
 
-	ifd, errno := linux.inotify_init1({.NONBLOCK})
-	if errno != .NONE {
-		log.warnf("inotify_init1 failed (%v), hot reload disabled", errno)
-		ss.inotify_fd = linux.Fd(-1)
-	} else {
-		wfd, werr := linux.inotify_add_watch(ifd, "shaders", {.CLOSE_WRITE})
-		if werr != .NONE {
-			log.warnf("inotify_add_watch failed (%v), hot reload disabled", werr)
-			linux.close(ifd)
-			ss.inotify_fd = linux.Fd(-1)
-		} else {
-			ss.inotify_fd = ifd
-			ss.watch_fd = wfd
-		}
-	}
+	fw, err := fw_create()
+	ss.fw = fw
+	fw_watch_path(&ss.fw, "shaders")
 
 	return true
 }
@@ -64,9 +51,7 @@ destroy_shader_system :: proc(self: ^Engine) {
 			backend.shader_module_destroy(&self.vk_ctx, module)
 		}
 	}
-	if ss.inotify_fd != linux.Fd(-1) {
-		linux.close(ss.inotify_fd)
-	}
+	fw_destroy(&ss.fw)
 	pool_destroy(&ss.modules)
 	delete(ss.name_to_handle)
 	ss.global_session->release()
@@ -188,12 +173,9 @@ get_shader :: proc(self: ^Engine, handle: ShaderHandle) -> vk.ShaderModule {
 
 check_shader_hotreload :: proc(self: ^Engine) {
 	ss := &self.shader_system
-	if ss.inotify_fd == linux.Fd(-1) {
-		return
-	}
 
 	buf: [4096]u8
-	n, _ := linux.read(ss.inotify_fd, buf[:])
+	n, _ := linux.read(ss.fw.inotify_fd, buf[:])
 	if n <= 0 {
 		return
 	}

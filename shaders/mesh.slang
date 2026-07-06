@@ -148,19 +148,19 @@ float4 fragment_main(VSOutput vert) : SV_TARGET {
 
     float ao = textures[mat.occlusion_texture].Sample(vert.frag_uv).r;
     float3 total_light = pc.scene_data.ambient_light.color.rgb * pc.scene_data.ambient_light.brightness * ao;
-    for (uint i = 0; i < pc.scene_data.directional_light_count; i++) {
-        float3 to_light = normalize(-pc.scene_data.directional_lights[i].direction);
-        float shadow = i < 6 ? calc_dir_shadow_factor(vert.frag_pos, normal, to_light, i) : 1.0;
-        total_light += calc_dir_light(pc.scene_data.directional_lights[i], normal, view_dir, shininess, smoothness) * shadow;
-    }
+    // for (uint i = 0; i < pc.scene_data.directional_light_count; i++) {
+    //     float3 to_light = normalize(-pc.scene_data.directional_lights[i].direction);
+    //     float shadow = i < 6 ? calc_dir_shadow_factor(vert.frag_pos, normal, to_light, i) : 1.0;
+    //     total_light += calc_dir_light(pc.scene_data.directional_lights[i], normal, view_dir, shininess, smoothness) * shadow;
+    // }
+    //
+    // for (uint i = 0; i < pc.scene_data.point_light_count; i++) {
+    //     float shadow = i < 6 ? calc_shadow_factor(vert.frag_pos, pc.scene_data.point_lights[i].pos, normalize(vert.frag_normal), i) : 1.0;
+    //     total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+    // }
 
-    for (uint i = 0; i < pc.scene_data.point_light_count; i++) {
-        float shadow = i < 6 ? calc_shadow_factor(vert.frag_pos, pc.scene_data.point_lights[i].pos, normalize(vert.frag_normal), i) : 1.0;
-        total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
-    }
-
-    // for (uint i = 0; i < pc.scene_data.spot_light_count; i++)
-    //     total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness);
+    for (uint i = 0; i < pc.scene_data.spot_light_count; i++)
+        total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness);
 
     if (tex_color.a < 0.1) discard;
     return float4(tex_color.rgb * total_light, tex_color.a);

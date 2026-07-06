@@ -69,8 +69,6 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	material_system_create(engine, {max_material_count = MAX_MATERIALS})
 	create_model_system(engine)
 
-	log.infof("Here")
-
 	engine.global_descriptor = backend.descriptor_set_create(
 		vk_ctx,
 		{
