@@ -38,13 +38,15 @@ main :: proc() {
 	mouse_captured := true
 	_ = sdl.SetWindowRelativeMouseMode(app.window, true)
 
-
 	init_ok := gfx.initialize_vulkan(&app)
 	if !init_ok {
 		log.errorf("Failed to initialize Vulkan")
 		return
 	}
 	defer gfx.engine_shutdown(&app.engine)
+
+	app.engine.scene.camera = gfx.camera_create({-9, 5, 1}, yaw = -6, pitch = -29)
+
 
 	wood_gate_mat := gfx.material_create(
 		&app.engine,
@@ -168,9 +170,6 @@ main :: proc() {
 		},
 	)
 
-	// sphere_model := gfx.create_sphere(&app.engine, "sphere")
-	// sphere := gfx.spawn(&app.engine, sphere_model, gfx.transform_create(translation = {0, 2.5, 0}))
-
 	yellow_mat := gfx.material_create(&app.engine, "yellow_mat", base_color = {1, 1, 0, 1})
 	light_sphere_model := gfx.create_sphere(&app.engine, "light_sphere", material = yellow_mat)
 	light_sphere := gfx.spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
@@ -189,7 +188,13 @@ main :: proc() {
 	)
 	light_sphere2 := gfx.spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
 
-	light_elapsed: f32
+	light_pos := gfx.Vec3{-2, 4, 0}
+	light_pos2 := gfx.Vec3{2, 4, 0}
+	app.engine.scene.point_lights[0].pos = light_pos
+	app.engine.scene.point_lights[1].pos = light_pos2
+	gfx.get_instance(&app.engine, light_sphere).transform.translation = light_pos
+	gfx.get_instance(&app.engine, light_sphere2).transform.translation = light_pos2
+
 	main_loop: for {
 		ev: sdl.Event
 
@@ -238,13 +243,6 @@ main :: proc() {
 			app.engine.clock.fps_frame_count = 0
 			app.engine.clock.fps_timer = 0
 		}
-
-		light_pos := gfx.Vec3{-2, 4, 0}
-		light_pos2 := gfx.Vec3{2, 4, 0}
-		app.engine.scene.point_lights[0].pos = light_pos
-		app.engine.scene.point_lights[1].pos = light_pos2
-		gfx.get_instance(&app.engine, light_sphere).transform.translation = light_pos
-		gfx.get_instance(&app.engine, light_sphere2).transform.translation = light_pos2
 
 		process_input(&app.engine, app.engine.clock.delta_time)
 		gfx.engine_render(&app)

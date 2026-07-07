@@ -76,7 +76,7 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 	// fixed per-face UV convention rather than our own projected coordinates. Flipping Y
 	// mirrors what's rasterized into each face relative to what that convention expects,
 	// so lookups read the wrong texel.
-	light_proj := linalg.matrix4_perspective_f32(linalg.to_radians(light_fov), 1.0, light_near, light_far)
+	light_proj := matrix4_perspective_z0_f32(linalg.to_radians(light_fov), 1.0, light_near, light_far)
 
 	shadow_light_count := min(int(engine.scene.point_light_count), MAX_SHADOW_LIGHTS)
 	for light_i in 0 ..< shadow_light_count {
@@ -125,9 +125,7 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		eye := center - light.direction * radius * 2
 		dir_view := linalg.matrix4_look_at(eye, center, up, true)
 
-		dir_proj := linalg.matrix_ortho3d(-radius, radius, -radius, radius, light_near, radius * 4)
-		dir_proj[2].z *= 0.5
-		dir_proj[3].z = dir_proj[3].z * 0.5 + 0.5
+		dir_proj := matrix4_ortho3d_z0_f32(-radius, radius, -radius, radius, light_near, radius * 4)
 
 		scene.dir_light_view_proj[light_i] = dir_proj * dir_view
 	}

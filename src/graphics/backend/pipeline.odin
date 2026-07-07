@@ -78,6 +78,14 @@ pipeline_config_disable_depth :: proc(config: ^GraphicsPipelineConfig) {
 	config.depth_stencil_info.depthWriteEnable = false
 }
 
+pipeline_config_set_descriptor_layouts :: proc(config: ^GraphicsPipelineConfig, layouts: []vk.DescriptorSetLayout) {
+	for layout, i in layouts {
+		config.descriptor_layouts[i] = layout
+	}
+	config.descriptor_layout_count = u32(len(layouts))
+}
+
+
 GraphicsPipelineConfig :: struct {
 	viewport_info:            vk.PipelineViewportStateCreateInfo,
 	input_assembly_info:      vk.PipelineInputAssemblyStateCreateInfo,

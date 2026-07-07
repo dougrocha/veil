@@ -79,7 +79,7 @@ camera_get_view_matrix :: proc(c: Camera) -> Mat4x4 {
 }
 
 camera_get_projection_matrix :: proc(c: Camera, aspect: f32) -> Mat4x4 {
-	return linalg.matrix4_perspective_f32(c.fov_y, aspect, c.near, c.far, true)
+	return matrix4_perspective_z0_f32(c.fov_y, aspect, c.near, c.far)
 }
 
 CameraMovement :: enum {

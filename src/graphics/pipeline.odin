@@ -102,12 +102,12 @@ pipeline_reload :: proc(self: ^Engine, kind: PipelineKind, module_name: string) 
 	// itself, so there's nothing to manually destroy here.
 	switch _ in config {
 	case ^GraphicsPipelineConfig:
-		new_handle, compile_ok := load_shader(self, module_name, {VERTEX_ENTRY, FRAGMENT_MAIN})
+		new_handle, compile_ok := shader_load(self, module_name, {VERTEX_ENTRY, FRAGMENT_MAIN})
 		if !compile_ok {
 			log.errorf("pipeline_reload '%v': shader compilation failed, keeping old pipeline", kind)
 			return
 		}
-		shader_module := get_shader(self, new_handle)
+		shader_module := shader_get(self, new_handle)
 		new_stages := []vk.PipelineShaderStageCreateInfo {
 			{
 				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -125,12 +125,12 @@ pipeline_reload :: proc(self: ^Engine, kind: PipelineKind, module_name: string) 
 		pipeline_rebuild(self, kind, new_stages)
 
 	case ^ComputePipelineConfig:
-		new_handle, compile_ok := load_shader(self, module_name, {COMPUTE_MAIN})
+		new_handle, compile_ok := shader_load(self, module_name, {COMPUTE_MAIN})
 		if !compile_ok {
 			log.errorf("pipeline_reload '%v': shader compilation failed, keeping old pipeline", kind)
 			return
 		}
-		shader_module := get_shader(self, new_handle)
+		shader_module := shader_get(self, new_handle)
 		new_stage := vk.PipelineShaderStageCreateInfo {
 			sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
 			stage  = {.COMPUTE},

@@ -31,12 +31,13 @@ DEPTH_FORMAT :: backend.DEPTH_FORMAT
 DRAW_FORMAT :: backend.DRAW_FORMAT
 MAX_FRAMES_IN_FLIGHT :: backend.MAX_FRAMES_IN_FLIGHT
 
+// eventually move this from init vulkan and actually make it like a init engine
 initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	engine := &app.engine
 
 	engine.clock.start_time = time.now()
 	engine.clock.last_frame_time = engine.clock.start_time
-	engine.scene.camera = camera_create({-9, 5, 1}, yaw = -6, pitch = -29)
+	engine.scene.camera = camera_create({0, 0, 0})
 	engine.scene.ambient_light = AmbientLight {
 		color      = {1, 1, 1, 1},
 		brightness = 0.03,
@@ -53,14 +54,14 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 		engine.vk_ctx.msaa_samples,
 	)
 
-	create_shader_system(engine) or_return
-	dir_shadow_map_handle := load_shader(engine, "dir_shadow_map", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
-	shadow_map_handle := load_shader(engine, "shadow_map", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
-	ui_handle := load_shader(engine, "ui", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
-	mesh_handle := load_shader(engine, "mesh", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
-	particle_handle := load_shader(engine, "particle", {VERTEX_ENTRY, FRAGMENT_MAIN, COMPUTE_MAIN}) or_return
-	skybox_handle := load_shader(engine, "skybox", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
-	debug_shadow_map_handle := load_shader(engine, "debug_shadow_map", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
+	shader_system_create(engine) or_return
+	dir_shadow_map_handle := shader_load(engine, "dir_shadow_map", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
+	shadow_map_handle := shader_load(engine, "shadow_map", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
+	ui_handle := shader_load(engine, "ui", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
+	mesh_handle := shader_load(engine, "mesh", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
+	particle_handle := shader_load(engine, "particle", {VERTEX_ENTRY, FRAGMENT_MAIN, COMPUTE_MAIN}) or_return
+	skybox_handle := shader_load(engine, "skybox", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
+	debug_shadow_map_handle := shader_load(engine, "debug_shadow_map", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 
 	backend.frame_sync_create(vk_ctx)
 	frame_data_create(engine)
@@ -110,21 +111,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 			stageFlags = {.VERTEX, .FRAGMENT},
 			size       = size_of(ShadowPushConstants),
 		}
-		shader_stages := []vk.PipelineShaderStageCreateInfo {
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.VERTEX},
-				module = get_shader(engine, shadow_map_handle),
-				pName = DEFAULT_VERTEX_ENTRY,
-			},
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.FRAGMENT},
-				module = get_shader(engine, shadow_map_handle),
-				pName = DEFAULT_FRAGMENT_ENTRY,
-			},
-		}
-		pipeline_register(engine, .Shadow, shadow_map_handle, config, shader_stages)
+		stages := shader_default_stages(engine, shadow_map_handle)
+		pipeline_register(engine, .Shadow, shadow_map_handle, config, stages[:])
 
 		dir_config := new(GraphicsPipelineConfig)
 		backend.pipeline_default_config(dir_config)
@@ -140,21 +128,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 			stageFlags = {.VERTEX, .FRAGMENT},
 			size       = size_of(ShadowPushConstants),
 		}
-		dir_shader_stages := []vk.PipelineShaderStageCreateInfo {
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.VERTEX},
-				module = get_shader(engine, dir_shadow_map_handle),
-				pName = DEFAULT_VERTEX_ENTRY,
-			},
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.FRAGMENT},
-				module = get_shader(engine, dir_shadow_map_handle),
-				pName = DEFAULT_FRAGMENT_ENTRY,
-			},
-		}
-		pipeline_register(engine, .Shadow_Directional, dir_shadow_map_handle, dir_config, dir_shader_stages)
+		dir_stages := shader_default_stages(engine, dir_shadow_map_handle)
+		pipeline_register(engine, .Shadow_Directional, dir_shadow_map_handle, dir_config, dir_stages[:])
 	}
 
 	// UI
@@ -168,21 +143,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 			stageFlags = {.VERTEX, .FRAGMENT},
 			size       = size_of(PushConstants),
 		}
-		shader_stages := []vk.PipelineShaderStageCreateInfo {
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.VERTEX},
-				module = get_shader(engine, ui_handle),
-				pName = DEFAULT_VERTEX_ENTRY,
-			},
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.FRAGMENT},
-				module = get_shader(engine, ui_handle),
-				pName = DEFAULT_FRAGMENT_ENTRY,
-			},
-		}
-		pipeline_register(engine, .UI, ui_handle, config, shader_stages)
+		stages := shader_default_stages(engine, ui_handle)
+		pipeline_register(engine, .UI, ui_handle, config, stages[:])
 	}
 
 	// Mesh
@@ -191,28 +153,16 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 		backend.pipeline_default_config(config)
 		config.multi_sample_info.rasterizationSamples = engine.vk_ctx.msaa_samples
 		backend.pipeline_config_set_blend(config, .Alpha)
-		config.descriptor_layouts[0] = engine.texture_system.descriptor.layout
-		config.descriptor_layouts[1] = engine.global_descriptor.layout
-		config.descriptor_layout_count = 2
+		backend.pipeline_config_set_descriptor_layouts(
+			config,
+			{engine.texture_system.descriptor.layout, engine.global_descriptor.layout},
+		)
 		config.push_constant_range = {
 			stageFlags = {.VERTEX, .FRAGMENT},
 			size       = size_of(PushConstants),
 		}
-		shader_stages := []vk.PipelineShaderStageCreateInfo {
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.VERTEX},
-				module = get_shader(engine, mesh_handle),
-				pName = DEFAULT_VERTEX_ENTRY,
-			},
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.FRAGMENT},
-				module = get_shader(engine, mesh_handle),
-				pName = DEFAULT_FRAGMENT_ENTRY,
-			},
-		}
-		pipeline_register(engine, .Mesh, mesh_handle, config, shader_stages)
+		stages := shader_default_stages(engine, mesh_handle)
+		pipeline_register(engine, .Mesh, mesh_handle, config, stages[:])
 	}
 
 	// Particle_Draw
@@ -228,21 +178,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 			stageFlags = {.VERTEX, .FRAGMENT},
 			size       = size_of(ParticlePushConstants),
 		}
-		shader_stages := []vk.PipelineShaderStageCreateInfo {
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.VERTEX},
-				module = get_shader(engine, particle_handle),
-				pName = DEFAULT_VERTEX_ENTRY,
-			},
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.FRAGMENT},
-				module = get_shader(engine, particle_handle),
-				pName = DEFAULT_FRAGMENT_ENTRY,
-			},
-		}
-		pipeline_register(engine, .Particle_Draw, particle_handle, config, shader_stages)
+		stages := shader_default_stages(engine, particle_handle)
+		pipeline_register(engine, .Particle_Draw, particle_handle, config, stages[:])
 	}
 
 	// Particle_Compute
@@ -252,12 +189,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 			stageFlags = {.COMPUTE},
 			size       = size_of(ParticlePushConstants),
 		}
-		shader_stage := vk.PipelineShaderStageCreateInfo {
-			sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-			stage  = {.COMPUTE},
-			module = get_shader(engine, particle_handle),
-			pName  = cstring(COMPUTE_MAIN),
-		}
+		shader_stage := shader_default_compute_stage(engine, particle_handle)
 		pipeline_register_compute(engine, .Particle_Compute, particle_handle, config, shader_stage)
 	}
 
@@ -269,27 +201,13 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 		config.depth_stencil_info.depthWriteEnable = false
 		config.depth_stencil_info.depthCompareOp = .LESS_OR_EQUAL
 		config.multi_sample_info.rasterizationSamples = engine.vk_ctx.msaa_samples
-		config.descriptor_layouts[0] = engine.global_descriptor.layout
-		config.descriptor_layout_count = 1
+		backend.pipeline_config_set_descriptor_layouts(config, {engine.global_descriptor.layout})
 		config.push_constant_range = {
 			stageFlags = {.VERTEX, .FRAGMENT},
 			size       = size_of(SkyboxPushConstants),
 		}
-		shader_stages := []vk.PipelineShaderStageCreateInfo {
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.VERTEX},
-				module = get_shader(engine, skybox_handle),
-				pName = DEFAULT_VERTEX_ENTRY,
-			},
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.FRAGMENT},
-				module = get_shader(engine, skybox_handle),
-				pName = DEFAULT_FRAGMENT_ENTRY,
-			},
-		}
-		pipeline_register(engine, .Skybox, skybox_handle, config, shader_stages)
+		stages := shader_default_stages(engine, skybox_handle)
+		pipeline_register(engine, .Skybox, skybox_handle, config, stages[:])
 	}
 
 	// Debug_Shadow
@@ -299,27 +217,13 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 		config.rasterization_info.cullMode = {}
 		backend.pipeline_config_disable_depth(config)
 		config.rendering_info.depthAttachmentFormat = .UNDEFINED
-		config.descriptor_layouts[0] = engine.global_descriptor.layout
-		config.descriptor_layout_count = 1
+		backend.pipeline_config_set_descriptor_layouts(config, {engine.global_descriptor.layout})
 		config.push_constant_range = {
 			stageFlags = {.FRAGMENT},
 			size       = 2 * size_of(f32) + 2 * size_of(u32),
 		}
-		shader_stages := []vk.PipelineShaderStageCreateInfo {
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.VERTEX},
-				module = get_shader(engine, debug_shadow_map_handle),
-				pName = DEFAULT_VERTEX_ENTRY,
-			},
-			{
-				sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-				stage = {.FRAGMENT},
-				module = get_shader(engine, debug_shadow_map_handle),
-				pName = DEFAULT_FRAGMENT_ENTRY,
-			},
-		}
-		pipeline_register(engine, .Debug_Shadow, debug_shadow_map_handle, config, shader_stages)
+		stages := shader_default_stages(engine, debug_shadow_map_handle)
+		pipeline_register(engine, .Debug_Shadow, debug_shadow_map_handle, config, stages[:])
 	}
 
 	return true
@@ -338,7 +242,7 @@ engine_shutdown :: proc(self: ^Engine) {
 
 	destroy_pipeline_registry(self.vk_ctx.device, &self.pipeline_registry)
 
-	destroy_shader_system(self)
+	shader_system_destroy(self)
 
 	for &res in self.frame_data {
 		backend.buffer_destroy(&self.vk_ctx, res.scene_data_buffer)
@@ -404,7 +308,7 @@ engine_render :: proc(app: ^App) {
 
 	scene_data_buffer_update(&app.engine)
 	update_transforms_buffer(&app.engine)
-	check_shader_hotreload(&app.engine)
+	shader_poll_hotreload(&app.engine)
 
 	record_command_buffer(&app.engine)
 
@@ -742,9 +646,9 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 		near, far:   f32,
 		face, light: u32,
 	}
-	for face in 0 ..< 6 {
+	for i in 0 ..< 7 {
 		viewport := vk.Viewport {
-			x        = f32(face) * DEBUG_SIZE,
+			x        = f32(i) * DEBUG_SIZE,
 			y        = 0,
 			width    = DEBUG_SIZE,
 			height   = DEBUG_SIZE,
@@ -752,31 +656,12 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 			maxDepth = 1,
 		}
 		scissor := vk.Rect2D {
-			offset = {i32(face) * DEBUG_SIZE, 0},
+			offset = {i32(i) * DEBUG_SIZE, 0},
 			extent = {DEBUG_SIZE, DEBUG_SIZE},
 		}
 		vk.CmdSetViewport(cmd, 0, 1, &viewport)
 		vk.CmdSetScissor(cmd, 0, 1, &scissor)
-		debug_pc := DebugPC{scene_data.shadow_near, scene_data.shadow_far, u32(face), 0}
-		backend.pipeline_push(cmd, pipeline, {.FRAGMENT}, &debug_pc)
-		vk.CmdDraw(cmd, 3, 1, 0, 0)
-	}
-	{
-		viewport := vk.Viewport {
-			x        = 6 * DEBUG_SIZE,
-			y        = 0,
-			width    = DEBUG_SIZE,
-			height   = DEBUG_SIZE,
-			minDepth = 0,
-			maxDepth = 1,
-		}
-		scissor := vk.Rect2D {
-			offset = {6 * DEBUG_SIZE, 0},
-			extent = {DEBUG_SIZE, DEBUG_SIZE},
-		}
-		vk.CmdSetViewport(cmd, 0, 1, &viewport)
-		vk.CmdSetScissor(cmd, 0, 1, &scissor)
-		debug_pc := DebugPC{scene_data.shadow_near, scene_data.shadow_far, 6, 0}
+		debug_pc := DebugPC{scene_data.shadow_near, scene_data.shadow_far, u32(i), 0}
 		backend.pipeline_push(cmd, pipeline, {.FRAGMENT}, &debug_pc)
 		vk.CmdDraw(cmd, 3, 1, 0, 0)
 	}

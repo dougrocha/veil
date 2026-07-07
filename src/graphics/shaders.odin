@@ -16,6 +16,7 @@ COMPUTE_MAIN :: "compute_main"
 
 DEFAULT_VERTEX_ENTRY: cstring : VERTEX_ENTRY
 DEFAULT_FRAGMENT_ENTRY: cstring : FRAGMENT_MAIN
+DEFAULT_COMPUTE_ENTRY: cstring : COMPUTE_MAIN
 
 ShaderHandle :: Handle(vk.ShaderModule)
 
@@ -28,7 +29,7 @@ ShaderSystem :: struct {
 	fw:             FileWatcher,
 }
 
-create_shader_system :: proc(self: ^Engine) -> bool {
+shader_system_create :: proc(self: ^Engine) -> bool {
 	ss := &self.shader_system
 	if res := sp.createGlobalSession(sp.API_VERSION, &ss.global_session); sp.FAILED(res) {
 		log.errorf("Could not create Slang global session")
@@ -44,7 +45,7 @@ create_shader_system :: proc(self: ^Engine) -> bool {
 	return true
 }
 
-destroy_shader_system :: proc(self: ^Engine) {
+shader_system_destroy :: proc(self: ^Engine) {
 	ss := &self.shader_system
 	for &module, i in ss.modules.values {
 		if pool_is_alive(&ss.modules, u32(i)) {
@@ -57,9 +58,35 @@ destroy_shader_system :: proc(self: ^Engine) {
 	ss.global_session->release()
 }
 
+shader_default_stages :: proc(engine: ^Engine, handle: ShaderHandle) -> [2]vk.PipelineShaderStageCreateInfo {
+	return {
+		{
+			sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+			stage = {.VERTEX},
+			module = shader_get(engine, handle),
+			pName = DEFAULT_VERTEX_ENTRY,
+		},
+		{
+			sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+			stage = {.FRAGMENT},
+			module = shader_get(engine, handle),
+			pName = DEFAULT_FRAGMENT_ENTRY,
+		},
+	}
+}
+
+shader_default_compute_stage :: proc(engine: ^Engine, handle: ShaderHandle) -> vk.PipelineShaderStageCreateInfo {
+	return {
+		sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+		stage = {.COMPUTE},
+		module = shader_get(engine, handle),
+		pName = DEFAULT_COMPUTE_ENTRY,
+	}
+}
+
 // Compiles a Slang module by name and caches the resulting VkShaderModule.
 // entry_points lists the entry point names to link into the SPIR-V blob.
-load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) -> (ShaderHandle, bool) {
+shader_load :: proc(self: ^Engine, module_name: string, entry_points: []string) -> (ShaderHandle, bool) {
 	ss := &self.shader_system
 
 	compiler_option_entries := []sp.CompilerOptionEntry {
@@ -167,11 +194,11 @@ load_shader :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	return handle, true
 }
 
-get_shader :: proc(self: ^Engine, handle: ShaderHandle) -> vk.ShaderModule {
+shader_get :: proc(self: ^Engine, handle: ShaderHandle) -> vk.ShaderModule {
 	return pool_get(&self.shader_system.modules, handle)^
 }
 
-check_shader_hotreload :: proc(self: ^Engine) {
+shader_poll_hotreload :: proc(self: ^Engine) {
 	ss := &self.shader_system
 
 	buf: [4096]u8
