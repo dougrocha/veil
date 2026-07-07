@@ -45,8 +45,7 @@ main :: proc() {
 	}
 	defer gfx.engine_shutdown(&app.engine)
 
-	app.engine.scene.camera = gfx.camera_create({-9, 5, 1}, yaw = -6, pitch = -29)
-
+	app.engine.camera_system.default_camera = gfx.camera_create({-9, 5, 1}, yaw = -6, pitch = -29)
 
 	wood_gate_mat := gfx.material_create(
 		&app.engine,
@@ -195,8 +194,15 @@ main :: proc() {
 	gfx.get_instance(&app.engine, light_sphere).transform.translation = light_pos
 	gfx.get_instance(&app.engine, light_sphere2).transform.translation = light_pos2
 
+	gfx.camera_system_add_camera(
+		&app.engine.camera_system,
+		"flipped_camera",
+		gfx.camera_create({-9, 5, 1}, yaw = 180 - 6, pitch = 29),
+	)
+
 	main_loop: for {
 		ev: sdl.Event
+		active_cam := gfx.camera_system_get_camera(&app.engine.camera_system, app.engine.scene.active_camera_name)
 
 		for sdl.PollEvent(&ev) {
 			#partial switch ev.type {
@@ -207,23 +213,29 @@ main :: proc() {
 				case .ESCAPE:
 					mouse_captured = !mouse_captured
 					_ = sdl.SetWindowRelativeMouseMode(app.window, mouse_captured)
+				case .E:
+					if app.engine.scene.active_camera_name == gfx.DEFAULT_CAMERA_NAME {
+						app.engine.scene.active_camera_name = "flipped_camera"
+					} else {
+						app.engine.scene.active_camera_name = gfx.DEFAULT_CAMERA_NAME
+					}
 				case ._1:
-					app.engine.scene.camera.near = 0.1
-					app.engine.scene.camera.far = 5000.0
+					active_cam.near = 0.1
+					active_cam.far = 5000.0
 				case ._2:
-					app.engine.scene.camera.near = 0.1
-					app.engine.scene.camera.far = 20.0
+					active_cam.near = 0.1
+					active_cam.far = 20.0
 				case ._3:
-					app.engine.scene.camera.near = 20.0
-					app.engine.scene.camera.far = 80.0
+					active_cam.near = 20.0
+					active_cam.far = 80.0
 				case ._4:
-					app.engine.scene.camera.near = 80.0
-					app.engine.scene.camera.far = 400.0
+					active_cam.near = 80.0
+					active_cam.far = 400.0
 				}
 			case .MOUSE_MOTION:
-				if mouse_captured do gfx.camera_process_mouse_movement(&app.engine.scene.camera, ev.motion.xrel, -ev.motion.yrel)
+				if mouse_captured do gfx.camera_process_mouse_movement(active_cam, ev.motion.xrel, -ev.motion.yrel)
 			case .MOUSE_WHEEL:
-				gfx.camera_process_mouse_scroll(&app.engine.scene.camera, ev.wheel.y)
+				gfx.camera_process_mouse_scroll(active_cam, ev.wheel.y)
 			case .WINDOW_PIXEL_SIZE_CHANGED:
 				app.width = u32(ev.window.data1)
 				app.height = u32(ev.window.data2)
@@ -239,24 +251,24 @@ main :: proc() {
 		app.engine.clock.fps_timer += app.engine.clock.delta_time
 		if app.engine.clock.fps_timer >= 1.0 {
 			log.infof("FPS: %d, models drawn: %d", app.engine.clock.fps_frame_count, app.engine.drawn_instance_count)
-			log.infof("Camera position: %v", app.engine.scene.camera.position)
+			log.infof("(%v) Camera position: %v", app.engine.scene.active_camera_name, active_cam.position)
 			app.engine.clock.fps_frame_count = 0
 			app.engine.clock.fps_timer = 0
 		}
 
-		process_input(&app.engine, app.engine.clock.delta_time)
+		process_input(active_cam, app.engine.clock.delta_time)
 		gfx.engine_render(&app)
 	}
 }
 
-process_input :: proc(engine: ^gfx.Engine, dt: f32) {
+process_input :: proc(camera: ^gfx.Camera, dt: f32) {
 	keys := sdl.GetKeyboardState(nil)
 
-	if keys[sdl.Scancode.W] do gfx.camera_process_keyboard(&engine.scene.camera, .Forward, dt)
-	if keys[sdl.Scancode.S] do gfx.camera_process_keyboard(&engine.scene.camera, .Backward, dt)
-	if keys[sdl.Scancode.A] do gfx.camera_process_keyboard(&engine.scene.camera, .Left, dt)
-	if keys[sdl.Scancode.D] do gfx.camera_process_keyboard(&engine.scene.camera, .Right, dt)
-	if keys[sdl.Scancode.SPACE] do gfx.camera_process_keyboard(&engine.scene.camera, .Up, dt)
-	if keys[sdl.Scancode.LCTRL] do gfx.camera_process_keyboard(&engine.scene.camera, .Down, dt)
+	if keys[sdl.Scancode.W] do gfx.camera_process_keyboard(camera, .Forward, dt)
+	if keys[sdl.Scancode.S] do gfx.camera_process_keyboard(camera, .Backward, dt)
+	if keys[sdl.Scancode.A] do gfx.camera_process_keyboard(camera, .Left, dt)
+	if keys[sdl.Scancode.D] do gfx.camera_process_keyboard(camera, .Right, dt)
+	if keys[sdl.Scancode.SPACE] do gfx.camera_process_keyboard(camera, .Up, dt)
+	if keys[sdl.Scancode.LCTRL] do gfx.camera_process_keyboard(camera, .Down, dt)
 }
 

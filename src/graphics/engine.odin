@@ -37,7 +37,8 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 	engine.clock.start_time = time.now()
 	engine.clock.last_frame_time = engine.clock.start_time
-	engine.scene.camera = camera_create({0, 0, 0})
+	engine.camera_system = camera_system_create({max_camera_count = 10})
+	engine.scene.active_camera_name = DEFAULT_CAMERA_NAME
 	engine.scene.ambient_light = AmbientLight {
 		color      = {1, 1, 1, 1},
 		brightness = 0.03,
@@ -542,8 +543,9 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 	}
 	backend.pipeline_bind(cmd, mesh_pipeline, .GRAPHICS, sets[:])
 
+	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	frustum := frustum_create_from_camera(
-		&engine.scene.camera,
+		active_camera,
 		f32(engine.swapchain.extent.width) / f32(engine.swapchain.extent.height),
 	)
 
@@ -600,7 +602,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: vk.CommandBuffer) {
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode != .Blend do continue
 			pos := instance.transform.translation
-			cam := engine.scene.camera.position
+			cam := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name).position
 			dist := linalg.length(pos - cam)
 			append(&transparent, TransparentEntry{index = i, dist = dist})
 			break

@@ -51,16 +51,17 @@ create_particle_buffer :: proc(engine: ^Engine) {
 scene_data_buffer_update :: proc(engine: ^Engine) {
 	frame_index := current_frame_res_index(engine)
 	aspect := f32(engine.swapchain.extent.width) / f32(engine.swapchain.extent.height)
+	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	scene := SceneData {
-		view                    = camera_get_view_matrix(engine.scene.camera),
-		proj                    = camera_get_projection_matrix(engine.scene.camera, aspect),
+		view                    = camera_get_view_matrix(active_camera^),
+		proj                    = camera_get_projection_matrix(active_camera^, aspect),
 		point_lights            = engine.scene.point_lights,
 		point_light_count       = engine.scene.point_light_count,
 		directional_lights      = engine.scene.directional_lights,
 		directional_light_count = engine.scene.directional_light_count,
 		spot_lights             = engine.scene.spot_lights,
 		spot_light_count        = engine.scene.spot_light_count,
-		cam_pos                 = engine.scene.camera.position,
+		cam_pos                 = active_camera.position,
 		ambient_light           = engine.scene.ambient_light,
 	}
 	scene.proj[1][1] *= -1.0
@@ -101,7 +102,7 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		// distance (which can be huge, e.g. 5000) — otherwise the ortho volume balloons
 		// and the scene's actual depth range collapses into a sliver of [near, far],
 		// leaving barely any contrast in the shadow map.
-		shadow_camera := engine.scene.camera
+		shadow_camera := active_camera^
 		shadow_camera.far = min(shadow_camera.far, light_far)
 		corners := frustum_corners_from_camera(&shadow_camera, aspect)
 

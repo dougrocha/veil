@@ -1,8 +1,73 @@
 package graphics
 
+import "core:log"
 import "core:math/linalg"
 
 // right-hand rule: thumb=+X (right), index=+Y (up), middle=+Z (toward you/outside screen)
+
+DEFAULT_CAMERA_NAME :: "default_camera"
+
+CameraSystemConfig :: struct {
+	max_camera_count: int,
+}
+
+CameraSystem :: struct {
+	config:         CameraSystemConfig,
+	default_camera: Camera,
+	cameras:        map[string]Camera,
+}
+
+camera_system_create :: proc(config: CameraSystemConfig) -> CameraSystem {
+	cs := CameraSystem {
+		config         = config,
+		default_camera = camera_create(),
+	}
+	reserve(&cs.cameras, config.max_camera_count)
+	return cs
+}
+
+camera_system_destroy :: proc(cs: ^CameraSystem) {
+	delete(cs.cameras)
+}
+
+camera_system_add_camera :: proc(cs: ^CameraSystem, name: string, camera: Camera) {
+	log.assertf(
+		len(cs.cameras) < cs.config.max_camera_count,
+		"camera system full (max %v)",
+		cs.config.max_camera_count,
+	)
+	cam := camera
+	cam.name = name
+	cs.cameras[name] = cam
+}
+
+camera_system_get_camera :: proc(cs: ^CameraSystem, name: string) -> ^Camera {
+	if name == DEFAULT_CAMERA_NAME {
+		return &cs.default_camera
+	}
+
+	cam, ok := &cs.cameras[name]
+	log.assertf(ok, "camera (%v) not found", name)
+	return cam
+}
+
+camera_system_delete_camera :: proc(cs: ^CameraSystem, name: string) {
+	if name == DEFAULT_CAMERA_NAME {
+		log.warnf("cannot delete default camera")
+		return
+	}
+
+	if !(name in cs.cameras) {
+		log.assertf(false, "camera (%v) not found", name)
+		return
+	}
+
+	delete_key(&cs.cameras, name)
+}
+
+camera_system_get_default :: proc(cs: ^CameraSystem) -> ^Camera {
+	return &cs.default_camera
+}
 
 // TODO: wire up later
 CameraType :: enum {
@@ -13,6 +78,8 @@ CameraType :: enum {
 }
 
 Camera :: struct {
+	name:              string,
+
 	// Spatial positioning and orientation vectors using right hand coordinate system
 	// These form the camera's local coordinate system in world space
 	position:          Vec3,

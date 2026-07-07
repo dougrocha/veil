@@ -68,6 +68,8 @@ Engine :: struct {
 
 	// simulation state — no Vulkan types
 	scene:                Scene,
+	camera_system:        CameraSystem,
+
 
 	// stats
 	drawn_instance_count: u32,
@@ -75,7 +77,7 @@ Engine :: struct {
 
 // Everything the game mutates. No Vulkan types in here.
 Scene :: struct {
-	camera:                  Camera,
+	active_camera_name:      string,
 	ambient_light:           AmbientLight,
 	point_lights:            [16]PointLight,
 	directional_lights:      [4]DirectionalLight,
