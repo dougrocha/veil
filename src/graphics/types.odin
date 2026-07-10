@@ -86,6 +86,7 @@ Scene :: struct {
 	directional_light_count: u32,
 	spot_light_count:        u32,
 	instances:               Pool(Instance),
+	selected_instance:       InstanceHandle,
 }
 
 PointLight :: struct {

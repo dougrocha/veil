@@ -33,6 +33,7 @@ load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 
 	bounds_min := Vec3{max(f32), max(f32), max(f32)}
 	bounds_max := Vec3{min(f32), min(f32), min(f32)}
+	all_positions := make([dynamic]Vec3, context.temp_allocator)
 
 	for &mesh in gltf_data.meshes {
 		for &prim in mesh.primitives {
@@ -70,6 +71,7 @@ load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 
 				bounds_min = linalg.min(bounds_min, pos)
 				bounds_max = linalg.max(bounds_max, pos)
+				append(&all_positions, pos)
 
 				if uv_acc != nil {
 					uv: [2]f32
@@ -125,7 +127,11 @@ load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 	}
 
 	center := (bounds_min + bounds_max) * 0.5
-	model.bounds = BoundingSphere{center, linalg.length(bounds_max - center)}
+	radius: f32 = 0
+	for p in all_positions {
+		radius = max(radius, linalg.length(p - center))
+	}
+	model.bounds = BoundingSphere{center, radius}
 
 	handle := pool_alloc(&engine.model_system.models, model)
 	engine.model_system.model_map[path] = handle

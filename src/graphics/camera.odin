@@ -149,6 +149,30 @@ camera_get_projection_matrix :: proc(c: Camera, aspect: f32) -> Mat4x4 {
 	return matrix4_perspective_z0_f32(c.fov_y, aspect, c.near, c.far)
 }
 
+// Unprojects a screen-space mouse position into a world-space ray.
+// mouse_pos and viewport_size are both in pixels (mouse_pos: top-left origin).
+screen_to_world_ray :: proc(camera: Camera, mouse_pos: Vec2, viewport_size: Vec2) -> (origin: Vec3, dir: Vec3) {
+	ndc := Vec3{mouse_pos.x / viewport_size.x, mouse_pos.y / viewport_size.y, 1}
+	ndc *= 2
+	ndc -= 1
+	ndc.y = -ndc.y // this engine's projection matrix expects NDC +y = up, but mouse_pos.y grows downward
+	ndc.z = 1 // far plane, in Vulkan's [0,1] depth range
+
+	aspect := viewport_size.x / viewport_size.y
+	inverse_proj := linalg.inverse(camera_get_projection_matrix(camera, aspect))
+	inverse_view := linalg.inverse(camera_get_view_matrix(camera))
+
+	clip := Vec4{ndc.x, ndc.y, ndc.z, 1}
+	view_pos := inverse_proj * clip
+	view_pos.xyz /= view_pos.w // undo the perspective divide
+
+	world_pos := (inverse_view * Vec4{view_pos.x, view_pos.y, view_pos.z, 1}).xyz
+
+	origin = camera.position
+	dir = linalg.normalize(world_pos - origin)
+	return
+}
+
 CameraMovement :: enum {
 	Forward,
 	Backward,
