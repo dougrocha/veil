@@ -15,6 +15,7 @@ PipelineKind :: enum u8 {
 	Particle_Draw,
 	Particle_Compute,
 	Debug_Shadow,
+	Line_List,
 }
 
 PipelineRegistry :: struct {

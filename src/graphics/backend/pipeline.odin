@@ -74,8 +74,8 @@ pipeline_config_set_blend :: proc(config: ^GraphicsPipelineConfig, mode: BlendMo
 }
 
 pipeline_config_disable_depth :: proc(config: ^GraphicsPipelineConfig) {
-	config.depth_stencil_info.depthTestEnable = false
-	config.depth_stencil_info.depthWriteEnable = false
+	config.depth_stencil.depthTestEnable = false
+	config.depth_stencil.depthWriteEnable = false
 }
 
 pipeline_config_set_descriptor_layouts :: proc(config: ^GraphicsPipelineConfig, layouts: []vk.DescriptorSetLayout) {
@@ -87,13 +87,13 @@ pipeline_config_set_descriptor_layouts :: proc(config: ^GraphicsPipelineConfig, 
 
 
 GraphicsPipelineConfig :: struct {
-	viewport_info:            vk.PipelineViewportStateCreateInfo,
-	input_assembly_info:      vk.PipelineInputAssemblyStateCreateInfo,
-	rasterization_info:       vk.PipelineRasterizationStateCreateInfo,
-	multi_sample_info:        vk.PipelineMultisampleStateCreateInfo,
+	viewport:                 vk.PipelineViewportStateCreateInfo,
+	input_assembly:           vk.PipelineInputAssemblyStateCreateInfo,
+	rasterization:            vk.PipelineRasterizationStateCreateInfo,
+	multi_sample:             vk.PipelineMultisampleStateCreateInfo,
 	color_blend_attachment:   vk.PipelineColorBlendAttachmentState,
-	color_blend_info:         vk.PipelineColorBlendStateCreateInfo,
-	depth_stencil_info:       vk.PipelineDepthStencilStateCreateInfo,
+	color_blend:              vk.PipelineColorBlendStateCreateInfo,
+	depth_stencil:            vk.PipelineDepthStencilStateCreateInfo,
 	dynamic_states:           [3]vk.DynamicState,
 	dynamic_state_info:       vk.PipelineDynamicStateCreateInfo,
 	color_attachment_formats: [8]vk.Format,
@@ -116,7 +116,7 @@ PipelineConfig :: union {
 }
 
 pipeline_default_config :: proc(config: ^GraphicsPipelineConfig) {
-	config.viewport_info = {
+	config.viewport = {
 		sType         = .PIPELINE_VIEWPORT_STATE_CREATE_INFO,
 		pViewports    = nil,
 		viewportCount = 1,
@@ -124,13 +124,13 @@ pipeline_default_config :: proc(config: ^GraphicsPipelineConfig) {
 		scissorCount  = 1,
 	}
 
-	config.input_assembly_info = {
+	config.input_assembly = {
 		sType                  = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
 		topology               = .TRIANGLE_LIST,
 		primitiveRestartEnable = false,
 	}
 
-	config.rasterization_info = {
+	config.rasterization = {
 		sType                   = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 		depthClampEnable        = false,
 		rasterizerDiscardEnable = false,
@@ -151,7 +151,7 @@ pipeline_default_config :: proc(config: ^GraphicsPipelineConfig) {
 		pDynamicStates    = raw_data(&config.dynamic_states),
 	}
 
-	config.multi_sample_info = {
+	config.multi_sample = {
 		sType                 = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
 		sampleShadingEnable   = false,
 		rasterizationSamples  = {._1},
@@ -170,7 +170,7 @@ pipeline_default_config :: proc(config: ^GraphicsPipelineConfig) {
 		alphaBlendOp        = .ADD,
 	}
 
-	config.color_blend_info = {
+	config.color_blend = {
 		sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
 		logicOpEnable   = false,
 		logicOp         = .COPY,
@@ -179,7 +179,7 @@ pipeline_default_config :: proc(config: ^GraphicsPipelineConfig) {
 		blendConstants  = {0, 0, 0, 0},
 	}
 
-	config.depth_stencil_info = {
+	config.depth_stencil = {
 		sType                 = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 		depthTestEnable       = true,
 		depthWriteEnable      = true,
@@ -226,13 +226,13 @@ pipeline_create :: proc(
 		stageCount          = u32(len(shader_stages)),
 		pStages             = raw_data(shader_stages[:]),
 		pVertexInputState   = &vertex_input_info,
-		pInputAssemblyState = &config.input_assembly_info,
+		pInputAssemblyState = &config.input_assembly,
 		// pTessellationState:  ^PipelineTessellationStateCreateInfo,
-		pViewportState      = &config.viewport_info,
-		pRasterizationState = &config.rasterization_info,
-		pMultisampleState   = &config.multi_sample_info,
-		pDepthStencilState  = &config.depth_stencil_info,
-		pColorBlendState    = &config.color_blend_info,
+		pViewportState      = &config.viewport,
+		pRasterizationState = &config.rasterization,
+		pMultisampleState   = &config.multi_sample,
+		pDepthStencilState  = &config.depth_stencil,
+		pColorBlendState    = &config.color_blend,
 		pDynamicState       = &config.dynamic_state_info,
 		layout              = layout,
 		// renderPass:          RenderPass,

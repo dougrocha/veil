@@ -70,9 +70,11 @@ Engine :: struct {
 	scene:                Scene,
 	camera_system:        CameraSystem,
 
-
 	// stats
 	drawn_instance_count: u32,
+
+	// other stuff
+	line_renderer:        LineRenderer,
 }
 
 // Everything the game mutates. No Vulkan types in here.

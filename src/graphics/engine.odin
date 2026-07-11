@@ -100,9 +100,9 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	{
 		config := new(GraphicsPipelineConfig)
 		backend.pipeline_default_config(config)
-		config.rasterization_info.cullMode = {}
-		config.rasterization_info.depthBiasEnable = true
-		config.depth_stencil_info.depthCompareOp = .LESS_OR_EQUAL
+		config.rasterization.cullMode = {}
+		config.rasterization.depthBiasEnable = true
+		config.depth_stencil.depthCompareOp = .LESS_OR_EQUAL
 		config.rendering_info = {
 			sType                 = .PIPELINE_RENDERING_CREATE_INFO,
 			colorAttachmentCount  = 0,
@@ -117,9 +117,9 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 
 		dir_config := new(GraphicsPipelineConfig)
 		backend.pipeline_default_config(dir_config)
-		dir_config.rasterization_info.cullMode = {}
-		dir_config.rasterization_info.depthBiasEnable = true
-		dir_config.depth_stencil_info.depthCompareOp = .LESS_OR_EQUAL
+		dir_config.rasterization.cullMode = {}
+		dir_config.rasterization.depthBiasEnable = true
+		dir_config.depth_stencil.depthCompareOp = .LESS_OR_EQUAL
 		dir_config.rendering_info = {
 			sType                 = .PIPELINE_RENDERING_CREATE_INFO,
 			colorAttachmentCount  = 0,
@@ -137,7 +137,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	{
 		config := new(GraphicsPipelineConfig)
 		backend.pipeline_default_config(config)
-		config.rasterization_info.cullMode = {}
+		config.rasterization.cullMode = {}
 		backend.pipeline_config_disable_depth(config)
 		backend.pipeline_config_set_blend(config, .Alpha)
 		config.push_constant_range = {
@@ -152,7 +152,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	{
 		config := new(GraphicsPipelineConfig)
 		backend.pipeline_default_config(config)
-		config.multi_sample_info.rasterizationSamples = engine.vk_ctx.msaa_samples
+		config.multi_sample.rasterizationSamples = engine.vk_ctx.msaa_samples
 		backend.pipeline_config_set_blend(config, .Alpha)
 		backend.pipeline_config_set_descriptor_layouts(
 			config,
@@ -170,9 +170,9 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	{
 		config := new(GraphicsPipelineConfig)
 		backend.pipeline_default_config(config)
-		config.input_assembly_info.topology = .POINT_LIST
-		config.rasterization_info.cullMode = {}
-		config.multi_sample_info.rasterizationSamples = engine.vk_ctx.msaa_samples
+		config.input_assembly.topology = .POINT_LIST
+		config.rasterization.cullMode = {}
+		config.multi_sample.rasterizationSamples = engine.vk_ctx.msaa_samples
 		backend.pipeline_config_disable_depth(config)
 		backend.pipeline_config_set_blend(config, .Alpha)
 		config.push_constant_range = {
@@ -198,10 +198,10 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	{
 		config := new(GraphicsPipelineConfig)
 		backend.pipeline_default_config(config)
-		config.rasterization_info.cullMode = {}
-		config.depth_stencil_info.depthWriteEnable = false
-		config.depth_stencil_info.depthCompareOp = .LESS_OR_EQUAL
-		config.multi_sample_info.rasterizationSamples = engine.vk_ctx.msaa_samples
+		config.rasterization.cullMode = {}
+		config.depth_stencil.depthWriteEnable = false
+		config.depth_stencil.depthCompareOp = .LESS_OR_EQUAL
+		config.multi_sample.rasterizationSamples = engine.vk_ctx.msaa_samples
 		backend.pipeline_config_set_descriptor_layouts(config, {engine.global_descriptor.layout})
 		config.push_constant_range = {
 			stageFlags = {.VERTEX, .FRAGMENT},
@@ -215,7 +215,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	{
 		config := new(GraphicsPipelineConfig)
 		backend.pipeline_default_config(config)
-		config.rasterization_info.cullMode = {}
+		config.rasterization.cullMode = {}
 		backend.pipeline_config_disable_depth(config)
 		config.rendering_info.depthAttachmentFormat = .UNDEFINED
 		backend.pipeline_config_set_descriptor_layouts(config, {engine.global_descriptor.layout})
@@ -225,6 +225,10 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 		}
 		stages := shader_default_stages(engine, debug_shadow_map_handle)
 		pipeline_register(engine, .Debug_Shadow, debug_shadow_map_handle, config, stages[:])
+	}
+
+	{
+		line_renderer_create(engine) or_return
 	}
 
 	return true
