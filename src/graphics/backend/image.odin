@@ -248,19 +248,6 @@ generate_mipmaps :: proc(ctx: ^VulkanContext, image: vk.Image, format: vk.Format
 	}
 }
 
-get_max_usable_sample_count :: proc(ctx: ^VulkanContext) -> vk.SampleCountFlags {
-	properties := vk_get_physical_device_properties(ctx)
-	counts := properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts
-
-	if ._64 in counts {return {._64}}
-	if ._32 in counts {return {._32}}
-	if ._16 in counts {return {._16}}
-	if ._8 in counts {return {._8}}
-	if ._4 in counts {return {._4}}
-	if ._2 in counts {return {._2}}
-	return {._1}
-}
-
 copy_image_to_image :: proc(cmd: vk.CommandBuffer, src, dst: vk.Image, src_extent, dst_extent: vk.Extent2D) {
 	blit_region := vk.ImageBlit2 {
 		sType = .IMAGE_BLIT_2,

@@ -67,10 +67,7 @@ initialize_vulkan :: proc(app: ^App) -> (ok: bool) {
 	backend.frame_sync_create(vk_ctx)
 	frame_data_create(engine)
 
-	// global_descriptor below reserves 3 combined-image-sampler slots in the
-	// same per-stage sampler budget, so the bindless pool must leave room for
-	// those (and stay within whatever the device actually advertises, since
-	// MoltenVK reports a much lower limit than desktop GPUs).
+	// macos (Moltenvk) wont support what we set for MAX_TEXTURES
 	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_samplers_per_stage - 3)
 	texture_system_create(engine, {max_textures_count = max_bindless_textures})
 	material_system_create(engine, {max_material_count = MAX_MATERIALS})

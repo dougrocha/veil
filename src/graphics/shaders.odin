@@ -5,6 +5,7 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 
+import "../watcher"
 import "backend"
 import "../watcher"
 
@@ -25,14 +26,9 @@ INVALID_SHADER_HANDLE :: ShaderHandle{}
 
 ShaderSystem :: struct {
 	global_session: ^sp.IGlobalSession,
-	// One long-lived session reused for every shader_load call. Slang's
-	// module cache is shared across sessions created from the same global
-	// session, but its backing storage is owned per-session; on this
-	// vendored macOS build, releasing a session while another still holds
-	// cached imports from it (e.g. the shared "types" module) corrupts the
-	// heap. Creating one session up front and releasing it only at shutdown
-	// sidesteps that entirely, and matches Slang's own intended usage
-	// (sessions are meant to be reused across many loadModule calls).
+	// this session is different than the global session, this session stores the
+	// current configuration for our shader setup, meaning we can create multiple
+	// sessions under the single global_session to support different shader languages, etc
 	session:        ^sp.ISession,
 	modules:        Pool(vk.ShaderModule),
 	name_to_handle: map[string]ShaderHandle,

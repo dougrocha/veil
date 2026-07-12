@@ -35,8 +35,11 @@ context_init :: proc(ctx: ^VulkanContext, window: ^sdl.Window) -> bool {
 	}
 	vma_init(ctx)
 
-	ctx.msaa_samples = get_max_usable_sample_count(ctx)
-	ctx.max_bindless_samplers_per_stage = query_max_bindless_samplers_per_stage(ctx)
+	ctx.msaa_samples = vk_get_max_usable_sample_count(ctx)
+	// MoltenVK on macos supports way less than a normal desktop (discrete) gpu.
+	// so bindless array sizes must be clamped to what the device
+	// actually supports instead of a single hardcoded constant.
+	ctx.max_bindless_samplers_per_stage = vk_get_max_bindless_samplers_per_stage(ctx)
 
 	return true
 }
@@ -107,7 +110,7 @@ instance_create :: proc(ctx: ^VulkanContext) {
 
 	instance_flags: vk.InstanceCreateFlags
 	when ODIN_OS == .Darwin {
-		// MoltenVK is a portability driver; the loader hides it unless we opt in.
+		// MoltenVK is a portability driver, the loader hides it unless we opt in
 		append(&extensions, vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)
 		instance_flags += {.ENUMERATE_PORTABILITY_KHR}
 	}

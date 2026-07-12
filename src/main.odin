@@ -4,6 +4,7 @@ import "core:c"
 import "core:log"
 import "core:math"
 import "core:math/linalg"
+import "core:os"
 import "core:time"
 
 import sdl "vendor:sdl3"
