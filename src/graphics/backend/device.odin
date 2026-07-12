@@ -10,9 +10,9 @@ import vk "vendor:vulkan"
 
 VALIDATION_LAYER_NAME :: "VK_LAYER_KHRONOS_validation"
 
-g_ctx: runtime.Context
-
 context_init :: proc(ctx: ^VulkanContext, window: ^sdl.Window) -> bool {
+	ctx.logger = context.logger
+
 	instance_create(ctx)
 
 	surface, surface_ok := surface_create(ctx.instance, window)
@@ -36,8 +36,26 @@ context_init :: proc(ctx: ^VulkanContext, window: ^sdl.Window) -> bool {
 	vma_init(ctx)
 
 	ctx.msaa_samples = get_max_usable_sample_count(ctx)
+	ctx.max_bindless_samplers_per_stage = query_max_bindless_samplers_per_stage(ctx)
 
 	return true
+}
+
+// MoltenVK maps this to Metal's argument buffer limits, which are far lower
+// than what desktop GPUs report (e.g. 1024 on Apple Silicon vs ~1,000,000+ on
+// discrete GPUs), so bindless array sizes must be clamped to what the device
+// actually supports instead of a single hardcoded constant.
+query_max_bindless_samplers_per_stage :: proc(ctx: ^VulkanContext) -> u32 {
+	descriptor_indexing_props := vk.PhysicalDeviceDescriptorIndexingProperties {
+		sType = .PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES,
+	}
+	props2 := vk.PhysicalDeviceProperties2 {
+		sType = .PHYSICAL_DEVICE_PROPERTIES_2,
+		pNext = &descriptor_indexing_props,
+	}
+	vk.GetPhysicalDeviceProperties2(ctx.physical_device, &props2)
+
+	return descriptor_indexing_props.maxPerStageDescriptorUpdateAfterBindSamplers
 }
 
 context_destroy :: proc(ctx: ^VulkanContext) {
@@ -45,7 +63,27 @@ context_destroy :: proc(ctx: ^VulkanContext) {
 	vma.destroy_allocator(ctx.vma_allocator)
 	vk.DestroyDevice(ctx.device, nil)
 	vk.DestroySurfaceKHR(ctx.instance, ctx.surface, nil)
+	vk.DestroyDebugUtilsMessengerEXT(ctx.instance, ctx.debug_messenger, nil)
 	vk.DestroyInstance(ctx.instance, nil)
+}
+
+validation_layer_available :: proc() -> bool {
+	layer_count: u32
+	vk.EnumerateInstanceLayerProperties(&layer_count, nil)
+	if layer_count == 0 {
+		return false
+	}
+
+	layers := make([]vk.LayerProperties, layer_count, context.temp_allocator)
+	vk.EnumerateInstanceLayerProperties(&layer_count, raw_data(layers))
+
+	for &layer in layers {
+		name := cstring(raw_data(layer.layerName[:]))
+		if name == VALIDATION_LAYER_NAME {
+			return true
+		}
+	}
+	return false
 }
 
 instance_create :: proc(ctx: ^VulkanContext) {
@@ -74,13 +112,23 @@ instance_create :: proc(ctx: ^VulkanContext) {
 		instance_flags += {.ENUMERATE_PORTABILITY_KHR}
 	}
 
-	requested_layers := []cstring{VALIDATION_LAYER_NAME}
+	has_validation_layer := validation_layer_available()
+	requested_layers := make([dynamic]cstring, context.temp_allocator)
+	if has_validation_layer {
+		append(&requested_layers, VALIDATION_LAYER_NAME)
+	} else {
+		log.warnf(
+			"%s not found (SDL may be loading MoltenVK directly, bypassing the Vulkan Loader's layer enumeration); running without validation",
+			VALIDATION_LAYER_NAME,
+		)
+	}
 
 	dbg_create_info := vk.DebugUtilsMessengerCreateInfoEXT {
 		sType           = .DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
 		messageSeverity = {.VERBOSE, .INFO, .WARNING, .ERROR},
 		messageType     = {.GENERAL, .VALIDATION, .PERFORMANCE},
 		pfnUserCallback = vk_messenger_callback,
+		pUserData       = ctx,
 	}
 
 	create_info := vk.InstanceCreateInfo {
@@ -96,6 +144,10 @@ instance_create :: proc(ctx: ^VulkanContext) {
 
 	vk_check(vk.CreateInstance(&create_info, nil, &ctx.instance))
 	vk.load_proc_addresses_instance(ctx.instance)
+
+	if has_validation_layer {
+		vk_check(vk.CreateDebugUtilsMessengerEXT(ctx.instance, &dbg_create_info, nil, &ctx.debug_messenger))
+	}
 }
 
 surface_create :: proc(instance: vk.Instance, window: ^sdl.Window) -> (vk.SurfaceKHR, bool) {
@@ -300,11 +352,12 @@ vk_messenger_callback :: proc "system" (
 	pCallbackData: ^vk.DebugUtilsMessengerCallbackDataEXT,
 	pUserData: rawptr,
 ) -> b32 {
-	context = g_ctx
+	ctx := cast(^VulkanContext)pUserData
+	context = runtime.default_context()
+	context.logger = ctx.logger
 
 	level: log.Level
 	if .ERROR in messageSeverity {
-		runtime.debug_trap()
 		level = .Error
 	} else if .WARNING in messageSeverity {
 		level = .Warning
@@ -315,5 +368,12 @@ vk_messenger_callback :: proc "system" (
 	}
 
 	log.logf(level, "vulkan[%v]: %s", messageTypes, pCallbackData.pMessage)
+
+	when ODIN_DEBUG {
+		if .ERROR in messageSeverity {
+			runtime.debug_trap()
+		}
+	}
+
 	return false
 }

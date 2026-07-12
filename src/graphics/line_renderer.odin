@@ -11,6 +11,11 @@ LineVertex :: struct {
 	color:    Vec4,
 }
 
+LinePushConstants :: struct {
+	scene_data:    GPUPtr(SceneData),
+	vertex_buffer: GPUPtr(LineVertex),
+}
+
 LineRenderer :: struct {
 	vertices: [dynamic]LineVertex,
 	buffers:  [MAX_FRAMES_IN_FLIGHT]GpuBuffer(LineVertex),
@@ -23,6 +28,10 @@ line_renderer_create :: proc(engine: ^Engine) -> (ok: bool) {
 	backend.pipeline_default_config(config)
 	config.rasterization.cullMode = {}
 	config.input_assembly.topology = .LINE_LIST
+	config.push_constant_range = {
+		stageFlags = {.VERTEX, .FRAGMENT},
+		size       = size_of(LinePushConstants),
+	}
 
 	shader_handle := shader_load(engine, "line", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	stages := shader_default_stages(engine, shader_handle)

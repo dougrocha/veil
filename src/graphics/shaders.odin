@@ -1,11 +1,12 @@
 package graphics
 
 import "core:log"
+import "core:path/filepath"
 import "core:slice"
 import "core:strings"
-import linux "core:sys/linux"
 
 import "backend"
+import "../watcher"
 
 import sp "shared:odin-slang/slang"
 import vk "vendor:vulkan"
@@ -24,9 +25,18 @@ INVALID_SHADER_HANDLE :: ShaderHandle{}
 
 ShaderSystem :: struct {
 	global_session: ^sp.IGlobalSession,
+	// One long-lived session reused for every shader_load call. Slang's
+	// module cache is shared across sessions created from the same global
+	// session, but its backing storage is owned per-session; on this
+	// vendored macOS build, releasing a session while another still holds
+	// cached imports from it (e.g. the shared "types" module) corrupts the
+	// heap. Creating one session up front and releasing it only at shutdown
+	// sidesteps that entirely, and matches Slang's own intended usage
+	// (sessions are meant to be reused across many loadModule calls).
+	session:        ^sp.ISession,
 	modules:        Pool(vk.ShaderModule),
 	name_to_handle: map[string]ShaderHandle,
-	fw:             FileWatcher,
+	fw:             watcher.Watcher,
 }
 
 shader_system_create :: proc(self: ^Engine) -> bool {
@@ -35,12 +45,42 @@ shader_system_create :: proc(self: ^Engine) -> bool {
 		log.errorf("Could not create Slang global session")
 		return false
 	}
+
+	compiler_option_entries := []sp.CompilerOptionEntry {
+		{name = .VulkanUseEntryPointName, value = {kind = .Int, intValue0 = 1}},
+		{name = .GLSLForceScalarLayout, value = {kind = .Int, intValue0 = 1}},
+	}
+
+	target_desc := sp.TargetDesc {
+		structureSize            = size_of(sp.TargetDesc),
+		format                   = .SPIRV,
+		flags                    = {.GENERATE_SPIRV_DIRECTLY},
+		profile                  = ss.global_session->findProfile("spirv"),
+		compilerOptionEntries    = &compiler_option_entries[0],
+		compilerOptionEntryCount = u32(len(compiler_option_entries)),
+	}
+
+	search_paths := [1]cstring{"shaders"}
+	session_desc := sp.SessionDesc {
+		structureSize            = size_of(sp.SessionDesc),
+		targets                  = &target_desc,
+		targetCount              = 1,
+		defaultMatrixLayoutMode  = .COLUMN_MAJOR,
+		searchPaths              = &search_paths[0],
+		searchPathCount          = 1,
+		compilerOptionEntries    = &compiler_option_entries[0],
+		compilerOptionEntryCount = u32(len(compiler_option_entries)),
+	}
+
+	if res := ss.global_session->createSession(session_desc, &ss.session); sp.FAILED(res) {
+		log.errorf("Could not create Slang session")
+		return false
+	}
+
 	ss.modules = pool_init(256, vk.ShaderModule)
 	ss.name_to_handle = make(map[string]ShaderHandle)
 
-	fw, err := fw_create()
-	ss.fw = fw
-	fw_watch_path(&ss.fw, "shaders")
+	watcher.init(&ss.fw, "shaders")
 
 	return true
 }
@@ -52,9 +92,10 @@ shader_system_destroy :: proc(self: ^Engine) {
 			backend.shader_module_destroy(&self.vk_ctx, module)
 		}
 	}
-	fw_destroy(&ss.fw)
+	watcher.destroy(&ss.fw)
 	pool_destroy(&ss.modules)
 	delete(ss.name_to_handle)
+	ss.session->release()
 	ss.global_session->release()
 }
 
@@ -88,39 +129,7 @@ shader_default_compute_stage :: proc(engine: ^Engine, handle: ShaderHandle) -> v
 // entry_points lists the entry point names to link into the SPIR-V blob.
 shader_load :: proc(self: ^Engine, module_name: string, entry_points: []string) -> (ShaderHandle, bool) {
 	ss := &self.shader_system
-
-	compiler_option_entries := []sp.CompilerOptionEntry {
-		{name = .VulkanUseEntryPointName, value = {kind = .Int, intValue0 = 1}},
-		{name = .GLSLForceScalarLayout, value = {kind = .Int, intValue0 = 1}},
-	}
-
-	target_desc := sp.TargetDesc {
-		structureSize            = size_of(sp.TargetDesc),
-		format                   = .SPIRV,
-		flags                    = {.GENERATE_SPIRV_DIRECTLY},
-		profile                  = ss.global_session->findProfile("spirv"),
-		compilerOptionEntries    = &compiler_option_entries[0],
-		compilerOptionEntryCount = u32(len(compiler_option_entries)),
-	}
-
-	search_paths := [1]cstring{"shaders"}
-	session_desc := sp.SessionDesc {
-		structureSize            = size_of(sp.SessionDesc),
-		targets                  = &target_desc,
-		targetCount              = 1,
-		defaultMatrixLayoutMode  = .COLUMN_MAJOR,
-		searchPaths              = &search_paths[0],
-		searchPathCount          = 1,
-		compilerOptionEntries    = &compiler_option_entries[0],
-		compilerOptionEntryCount = u32(len(compiler_option_entries)),
-	}
-
-	session: ^sp.ISession
-	if res := ss.global_session->createSession(session_desc, &session); sp.FAILED(res) {
-		log.errorf("Could not create Slang session")
-		return INVALID_SHADER_HANDLE, false
-	}
-	defer session->release()
+	session := ss.session
 
 	log.debugf("Compiling shader module: %s", module_name)
 
@@ -201,24 +210,12 @@ shader_get :: proc(self: ^Engine, handle: ShaderHandle) -> vk.ShaderModule {
 shader_poll_hotreload :: proc(self: ^Engine) {
 	ss := &self.shader_system
 
-	buf: [4096]u8
-	n, _ := linux.read(ss.fw.inotify_fd, buf[:])
-	if n <= 0 {
-		return
-	}
-
-	offset := 0
-	for offset < n {
-		event := (^linux.Inotify_Event)(raw_data(buf[offset:]))
-		offset += size_of(linux.Inotify_Event) + int(event.len)
-
-		if .CLOSE_WRITE not_in event.mask {
+	for ev in watcher.poll(&ss.fw) {
+		if ev.event == .Removed {
 			continue
 		}
 
-		// extract filename from the variable-length name field
-		name_ptr := (^u8)(uintptr(rawptr(event)) + size_of(linux.Inotify_Event))
-		filename := string(cstring(name_ptr))
+		filename := filepath.base(ev.path)
 
 		// strip ".slang" suffix to get module name
 		module_name: string

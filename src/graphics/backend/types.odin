@@ -1,5 +1,7 @@
 package backend
 
+import "core:log"
+
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
@@ -16,12 +18,17 @@ VulkanContext :: struct {
 	physical_device:    vk.PhysicalDevice,
 	device:             vk.Device,
 	vma_allocator:      vma.Allocator,
+	logger:             log.Logger,
+	debug_messenger:    vk.DebugUtilsMessengerEXT,
 
 	// queue
 	gfx_queue_fam_idx:  u32,
 	graphics_queue:     vk.Queue,
 	msaa_samples:       vk.SampleCountFlags,
 	upload_pool:        vk.CommandPool,
+
+	// limits
+	max_bindless_samplers_per_stage: u32,
 
 	// sync
 	timeline_semaphore: vk.Semaphore,

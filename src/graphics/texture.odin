@@ -72,7 +72,7 @@ texture_system_create :: proc(engine: ^Engine, config: TextureSystemConfig) {
 			{
 				binding = 0,
 				descriptorType = .COMBINED_IMAGE_SAMPLER,
-				descriptorCount = MAX_TEXTURES,
+				descriptorCount = config.max_textures_count,
 				stageFlags = {.FRAGMENT},
 			},
 		},
