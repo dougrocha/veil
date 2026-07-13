@@ -4,42 +4,14 @@ import "core:c"
 import "core:log"
 import "core:math"
 import "core:math/linalg"
-import "core:os"
 import "core:time"
 
 import sdl "vendor:sdl3"
 
 import gfx "graphics"
 
-// SDL's default Vulkan library search tries MoltenVK's own dylib candidates
-// before the real Vulkan Loader, and a bare dlopen("libvulkan.dylib") isn't
-// found at all unless it happens to sit in /usr/lib (Homebrew installs to
-// /opt/homebrew/lib, which isn't on macOS's default dlopen search path --
-// unlike Linux, where ldconfig indexes it automatically). Point SDL at an
-// exact loader path so it always resolves the real Loader (layers, KHR
-// portability enumeration) instead of falling through to MoltenVK directly.
-when ODIN_OS == .Darwin {
-	darwin_point_sdl_at_vulkan_loader :: proc() {
-		candidates := []cstring {
-			"/opt/homebrew/lib/libvulkan.dylib",
-			"/usr/local/lib/libvulkan.dylib",
-		}
-		for path in candidates {
-			if os.exists(string(path)) {
-				sdl.SetHint(sdl.HINT_VULKAN_LIBRARY, path)
-				return
-			}
-		}
-		log.warnf("Could not find the Vulkan Loader (libvulkan.dylib) in any known Homebrew prefix")
-	}
-}
-
 main :: proc() {
 	context.logger = log.create_console_logger()
-
-	when ODIN_OS == .Darwin {
-		darwin_point_sdl_at_vulkan_loader()
-	}
 
 	ok := sdl.InitSubSystem({.VIDEO})
 	if !ok {
