@@ -36,12 +36,14 @@ main :: proc() {
 	mouse_captured := true
 	_ = sdl.SetWindowRelativeMouseMode(app.window, true)
 
-	init_ok := gfx.initialize_vulkan(&app)
+	init_ok := gfx.engine_create(&app.engine, app.window, app.width, app.height)
 	if !init_ok {
 		log.errorf("Failed to initialize Vulkan")
 		return
 	}
-	defer gfx.engine_shutdown(&app.engine)
+	defer gfx.engine_destroy(&app.engine)
+
+	app.last_frame_time = time.now()
 
 	app.engine.camera_system.default_camera = gfx.camera_create({0, 1, 5}, yaw = -90, pitch = 0)
 
@@ -53,8 +55,8 @@ main :: proc() {
 		metallic_roughness_texture = gfx.texture_load(&app.engine, "assets/textures/wooden_gate_arm_4k.jpg", false),
 		occlusion_texture = gfx.texture_load(&app.engine, "assets/textures/wooden_gate_ao_4k.png", false),
 	)
-	wood_gate := gfx.load_model(&app.engine, "assets/models/wooden_gate_4k.gltf", wood_gate_mat)
-	gfx.spawn(&app.engine, wood_gate, gfx.transform_create(translation = {0, 1, -2}))
+	wood_gate := gfx.model_load(&app.engine, "assets/models/wooden_gate_4k.gltf", wood_gate_mat)
+	gfx.instance_spawn(&app.engine, wood_gate, gfx.transform_create(translation = {0, 1, -2}))
 
 	lion_head_mat := gfx.material_create(
 		&app.engine,
@@ -68,8 +70,8 @@ main :: proc() {
 		),
 		occlusion_texture = gfx.texture_load(&app.engine, "assets/models/textures/lion_head_arm_4k.jpg", false),
 	)
-	lion_head := gfx.load_model(&app.engine, "assets/models/lion_head_4k.gltf", lion_head_mat)
-	gfx.spawn(&app.engine, lion_head, gfx.transform_create(translation = {0, 1.5, 0}))
+	lion_head := gfx.model_load(&app.engine, "assets/models/lion_head_4k.gltf", lion_head_mat)
+	gfx.instance_spawn(&app.engine, lion_head, gfx.transform_create(translation = {0, 1.5, 0}))
 
 	boulder_mat := gfx.material_create(
 		&app.engine,
@@ -94,8 +96,8 @@ main :: proc() {
 			false,
 		),
 	)
-	boulder := gfx.load_model(&app.engine, "assets/models/namaqualand_boulder_02_4k.gltf", boulder_mat)
-	gfx.spawn(&app.engine, boulder, gfx.transform_create(translation = {3, 0.06, 2}))
+	boulder := gfx.model_load(&app.engine, "assets/models/namaqualand_boulder_02_4k.gltf", boulder_mat)
+	gfx.instance_spawn(&app.engine, boulder, gfx.transform_create(translation = {3, 0.06, 2}))
 
 	duck_mat := gfx.material_create(
 		&app.engine,
@@ -113,24 +115,28 @@ main :: proc() {
 		),
 		occlusion_texture = gfx.texture_load(&app.engine, "assets/models/textures/rubber_duck_toy_arm_4k.jpg", false),
 	)
-	duck := gfx.load_model(&app.engine, "assets/models/rubber_duck_toy_4k.gltf", duck_mat)
-	gfx.spawn(&app.engine, duck, gfx.transform_create(translation = {-3, 0, 2}))
+	duck := gfx.model_load(&app.engine, "assets/models/rubber_duck_toy_4k.gltf", duck_mat)
+	gfx.instance_spawn(&app.engine, duck, gfx.transform_create(translation = {-3, 0, 2}))
 
 
 	shiny_mat := gfx.material_create(&app.engine, "shiny_mat", perceptual_roughness = 0.0)
 	rough_mat := gfx.material_create(&app.engine, "rough_mat", perceptual_roughness = 1.0)
-	shiny_cube := gfx.create_cube(&app.engine, "shiny_cube", shiny_mat)
-	rough_cube := gfx.create_cube(&app.engine, "rough_cube", rough_mat)
-	gfx.spawn(&app.engine, shiny_cube, gfx.transform_create(translation = {-2, 1, 0}))
-	gfx.spawn(&app.engine, rough_cube, gfx.transform_create(translation = {2, 1, 0}))
+	shiny_cube := gfx.primitive_cube(&app.engine, "shiny_cube", shiny_mat)
+	rough_cube := gfx.primitive_cube(&app.engine, "rough_cube", rough_mat)
+	gfx.instance_spawn(&app.engine, shiny_cube, gfx.transform_create(translation = {-2, 1, 0}))
+	gfx.instance_spawn(&app.engine, rough_cube, gfx.transform_create(translation = {2, 1, 0}))
 
-	sponza := gfx.load_model(&app.engine, "assets/models/sponza-gltf-pbr/sponza.glb")
-	// gfx.spawn(&app.engine, sponza, gfx.transform_create(translation = {0, 0, 0}, scale = {0.01, 0.01, 0.01}))
+	ground_mat := gfx.material_create(&app.engine, "ground_mat", perceptual_roughness = 0.9)
+	ground_plane := gfx.primitive_plane(&app.engine, "ground_plane", ground_mat, half_size = {10, 10})
+	gfx.instance_spawn(&app.engine, ground_plane, gfx.transform_create(translation = {0, 0, 0}))
+
+	sponza := gfx.model_load(&app.engine, "assets/models/sponza-gltf-pbr/sponza.glb")
+	// gfx.instance_spawn(&app.engine, sponza, gfx.transform_create(translation = {0, 0, 0}, scale = {0.01, 0.01, 0.01}))
 
 	space_skybox_tex := gfx.texture_load_cubemap(&app.engine, "assets/textures/StandardCubeMap.png")
 	gfx.set_skybox_texture(&app.engine, space_skybox_tex)
 
-	gfx.spawn_point_light(
+	gfx.light_spawn_point(
 		&app.engine,
 		gfx.PointLight {
 			pos = {0, 10, 0},
@@ -168,10 +174,10 @@ main :: proc() {
 	)
 
 	yellow_mat := gfx.material_create(&app.engine, "yellow_mat", base_color = {1, 1, 0, 1})
-	light_sphere_model := gfx.create_sphere(&app.engine, "light_sphere", material = yellow_mat)
-	light_sphere := gfx.spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
+	light_sphere_model := gfx.primitive_sphere(&app.engine, "light_sphere", material = yellow_mat)
+	light_sphere := gfx.instance_spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
 
-	gfx.spawn_point_light(
+	gfx.light_spawn_point(
 		&app.engine,
 		gfx.PointLight {
 			pos = {0, 10, 0},
@@ -183,14 +189,14 @@ main :: proc() {
 			specular_intensity = 0.5,
 		},
 	)
-	light_sphere2 := gfx.spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
+	light_sphere2 := gfx.instance_spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
 
 	light_pos := gfx.Vec3{-2, 4, 0}
 	light_pos2 := gfx.Vec3{2, 4, 0}
 	app.engine.scene.point_lights[0].pos = light_pos
 	app.engine.scene.point_lights[1].pos = light_pos2
-	gfx.get_instance(&app.engine, light_sphere).transform.translation = light_pos
-	gfx.get_instance(&app.engine, light_sphere2).transform.translation = light_pos2
+	gfx.instance_get(&app.engine, light_sphere).transform.translation = light_pos
+	gfx.instance_get(&app.engine, light_sphere2).transform.translation = light_pos2
 
 	gfx.camera_system_add_camera(
 		&app.engine.camera_system,
@@ -254,7 +260,7 @@ main :: proc() {
 					app.engine.scene.selected_instance = hit
 
 					if hit != gfx.INVALID_INSTANCE {
-						instance := gfx.get_instance(&app.engine, hit)
+						instance := gfx.instance_get(&app.engine, hit)
 						model := gfx.pool_get(&app.engine.model_system.models, instance.model)
 						log.infof("selected: %v", model.name)
 					}
@@ -269,20 +275,20 @@ main :: proc() {
 		}
 
 		now := time.now()
-		app.engine.clock.delta_time = f32(time.duration_seconds(time.diff(app.engine.clock.last_frame_time, now)))
-		app.engine.clock.last_frame_time = now
+		delta_time := f32(time.duration_seconds(time.diff(app.last_frame_time, now)))
+		app.last_frame_time = now
 
-		app.engine.clock.fps_frame_count += 1
-		app.engine.clock.fps_timer += app.engine.clock.delta_time
-		if app.engine.clock.fps_timer >= 1.0 {
-			log.infof("FPS: %d, models drawn: %d", app.engine.clock.fps_frame_count, app.engine.drawn_instance_count)
+		app.fps_frame_count += 1
+		app.fps_timer += delta_time
+		if app.fps_timer >= 1.0 {
+			log.infof("FPS: %d, models drawn: %d", app.fps_frame_count, app.engine.drawn_instance_count)
 			log.infof("(%v) Camera position: %v", app.engine.scene.active_camera_name, active_cam.position)
-			app.engine.clock.fps_frame_count = 0
-			app.engine.clock.fps_timer = 0
+			app.fps_frame_count = 0
+			app.fps_timer = 0
 		}
 
-		process_input(active_cam, app.engine.clock.delta_time)
-		gfx.engine_render(&app)
+		process_input(active_cam, delta_time)
+		gfx.engine_render(&app, delta_time)
 	}
 }
 

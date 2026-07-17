@@ -44,21 +44,8 @@ context_init :: proc(ctx: ^VulkanContext, window: ^sdl.Window) -> bool {
 	return true
 }
 
-// MoltenVK maps this to Metal's argument buffer limits, which are far lower
-// than what desktop GPUs report (e.g. 1024 on Apple Silicon vs ~1,000,000+ on
-// discrete GPUs), so bindless array sizes must be clamped to what the device
-// actually supports instead of a single hardcoded constant.
-query_max_bindless_samplers_per_stage :: proc(ctx: ^VulkanContext) -> u32 {
-	descriptor_indexing_props := vk.PhysicalDeviceDescriptorIndexingProperties {
-		sType = .PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES,
-	}
-	props2 := vk.PhysicalDeviceProperties2 {
-		sType = .PHYSICAL_DEVICE_PROPERTIES_2,
-		pNext = &descriptor_indexing_props,
-	}
-	vk.GetPhysicalDeviceProperties2(ctx.physical_device, &props2)
-
-	return descriptor_indexing_props.maxPerStageDescriptorUpdateAfterBindSamplers
+device_wait_idle :: proc(ctx: ^VulkanContext) {
+	vk.DeviceWaitIdle(ctx.device)
 }
 
 context_destroy :: proc(ctx: ^VulkanContext) {

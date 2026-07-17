@@ -9,8 +9,8 @@ import "shared:tinyobj"
 import "backend"
 
 Mesh :: struct {
-	vertex_buffer: GpuBuffer(Vertex),
-	index_buffer:  GpuBuffer(u32),
+	vertex_buffer: backend.GpuBuffer(Vertex),
+	index_buffer:  backend.GpuBuffer(u32),
 	index_count:   u32,
 	material:      MaterialHandle,
 }
@@ -63,14 +63,14 @@ destroy_model_system :: proc(engine: ^Engine) {
 	pool_destroy(&engine.scene.instances)
 }
 
-load_model :: proc(engine: ^Engine, path: string, material: MaterialHandle = INVALID_MATERIAL) -> ModelHandle {
+model_load :: proc(engine: ^Engine, path: string, material: MaterialHandle = INVALID_MATERIAL) -> ModelHandle {
 	if handle, ok := engine.model_system.model_map[path]; ok {
 		return handle
 	}
 
 	ext := filepath.ext(path)
 	if ext == ".gltf" || ext == ".glb" {
-		return load_model_gltf(engine, path, material)
+		return model_load_gltf(engine, path, material)
 	}
 
 	obj, ok := tinyobj.load_from_file_path(path, allocator = context.temp_allocator)
@@ -116,10 +116,10 @@ load_model :: proc(engine: ^Engine, path: string, material: MaterialHandle = INV
 		}
 	}
 
-	return register_model(engine, path, vertices[:], indices[:], material)
+	return model_register(engine, path, vertices[:], indices[:], material)
 }
 
-register_model :: proc(
+model_register :: proc(
 	engine: ^Engine,
 	name: string,
 	vertices: []Vertex,
@@ -163,11 +163,11 @@ register_model :: proc(
 	return handle
 }
 
-get_instance :: proc(engine: ^Engine, handle: InstanceHandle) -> ^Instance {
+instance_get :: proc(engine: ^Engine, handle: InstanceHandle) -> ^Instance {
 	return pool_get(&engine.scene.instances, handle)
 }
 
-spawn :: proc(engine: ^Engine, model: ModelHandle, transform: Transform) -> InstanceHandle {
+instance_spawn :: proc(engine: ^Engine, model: ModelHandle, transform: Transform) -> InstanceHandle {
 	if model == INVALID_MODEL {
 		log.errorf("spawn: refusing to spawn an instance of an invalid model handle")
 		return INVALID_INSTANCE

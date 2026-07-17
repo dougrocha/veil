@@ -8,46 +8,56 @@ Pipeline :: struct {
 }
 
 pipeline_bind :: proc(
-	cmd: vk.CommandBuffer,
+	cmd: CommandBuffer,
 	pipeline: Pipeline,
 	bind_point: vk.PipelineBindPoint = .GRAPHICS,
 	desc_sets: []vk.DescriptorSet = {},
 ) {
-	vk.CmdBindPipeline(cmd, bind_point, pipeline.pipeline)
+	raw_cmd := vk.CommandBuffer(cmd)
+	vk.CmdBindPipeline(raw_cmd, bind_point, pipeline.pipeline)
 
 	if len(desc_sets) > 0 {
-		vk.CmdBindDescriptorSets(cmd, bind_point, pipeline.layout, 0, u32(len(desc_sets)), raw_data(desc_sets), 0, nil)
+		vk.CmdBindDescriptorSets(
+			raw_cmd,
+			bind_point,
+			pipeline.layout,
+			0,
+			u32(len(desc_sets)),
+			raw_data(desc_sets),
+			0,
+			nil,
+		)
 	}
 }
 
 pipeline_push :: proc(
-	cmd: vk.CommandBuffer,
+	cmd: CommandBuffer,
 	pipeline: Pipeline,
 	stages: vk.ShaderStageFlags,
 	data: ^$T,
 	offset: u32 = 0,
 ) {
-	vk.CmdPushConstants(cmd, pipeline.layout, stages, offset, u32(size_of(T)), data)
+	vk.CmdPushConstants(vk.CommandBuffer(cmd), pipeline.layout, stages, offset, u32(size_of(T)), data)
 }
 
-pipeline_set_viewport :: proc(cmd: vk.CommandBuffer, width: f32, height: f32) {
+pipeline_set_viewport :: proc(cmd: CommandBuffer, width: f32, height: f32, offset_x: f32 = 0, offset_y: f32 = 0) {
 	viewport := vk.Viewport {
-		x        = 0,
-		y        = 0,
+		x        = offset_x,
+		y        = offset_y,
 		width    = width,
 		height   = height,
 		minDepth = 0.0,
 		maxDepth = 1.0,
 	}
-	vk.CmdSetViewport(cmd, 0, 1, &viewport)
+	vk.CmdSetViewport(vk.CommandBuffer(cmd), 0, 1, &viewport)
 }
 
-pipeline_set_scissor :: proc(cmd: vk.CommandBuffer, width: u32, height: u32, offset_x: i32 = 0, offset_y: i32 = 0) {
+pipeline_set_scissor :: proc(cmd: CommandBuffer, width: u32, height: u32, offset_x: i32 = 0, offset_y: i32 = 0) {
 	scissor := vk.Rect2D {
 		offset = {offset_x, offset_y},
 		extent = {width, height},
 	}
-	vk.CmdSetScissor(cmd, 0, 1, &scissor)
+	vk.CmdSetScissor(vk.CommandBuffer(cmd), 0, 1, &scissor)
 }
 
 BlendModeAttachment :: enum {
@@ -205,7 +215,7 @@ pipeline_default_config :: proc(config: ^GraphicsPipelineConfig) {
 pipeline_create :: proc(
 	device: vk.Device,
 	config: ^GraphicsPipelineConfig,
-	shader_stages: []vk.PipelineShaderStageCreateInfo,
+	stages: []ShaderStageDesc,
 ) -> Pipeline {
 	layout_info := pipeline_build_layout_info(
 		&config.descriptor_layouts,
@@ -215,6 +225,11 @@ pipeline_create :: proc(
 
 	layout: vk.PipelineLayout
 	vk_check(vk.CreatePipelineLayout(device, &layout_info, nil, &layout))
+
+	shader_stages := make([]vk.PipelineShaderStageCreateInfo, len(stages), context.temp_allocator)
+	for desc, i in stages {
+		shader_stages[i] = shader_stage_info(desc)
+	}
 
 	vertex_input_info := vk.PipelineVertexInputStateCreateInfo {
 		sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -250,7 +265,7 @@ pipeline_create :: proc(
 pipeline_create_compute :: proc(
 	device: vk.Device,
 	config: ^ComputePipelineConfig,
-	shader_stage: vk.PipelineShaderStageCreateInfo,
+	stage: ShaderStageDesc,
 ) -> Pipeline {
 	layout_info := pipeline_build_layout_info(
 		&config.descriptor_layouts,
@@ -263,7 +278,7 @@ pipeline_create_compute :: proc(
 
 	compute_info := vk.ComputePipelineCreateInfo {
 		sType  = .COMPUTE_PIPELINE_CREATE_INFO,
-		stage  = shader_stage,
+		stage  = shader_stage_info(stage),
 		layout = layout,
 	}
 
@@ -271,6 +286,11 @@ pipeline_create_compute :: proc(
 	vk_check(vk.CreateComputePipelines(device, 0, 1, &compute_info, nil, &pipeline))
 
 	return Pipeline{layout = layout, pipeline = pipeline}
+}
+
+pipeline_destroy :: proc(ctx: ^VulkanContext, pipeline: Pipeline) {
+	vk.DestroyPipeline(ctx.device, pipeline.pipeline, nil)
+	vk.DestroyPipelineLayout(ctx.device, pipeline.layout, nil)
 }
 
 pipeline_build_layout_info :: proc(

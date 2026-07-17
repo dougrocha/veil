@@ -161,7 +161,7 @@ volume_is_on_frustum :: proc(frustum: Frustum, volume: Volume, transform: Transf
 sphere_is_on_frustum :: proc(frustum: Frustum, volume: BoundingSphere, transform: Transform) -> bool {
 	global_scale := transform_global_scale(transform)
 
-	global_center := transform_matrix(transform) * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
+	global_center := transform_to_matrix(transform) * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
 
 	max_scale := max(global_scale.x, global_scale.y, global_scale.z)
 
@@ -177,7 +177,7 @@ sphere_is_on_frustum :: proc(frustum: Frustum, volume: BoundingSphere, transform
 }
 
 aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, transform: Transform) -> bool {
-	global_center := transform_matrix(transform) * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
+	global_center := transform_to_matrix(transform) * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
 
 	right := transform_right(transform) * volume.extents.x
 	up := transform_up(transform) * volume.extents.y

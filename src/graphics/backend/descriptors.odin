@@ -4,7 +4,10 @@ import vk "vendor:vulkan"
 
 // Descriptors are a way of "describing" the data the GPU is sent.
 // Another way we currently have is with Push constants which are easier to understand and read
-//
+
+// Raw per-frame descriptor set handle, e.g. for building the desc_sets slice passed to pipeline_bind.
+DescriptorSetHandle :: vk.DescriptorSet
+
 // SetLayoutBinding: Holds the connection between the CPU and GPU, much like a contract for what will be stored
 DescriptorSet :: struct {
 	layout: vk.DescriptorSetLayout,
@@ -142,18 +145,21 @@ descriptor_write_image_info :: proc(
 	}
 }
 
+// state names the layout the image will be in when sampled (.Shader_Read for
+// color textures, .Depth_Read for shadow maps).
 descriptor_write_image_view :: proc(
 	ctx: ^VulkanContext,
 	set: ^DescriptorSet,
 	binding: u32,
 	view: vk.ImageView,
-	sampler: vk.Sampler,
+	sampler: Sampler,
+	state: ImageStateKind = .Shader_Read,
 	array_element: u32 = 0,
 ) {
 	image_info := vk.DescriptorImageInfo {
-		sampler     = sampler,
+		sampler     = vk.Sampler(sampler),
 		imageView   = view,
-		imageLayout = .READ_ONLY_OPTIMAL,
+		imageLayout = IMAGE_STATES[state].layout,
 	}
 	descriptor_write_image_info(ctx, set, binding, &image_info, array_element)
 }

@@ -41,7 +41,7 @@ MaterialSystemConfig :: struct {
 MaterialSystem :: struct {
 	materials:    Pool(Material),
 	material_map: map[string]MaterialHandle,
-	buffer:       GpuBuffer(GpuMaterial),
+	buffer:       backend.GpuBuffer(GpuMaterial),
 	config:       MaterialSystemConfig,
 }
 

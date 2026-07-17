@@ -11,6 +11,27 @@ DRAW_FORMAT :: vk.Format.R16G16B16A16_SFLOAT
 
 MAX_FRAMES_IN_FLIGHT :: 2
 
+CommandBuffer :: distinct vk.CommandBuffer
+Sampler :: distinct vk.Sampler
+
+LoadOp :: enum u8 {
+	Clear,
+	Load,
+	Dont_Care,
+}
+
+load_op_to_vk :: proc(op: LoadOp) -> vk.AttachmentLoadOp {
+	switch op {
+	case .Clear:
+		return .CLEAR
+	case .Load:
+		return .LOAD
+	case .Dont_Care:
+		return .DONT_CARE
+	}
+	return .DONT_CARE
+}
+
 VulkanContext :: struct {
 	// core
 	instance:           vk.Instance,

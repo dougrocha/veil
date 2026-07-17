@@ -22,12 +22,12 @@ INVALID_TEXTURE :: TextureHandle{}
 
 TextureFlags :: distinct bit_set[TextureFlag;u8]
 TextureFlag :: enum u8 {
-	TRANSPARENT,
+	Transparent,
 }
 
 Texture :: struct {
-	using gpu:     GpuImage,
-	sampler:       vk.Sampler,
+	using gpu:     backend.GpuImage,
+	sampler:       backend.Sampler,
 
 	// Texture metadata
 	channel_count: u8,
@@ -48,7 +48,7 @@ DefaultTexture :: enum u8 {
 
 TextureSystem :: struct {
 	config:      TextureSystemConfig,
-	descriptor:  DescriptorSet,
+	descriptor:  backend.DescriptorSet,
 
 	// storage pool
 	textures:    Pool(Texture),
@@ -76,7 +76,7 @@ texture_system_create :: proc(engine: ^Engine, config: TextureSystemConfig) {
 				stageFlags = {.FRAGMENT},
 			},
 		},
-		count = MAX_FRAMES_IN_FLIGHT,
+		count = backend.MAX_FRAMES_IN_FLIGHT,
 		binding_flags = {vk.DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND}},
 		layout_flags = {.UPDATE_AFTER_BIND_POOL},
 		pool_flags = {.UPDATE_AFTER_BIND},
@@ -85,7 +85,7 @@ texture_system_create :: proc(engine: ^Engine, config: TextureSystemConfig) {
 	texture_create_builtin(engine)
 }
 
-texture_destroy :: proc(ctx: ^VulkanContext, t: Texture) {
+texture_destroy :: proc(ctx: ^backend.VulkanContext, t: Texture) {
 	backend.sampler_destroy(ctx, t.sampler)
 	backend.image_destroy(ctx, t.gpu)
 }
@@ -123,7 +123,7 @@ texture_create_builtin :: proc(engine: ^Engine) {
 		engine: ^Engine,
 		t: Texture,
 		pixels: rawptr,
-		format: TextureFormat = .R8G8B8A8_SRGB,
+		format: TextureFormat = .Rgba8_Unorm_Srgb,
 	) -> TextureHandle {
 		ts := &engine.texture_system
 		t := t
@@ -143,7 +143,7 @@ texture_create_builtin :: proc(engine: ^Engine) {
 		engine,
 		Texture{gpu = {extent = {1, 1, 1}}, channel_count = 4},
 		&flat_normal,
-		.R8G8B8A8_UNORM,
+		.Rgba8_Unorm,
 	)
 	ts.defaults[.Occlusion] = upload_builtin(engine, Texture{gpu = {extent = {1, 1, 1}}, channel_count = 4}, &white)
 }
@@ -223,7 +223,7 @@ texture_load_from_pixels :: proc(
 		pixel_count := int(width * height)
 		for i in 0 ..< pixel_count {
 			if pixels[i * 4 + 3] < 255 {
-				flags += {.TRANSPARENT}
+				flags += {.Transparent}
 				break
 			}
 		}
@@ -234,17 +234,17 @@ texture_load_from_pixels :: proc(
 		channel_count = 4,
 		flags = flags,
 	}
-	texture_upload(&engine.vk_ctx, pixels, &texture, is_srgb ? .R8G8B8A8_SRGB : .R8G8B8A8_UNORM)
+	texture_upload(&engine.vk_ctx, pixels, &texture, is_srgb ? .Rgba8_Unorm_Srgb : .Rgba8_Unorm)
 
 	return texture_register(engine, key, texture)
 }
 
 // Uploads a texture to the GPU buffer
 texture_upload :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^backend.VulkanContext,
 	pixels: rawptr,
 	texture: ^Texture,
-	format: TextureFormat = .R8G8B8A8_SRGB,
+	format: TextureFormat = .Rgba8_Unorm_Srgb,
 ) {
 	w := texture.extent.width
 	h := texture.extent.height
@@ -254,7 +254,7 @@ texture_upload :: proc(
 	defer backend.buffer_destroy(ctx, staging)
 	mem.copy(staging.alloc_info.mapped_data, pixels, int(image_size))
 
-	img_format := texture_format_to_vk(format)
+	img_format := backend.texture_format_to_vk(format)
 	mip_levels := u32(math.floor(math.log2(f32(max(w, h)))) + 1)
 
 	desc := backend.image_desc_default(
@@ -334,7 +334,7 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 		}
 	}
 
-	desc := backend.image_desc_default({face_w, face_h, 1}, TEXTURE_FORMAT, {.TRANSFER_DST, .SAMPLED})
+	desc := backend.image_desc_default({face_w, face_h, 1}, backend.texture_format_to_vk(.Rgba8_Unorm_Srgb), {.TRANSFER_DST, .SAMPLED})
 	desc.array_layers = 6
 	desc.image_flags = {.CUBE_COMPATIBLE}
 	gpu_img := backend.image_create(&engine.vk_ctx, desc)
@@ -360,23 +360,23 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	return texture_register(engine, path, t)
 }
 
-texture_image_view_create :: proc(ctx: ^VulkanContext, t: ^Texture) {
+texture_image_view_create :: proc(ctx: ^backend.VulkanContext, t: ^Texture) {
 	view_desc := backend.image_view_desc_default(t.gpu)
 	view_desc.mip_levels = t.mip_levels
 	t.image_view = backend.image_view_create(ctx, t.gpu, view_desc)
 }
 
-texture_sampler_create :: proc(ctx: ^VulkanContext, t: ^Texture) {
+texture_sampler_create :: proc(ctx: ^backend.VulkanContext, t: ^Texture) {
 	properties := backend.vk_get_physical_device_properties(ctx)
 	desc := backend.sampler_desc_default()
-	desc.min_filter = texture_filter_to_vk(t.filter_min)
-	desc.mag_filter = texture_filter_to_vk(t.filter_mag)
-	desc.address_mode_u = texture_repeat_to_vk(t.repeat_u)
-	desc.address_mode_v = texture_repeat_to_vk(t.repeat_v)
-	desc.address_mode_w = texture_repeat_to_vk(t.repeat_w)
+	desc.min_filter = t.filter_min
+	desc.mag_filter = t.filter_mag
+	desc.address_mode_u = t.repeat_u
+	desc.address_mode_v = t.repeat_v
+	desc.address_mode_w = t.repeat_w
 	desc.anisotropy_enable = true
 	desc.max_anisotropy = properties.limits.maxSamplerAnisotropy
-	desc.max_lod = vk.LOD_CLAMP_NONE
+	desc.max_lod = backend.LOD_CLAMP_NONE
 	desc.border_color = .INT_OPAQUE_BLACK
 	t.sampler = backend.sampler_create(ctx, desc)
 }
@@ -385,12 +385,12 @@ texture_sampler_create :: proc(ctx: ^VulkanContext, t: ^Texture) {
 // Writes a texture from the texture system into the descriptor set at the given binding.
 // Writes to all sets in the descriptor (all frames).
 write_descriptor_texture :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^backend.VulkanContext,
 	ts: ^TextureSystem,
 	binding: u32,
 	handle: TextureHandle,
 	array_element: u32 = 0,
 ) {
 	t := pool_get(&ts.textures, handle)
-	backend.descriptor_write_image_view(ctx, &ts.descriptor, binding, t.image_view, t.sampler, array_element)
+	backend.descriptor_write_image_view(ctx, &ts.descriptor, binding, t.image_view, t.sampler, array_element = array_element)
 }

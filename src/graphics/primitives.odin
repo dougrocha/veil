@@ -2,7 +2,7 @@ package graphics
 
 import "core:math"
 
-create_plane :: proc(
+primitive_plane :: proc(
 	engine: ^Engine,
 	name: string,
 	material: MaterialHandle = INVALID_MATERIAL,
@@ -49,10 +49,10 @@ create_plane :: proc(
 		}
 	}
 
-	return register_model(engine, name, vertices, indices, material)
+	return model_register(engine, name, vertices, indices, material)
 }
 
-create_cube :: proc(
+primitive_cube :: proc(
 	engine: ^Engine,
 	name: string,
 	material: MaterialHandle = INVALID_MATERIAL,
@@ -136,10 +136,10 @@ create_cube :: proc(
 		20, // bottom
 	}
 
-	return register_model(engine, name, vertices, indices, material)
+	return model_register(engine, name, vertices, indices, material)
 }
 
-create_sphere :: proc(
+primitive_sphere :: proc(
 	engine: ^Engine,
 	name: string,
 	material: MaterialHandle = INVALID_MATERIAL,
@@ -211,5 +211,5 @@ create_sphere :: proc(
 		}
 	}
 
-	return register_model(engine, name, vertices[:], indices[:], material)
+	return model_register(engine, name, vertices[:], indices[:], material)
 }

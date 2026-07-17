@@ -88,6 +88,6 @@ buffer_copy :: proc(ctx: ^VulkanContext, src, dst: vk.Buffer, size: vk.DeviceSiz
 	region := vk.BufferCopy {
 		size = size,
 	}
-	vk.CmdCopyBuffer(cmd, src, dst, 1, &region)
+	vk.CmdCopyBuffer(vk.CommandBuffer(cmd), src, dst, 1, &region)
 }
 

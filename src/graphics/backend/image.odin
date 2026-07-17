@@ -8,6 +8,7 @@ import vk "vendor:vulkan"
 GpuImage :: struct {
 	image:        vk.Image,
 	image_view:   vk.ImageView,
+	layer_views:  []vk.ImageView, // one per array layer; only for multi-layer attachment images
 	alloc:        vma.Allocation,
 	alloc_info:   vma.Allocation_Info,
 	extent:       vk.Extent3D,
@@ -86,12 +87,38 @@ image_create :: proc(ctx: ^VulkanContext, desc: ImageDesc) -> GpuImage {
 		),
 	)
 
+	if desc.array_layers > 1 && desc.image_usage_flags & {.COLOR_ATTACHMENT, .DEPTH_STENCIL_ATTACHMENT} != {} {
+		gpu_img.layer_views = make([]vk.ImageView, desc.array_layers)
+		for i in 0 ..< desc.array_layers {
+			view_desc := image_view_desc_default(gpu_img)
+			view_desc.base_array_layer = i
+			view_desc.array_layers = 1
+			view_desc.mip_levels = 1
+			gpu_img.layer_views[i] = image_view_create(ctx, gpu_img, view_desc)
+		}
+	}
+
 	return gpu_img
 }
 
 image_destroy :: proc(ctx: ^VulkanContext, img: GpuImage) {
 	image_view_destroy(ctx, img.image_view)
+	for view in img.layer_views {
+		image_view_destroy(ctx, view)
+	}
+	delete(img.layer_views)
 	vma.destroy_image(ctx.vma_allocator, img.image, img.alloc)
+}
+
+// View to render into one (layer, mip) of an image. Falls back to the full
+// view for single-layer images.
+image_attachment_view :: proc(img: ^GpuImage, layer: u32, mip: u32 = 0) -> vk.ImageView {
+	assert(mip == 0, "mip attachment views not implemented yet")
+	if len(img.layer_views) == 0 {
+		assert(layer == 0, "image has no layer views")
+		return img.image_view
+	}
+	return img.layer_views[layer]
 }
 
 ImageViewDesc :: struct {
@@ -163,7 +190,7 @@ ImageStateKind :: enum {
 }
 
 image_barrier :: proc(
-	cmd: vk.CommandBuffer,
+	cmd: CommandBuffer,
 	img: vk.Image,
 	src, dst: ImageStateKind,
 	aspect_mask: vk.ImageAspectFlags,
@@ -192,7 +219,7 @@ image_barrier :: proc(
 		imageMemoryBarrierCount = 1,
 		pImageMemoryBarriers    = &barrier,
 	}
-	vk.CmdPipelineBarrier2(cmd, &dep_info)
+	vk.CmdPipelineBarrier2(vk.CommandBuffer(cmd), &dep_info)
 }
 
 // image helpers
@@ -228,7 +255,7 @@ generate_mipmaps :: proc(ctx: ^VulkanContext, image: vk.Image, format: vk.Format
 				pRegions       = &blit,
 				filter         = .LINEAR,
 			}
-			vk.CmdBlitImage2(cmd, &blit_info)
+			vk.CmdBlitImage2(vk.CommandBuffer(cmd), &blit_info)
 
 			image_barrier(cmd, image, .Transfer_Src, .Shader_Read, {.COLOR}, level_count = 1, base_mip_level = i - 1)
 
@@ -248,7 +275,7 @@ generate_mipmaps :: proc(ctx: ^VulkanContext, image: vk.Image, format: vk.Format
 	}
 }
 
-copy_image_to_image :: proc(cmd: vk.CommandBuffer, src, dst: vk.Image, src_extent, dst_extent: vk.Extent2D) {
+copy_image_to_image :: proc(cmd: CommandBuffer, src, dst: vk.Image, src_extent, dst_extent: vk.Extent2D) {
 	blit_region := vk.ImageBlit2 {
 		sType = .IMAGE_BLIT_2,
 		srcSubresource = {aspectMask = {.COLOR}, layerCount = 1},
@@ -258,7 +285,7 @@ copy_image_to_image :: proc(cmd: vk.CommandBuffer, src, dst: vk.Image, src_exten
 	blit_region.dstOffsets[1] = {i32(dst_extent.width), i32(dst_extent.height), 1}
 
 	vk.CmdBlitImage2(
-		cmd,
+		vk.CommandBuffer(cmd),
 		&vk.BlitImageInfo2 {
 			sType = .BLIT_IMAGE_INFO_2,
 			srcImage = src,
@@ -272,7 +299,7 @@ copy_image_to_image :: proc(cmd: vk.CommandBuffer, src, dst: vk.Image, src_exten
 	)
 }
 
-copy_buffer_to_image :: proc(cmd: vk.CommandBuffer, buffer: vk.Buffer, img: vk.Image, width, height: u32) {
+copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: vk.Image, width, height: u32) {
 	region := vk.BufferImageCopy2 {
 		sType = .BUFFER_IMAGE_COPY_2,
 		bufferOffset = 0,
@@ -284,7 +311,7 @@ copy_buffer_to_image :: proc(cmd: vk.CommandBuffer, buffer: vk.Buffer, img: vk.I
 	}
 
 	vk.CmdCopyBufferToImage2(
-		cmd,
+		vk.CommandBuffer(cmd),
 		&vk.CopyBufferToImageInfo2 {
 			sType = .COPY_BUFFER_TO_IMAGE_INFO_2,
 			srcBuffer = buffer,
@@ -297,7 +324,7 @@ copy_buffer_to_image :: proc(cmd: vk.CommandBuffer, buffer: vk.Buffer, img: vk.I
 }
 
 copy_buffer_to_cubemap :: proc(
-	cmd: vk.CommandBuffer,
+	cmd: CommandBuffer,
 	buffer: vk.Buffer,
 	img: vk.Image,
 	face_w, face_h: u32,
@@ -314,7 +341,7 @@ copy_buffer_to_cubemap :: proc(
 	}
 
 	vk.CmdCopyBufferToImage2(
-		cmd,
+		vk.CommandBuffer(cmd),
 		&vk.CopyBufferToImageInfo2 {
 			sType = .COPY_BUFFER_TO_IMAGE_INFO_2,
 			srcBuffer = buffer,
@@ -326,12 +353,14 @@ copy_buffer_to_cubemap :: proc(
 	)
 }
 
+LOD_CLAMP_NONE :: vk.LOD_CLAMP_NONE
+
 SamplerDesc :: struct {
-	min_filter, mag_filter:   vk.Filter,
+	min_filter, mag_filter:   TextureFilter,
 	mipmap_mode:              vk.SamplerMipmapMode,
-	address_mode_u:           vk.SamplerAddressMode,
-	address_mode_v:           vk.SamplerAddressMode,
-	address_mode_w:           vk.SamplerAddressMode,
+	address_mode_u:           TextureRepeat,
+	address_mode_v:           TextureRepeat,
+	address_mode_w:           TextureRepeat,
 	mip_lod_bias:             f32,
 	anisotropy_enable:        bool,
 	max_anisotropy:           f32,
@@ -344,12 +373,12 @@ SamplerDesc :: struct {
 
 sampler_desc_default :: proc() -> SamplerDesc {
 	return SamplerDesc {
-		min_filter = .LINEAR,
-		mag_filter = .LINEAR,
+		min_filter = .Linear,
+		mag_filter = .Linear,
 		mipmap_mode = .LINEAR,
-		address_mode_u = .CLAMP_TO_EDGE,
-		address_mode_v = .CLAMP_TO_EDGE,
-		address_mode_w = .CLAMP_TO_EDGE,
+		address_mode_u = .Clamp_To_Edge,
+		address_mode_v = .Clamp_To_Edge,
+		address_mode_w = .Clamp_To_Edge,
 		max_anisotropy = 1.0,
 		compare_op = .ALWAYS,
 		max_lod = 1.0,
@@ -357,15 +386,15 @@ sampler_desc_default :: proc() -> SamplerDesc {
 	}
 }
 
-sampler_create :: proc(ctx: ^VulkanContext, desc: SamplerDesc) -> vk.Sampler {
+sampler_create :: proc(ctx: ^VulkanContext, desc: SamplerDesc) -> Sampler {
 	info := vk.SamplerCreateInfo {
 		sType                   = .SAMPLER_CREATE_INFO,
-		minFilter               = desc.min_filter,
-		magFilter               = desc.mag_filter,
+		minFilter               = texture_filter_to_vk(desc.min_filter),
+		magFilter               = texture_filter_to_vk(desc.mag_filter),
 		mipmapMode              = desc.mipmap_mode,
-		addressModeU            = desc.address_mode_u,
-		addressModeV            = desc.address_mode_v,
-		addressModeW            = desc.address_mode_w,
+		addressModeU            = texture_repeat_to_vk(desc.address_mode_u),
+		addressModeV            = texture_repeat_to_vk(desc.address_mode_v),
+		addressModeW            = texture_repeat_to_vk(desc.address_mode_w),
 		mipLodBias              = desc.mip_lod_bias,
 		anisotropyEnable        = b32(desc.anisotropy_enable),
 		maxAnisotropy           = desc.max_anisotropy,
@@ -378,9 +407,9 @@ sampler_create :: proc(ctx: ^VulkanContext, desc: SamplerDesc) -> vk.Sampler {
 	}
 	sampler: vk.Sampler
 	vk_check(vk.CreateSampler(ctx.device, &info, nil, &sampler))
-	return sampler
+	return Sampler(sampler)
 }
 
-sampler_destroy :: proc(ctx: ^VulkanContext, sampler: vk.Sampler) {
-	vk.DestroySampler(ctx.device, sampler, nil)
+sampler_destroy :: proc(ctx: ^VulkanContext, sampler: Sampler) {
+	vk.DestroySampler(ctx.device, vk.Sampler(sampler), nil)
 }

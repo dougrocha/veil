@@ -7,10 +7,8 @@ import "core:strings"
 
 import "../watcher"
 import "backend"
-import "../watcher"
 
 import sp "shared:odin-slang/slang"
-import vk "vendor:vulkan"
 
 VERTEX_ENTRY :: "vertex_main"
 FRAGMENT_MAIN :: "fragment_main"
@@ -20,7 +18,7 @@ DEFAULT_VERTEX_ENTRY: cstring : VERTEX_ENTRY
 DEFAULT_FRAGMENT_ENTRY: cstring : FRAGMENT_MAIN
 DEFAULT_COMPUTE_ENTRY: cstring : COMPUTE_MAIN
 
-ShaderHandle :: Handle(vk.ShaderModule)
+ShaderHandle :: Handle(backend.ShaderModule)
 
 INVALID_SHADER_HANDLE :: ShaderHandle{}
 
@@ -30,7 +28,7 @@ ShaderSystem :: struct {
 	// current configuration for our shader setup, meaning we can create multiple
 	// sessions under the single global_session to support different shader languages, etc
 	session:        ^sp.ISession,
-	modules:        Pool(vk.ShaderModule),
+	modules:        Pool(backend.ShaderModule),
 	name_to_handle: map[string]ShaderHandle,
 	fw:             watcher.Watcher,
 }
@@ -73,7 +71,7 @@ shader_system_create :: proc(self: ^Engine) -> bool {
 		return false
 	}
 
-	ss.modules = pool_init(256, vk.ShaderModule)
+	ss.modules = pool_init(256, backend.ShaderModule)
 	ss.name_to_handle = make(map[string]ShaderHandle)
 
 	watcher.init(&ss.fw, "shaders")
@@ -93,32 +91,6 @@ shader_system_destroy :: proc(self: ^Engine) {
 	delete(ss.name_to_handle)
 	ss.session->release()
 	ss.global_session->release()
-}
-
-shader_default_stages :: proc(engine: ^Engine, handle: ShaderHandle) -> [2]vk.PipelineShaderStageCreateInfo {
-	return {
-		{
-			sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-			stage = {.VERTEX},
-			module = shader_get(engine, handle),
-			pName = DEFAULT_VERTEX_ENTRY,
-		},
-		{
-			sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-			stage = {.FRAGMENT},
-			module = shader_get(engine, handle),
-			pName = DEFAULT_FRAGMENT_ENTRY,
-		},
-	}
-}
-
-shader_default_compute_stage :: proc(engine: ^Engine, handle: ShaderHandle) -> vk.PipelineShaderStageCreateInfo {
-	return {
-		sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-		stage = {.COMPUTE},
-		module = shader_get(engine, handle),
-		pName = DEFAULT_COMPUTE_ENTRY,
-	}
 }
 
 // Compiles a Slang module by name and caches the resulting VkShaderModule.
@@ -189,7 +161,7 @@ shader_load :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	// check if this module is being reloaded (update in place) or is new
 	if existing, ok := ss.name_to_handle[module_name]; ok {
 		module_ptr := pool_get(&ss.modules, existing)
-		vk.DestroyShaderModule(self.vk_ctx.device, module_ptr^, nil)
+		backend.shader_module_destroy(&self.vk_ctx, module_ptr^)
 		module_ptr^ = vk_module
 		return existing, true
 	}
@@ -199,7 +171,7 @@ shader_load :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	return handle, true
 }
 
-shader_get :: proc(self: ^Engine, handle: ShaderHandle) -> vk.ShaderModule {
+shader_get :: proc(self: ^Engine, handle: ShaderHandle) -> backend.ShaderModule {
 	return pool_get(&self.shader_system.modules, handle)^
 }
 

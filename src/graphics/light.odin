@@ -2,7 +2,11 @@ package graphics
 
 import "core:log"
 
-spawn_point_light :: proc(engine: ^Engine, light: PointLight) {
+MAX_POINT_LIGHTS :: 16
+MAX_DIRECTIONAL_LIGHTS :: 4
+MAX_SPOT_LIGHTS :: 4
+
+light_spawn_point :: proc(engine: ^Engine, light: PointLight) {
 	if engine.scene.point_light_count >= len(engine.scene.point_lights) {
 		log.errorf("max point lights reached (%d)", len(engine.scene.point_lights))
 		return

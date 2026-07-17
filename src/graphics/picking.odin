@@ -21,7 +21,7 @@ pick :: proc(engine: ^Engine, mouse_pos: Vec2) -> InstanceHandle {
 		model := pool_get(&engine.model_system.models, instance.model)
 
 		global_center :=
-			transform_matrix(instance.transform) *
+			transform_to_matrix(instance.transform) *
 			Vec4{model.bounds.center.x, model.bounds.center.y, model.bounds.center.z, 1}
 		global_scale := transform_global_scale(instance.transform)
 		max_scale := max(global_scale.x, global_scale.y, global_scale.z)
@@ -51,7 +51,10 @@ pick :: proc(engine: ^Engine, mouse_pos: Vec2) -> InstanceHandle {
 
 		if hit_t < closest_dist {
 			closest_dist = hit_t
-			closest_instance = InstanceHandle{index = u32(i), generation = engine.scene.instances.generations[i]}
+			closest_instance = InstanceHandle {
+				index      = u32(i),
+				generation = engine.scene.instances.generations[i],
+			}
 			found_hit = true
 		}
 	}

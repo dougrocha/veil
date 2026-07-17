@@ -1,11 +1,11 @@
-[[vk_binding(0, 0)]] SamplerCubeArray shadow_cubes;
-[[vk_binding(2, 0)]] Sampler2DArray dir_shadow_maps;
+[[vk_binding(0, 0)]] Sampler2D textures[];
+[[vk_binding(0, 1)]] SamplerCubeArray shadow_cubes;
+[[vk_binding(1, 1)]] Sampler2DArray dir_shadow_maps;
 
 struct PushConstants {
-    float near_plane;
-    float far_plane;
-    uint face_index;
-    uint light_index;
+    uint mode; // 0 = 2D texture, 1 = shadow cube face, 2 = directional shadow
+    uint index; // bindless texture index (mode 0) or light_index (mode 1/2)
+    uint face; // cube face_index (mode 1 only)
 };
 [[vk_push_constant]] PushConstants pc;
 
@@ -23,11 +23,8 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     return output;
 }
 
-float linearize_depth(float depth, float near, float far) {
-    return (2.0 * near * far) / (far + near - depth * (far - near));
-}
-
 float3 face_dir(uint face, float2 uv) {
+    uv.y = -uv.y;
     switch (face) {
         case 0: return normalize(float3( 1.0,  uv.y,  uv.x)); // +X
         case 1: return normalize(float3(-1.0,  uv.y, -uv.x)); // -X
@@ -40,13 +37,17 @@ float3 face_dir(uint face, float2 uv) {
 
 [shader("fragment")]
 float4 fragment_main(VSOutput input) : SV_TARGET {
-    if (pc.face_index == 6) {
-        float depth = dir_shadow_maps.Sample(float3(input.uv, float(pc.light_index))).r;
+    if (pc.mode == 1) {
+        float2 uv = input.uv * 2.0 - 1.0;
+        float3 dir = face_dir(pc.face, uv);
+        float depth = shadow_cubes.Sample(float4(dir, float(pc.index))).r;
         return float4(depth, depth, depth, 1.0);
     }
 
-    float2 uv = input.uv * 2.0 - 1.0;
-    float3 dir = face_dir(pc.face_index, uv);
-    float depth = shadow_cubes.Sample(float4(dir, float(pc.light_index))).r;
-    return float4(depth, depth, depth, 1.0);
+    if (pc.mode == 2) {
+        float depth = dir_shadow_maps.Sample(float3(input.uv, float(pc.index))).r;
+        return float4(depth, depth, depth, 1.0);
+    }
+
+    return textures[pc.index].Sample(input.uv);
 }

@@ -2,9 +2,22 @@ package backend
 
 import vk "vendor:vulkan"
 
+AcquireImageResult :: enum {
+	Success,
+	OutOfDate,
+	Suboptimal,
+}
+
+PresentFrameResult :: enum {
+	Success,
+	OutOfDate,
+	Suboptimal,
+	Error,
+}
+
 FrameSync :: struct {
 	command_pool:              vk.CommandPool,
-	command_buffer:            vk.CommandBuffer,
+	command_buffer:            CommandBuffer,
 	image_acquired_semaphore:  vk.Semaphore,
 	render_complete_semaphore: vk.Semaphore,
 }
@@ -55,7 +68,7 @@ command_pool_create :: proc(ctx: ^VulkanContext, flags: vk.CommandPoolCreateFlag
 	return command_pool
 }
 
-command_buffer_allocate :: proc(ctx: ^VulkanContext, pool: vk.CommandPool) -> vk.CommandBuffer {
+command_buffer_allocate :: proc(ctx: ^VulkanContext, pool: vk.CommandPool) -> CommandBuffer {
 	cmd_alloc_info := vk.CommandBufferAllocateInfo {
 		sType              = .COMMAND_BUFFER_ALLOCATE_INFO,
 		commandPool        = pool,
@@ -65,7 +78,7 @@ command_buffer_allocate :: proc(ctx: ^VulkanContext, pool: vk.CommandPool) -> vk
 
 	command_buffer: vk.CommandBuffer
 	vk_check(vk.AllocateCommandBuffers(ctx.device, &cmd_alloc_info, &command_buffer))
-	return command_buffer
+	return CommandBuffer(command_buffer)
 }
 
 timeline_semaphore_create :: proc(ctx: ^VulkanContext, initial_value: u64 = 0) -> vk.Semaphore {
@@ -90,4 +103,61 @@ binary_semaphore_create :: proc(ctx: ^VulkanContext) -> vk.Semaphore {
 	sem: vk.Semaphore
 	vk_check(vk.CreateSemaphore(ctx.device, &info, nil, &sem))
 	return sem
+}
+
+frame_wait_before_render :: proc(ctx: ^VulkanContext, next_signal_value: u64) {
+	if next_signal_value >= MAX_FRAMES_IN_FLIGHT {
+		wait_value := next_signal_value - MAX_FRAMES_IN_FLIGHT + 1
+		wait_info := vk.SemaphoreWaitInfo {
+			sType          = .SEMAPHORE_WAIT_INFO,
+			semaphoreCount = 1,
+			pSemaphores    = &ctx.timeline_semaphore,
+			pValues        = &wait_value,
+		}
+		vk_check(vk.WaitSemaphores(ctx.device, &wait_info, max(u64)))
+	}
+}
+
+queue_submit_frame :: proc(
+	ctx: ^VulkanContext,
+	cmd: CommandBuffer,
+	frame_sync: ^FrameSync,
+	signal_value: u64,
+) {
+	image_acquired_wait_info := vk.SemaphoreSubmitInfo {
+		sType     = .SEMAPHORE_SUBMIT_INFO,
+		semaphore = frame_sync.image_acquired_semaphore,
+		stageMask = {.COLOR_ATTACHMENT_OUTPUT},
+	}
+
+	semaphore_signals := [2]vk.SemaphoreSubmitInfo {
+		{
+			sType     = .SEMAPHORE_SUBMIT_INFO,
+			semaphore = frame_sync.render_complete_semaphore,
+			stageMask = {.ALL_GRAPHICS},
+		},
+		{
+			sType     = .SEMAPHORE_SUBMIT_INFO,
+			semaphore = ctx.timeline_semaphore,
+			value     = signal_value,
+			stageMask = {.ALL_COMMANDS},
+		},
+	}
+
+	cmd_submit_info := vk.CommandBufferSubmitInfo {
+		sType         = .COMMAND_BUFFER_SUBMIT_INFO,
+		commandBuffer = vk.CommandBuffer(cmd),
+	}
+
+	submit_info := vk.SubmitInfo2 {
+		sType                    = .SUBMIT_INFO_2,
+		waitSemaphoreInfoCount   = 1,
+		pWaitSemaphoreInfos      = &image_acquired_wait_info,
+		commandBufferInfoCount   = 1,
+		pCommandBufferInfos      = &cmd_submit_info,
+		signalSemaphoreInfoCount = len(semaphore_signals),
+		pSignalSemaphoreInfos    = &semaphore_signals[0],
+	}
+
+	vk_check(vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, 0))
 }

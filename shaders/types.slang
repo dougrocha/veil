@@ -40,6 +40,12 @@ struct SpotLight {
     float specular_intensity;
 };
 
+struct TimeInfo {
+    float time;
+    float delta_time;
+    uint frame_count;
+};
+
 struct SceneData {
     float4x4 view;
     float4x4 proj;
@@ -49,7 +55,7 @@ struct SceneData {
     DirectionalLight directional_lights[4];
     SpotLight spot_lights[4];
     float3 cam_pos;
-    float delta_time;
+    TimeInfo time_info;
     AmbientLight ambient_light;
     uint point_light_count;
     uint directional_light_count;

@@ -7,16 +7,14 @@ import "core:mem"
 
 import "backend"
 
-import vk "vendor:vulkan"
-
 FrameData :: struct {
-	scene_data_buffer: GpuBuffer(SceneData),
-	particle_buffer:   GpuBuffer(Particle),
-	transforms_buffer: GpuBuffer(GpuTransform),
+	scene_data_buffer: backend.GpuBuffer(SceneData),
+	particle_buffer:   backend.GpuBuffer(Particle),
+	transforms_buffer: backend.GpuBuffer(GpuTransform),
 }
 
 frame_data_create :: proc(engine: ^Engine) {
-	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+	for i in 0 ..< backend.MAX_FRAMES_IN_FLIGHT {
 		engine.frame_data[i].scene_data_buffer = backend.buffer_create(SceneData, &engine.vk_ctx, 1, .MappedUniform)
 		engine.frame_data[i].transforms_buffer = backend.buffer_create(
 			GpuTransform,
@@ -27,6 +25,14 @@ frame_data_create :: proc(engine: ^Engine) {
 	}
 
 	create_particle_buffer(engine)
+}
+
+frame_data_destroy :: proc(engine: ^Engine) {
+	for &res in engine.frame_data {
+		backend.buffer_destroy(&engine.vk_ctx, res.scene_data_buffer)
+		backend.buffer_destroy(&engine.vk_ctx, res.particle_buffer)
+		backend.buffer_destroy(&engine.vk_ctx, res.transforms_buffer)
+	}
 }
 
 create_particle_buffer :: proc(engine: ^Engine) {
@@ -43,7 +49,7 @@ create_particle_buffer :: proc(engine: ^Engine) {
 		p.color = {brightness * 0.6, brightness * 0.8, brightness, 0.8}
 	}
 
-	for i in 0 ..< MAX_FRAMES_IN_FLIGHT {
+	for i in 0 ..< backend.MAX_FRAMES_IN_FLIGHT {
 		engine.frame_data[i].particle_buffer = backend.buffer_upload(&engine.vk_ctx, particles, .ParticleSSBO)
 	}
 }
@@ -65,7 +71,7 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		ambient_light           = engine.scene.ambient_light,
 	}
 	scene.proj[1][1] *= -1.0
-	scene.delta_time = engine.clock.delta_time
+	scene.time_info = engine.time_info
 
 	light_fov: f32 = 90.0
 	light_near: f32 = 0.1

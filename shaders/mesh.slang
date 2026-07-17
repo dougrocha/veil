@@ -96,8 +96,8 @@ float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 f
 }
 
 [[vk_binding(0, 0)]] Sampler2D textures[];
-[[vk_binding(0, 1)]] SamplerCubeArray shadow_cubes;
-[[vk_binding(2, 1)]] Sampler2DArray dir_shadow_maps;
+[[vk_binding(0, 1)]] SamplerCubeArrayShadow shadow_cubes;
+[[vk_binding(1, 1)]] Sampler2DArrayShadow dir_shadow_maps;
 
 float calc_shadow_factor(float3 frag_pos, float3 light_pos, float3 normal, uint light_index) {
     float3 light_to_frag = frag_pos - light_pos;
@@ -106,9 +106,7 @@ float calc_shadow_factor(float3 frag_pos, float3 light_pos, float3 normal, uint 
     float3 light_dir = normalize(light_to_frag);
     float bias = max(0.005 * (1.0 - dot(normal, -light_dir)), 0.0005);
 
-    float closest_depth = shadow_cubes.Sample(float4(light_to_frag, float(light_index))).r;
-
-    return current_depth - bias > closest_depth ? 0.0 : 1.0;
+    return shadow_cubes.SampleCmp(float4(light_to_frag, float(light_index)), current_depth - bias);
 }
 
 float calc_dir_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, uint light_index) {
@@ -117,9 +115,8 @@ float calc_dir_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, ui
     proj_coords.xy = proj_coords.xy * 0.5 + 0.5;
 
     float bias = max(0.005 * (1.0 - dot(normal, to_light)), 0.0005);
-    float closest_depth = dir_shadow_maps.Sample(float3(proj_coords.xy, float(light_index))).r;
 
-    return proj_coords.z - bias > closest_depth ? 0.0 : 1.0;
+    return dir_shadow_maps.SampleCmp(float3(proj_coords.xy, float(light_index)), proj_coords.z - bias);
 }
 
 [shader("fragment")]

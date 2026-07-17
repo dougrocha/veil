@@ -10,7 +10,7 @@ import "backend"
 
 import cgltf "vendor:cgltf"
 
-load_model_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle) -> ModelHandle {
+model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle) -> ModelHandle {
 	c_path := strings.clone_to_cstring(path, context.temp_allocator)
 
 	options := cgltf.options{}
