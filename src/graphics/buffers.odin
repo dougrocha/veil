@@ -70,7 +70,6 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		cam_pos                 = active_camera.position,
 		ambient_light           = engine.scene.ambient_light,
 	}
-	scene.proj[1][1] *= -1.0
 	scene.time_info = engine.time_info
 
 	light_fov: f32 = 90.0

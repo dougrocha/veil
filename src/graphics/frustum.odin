@@ -24,7 +24,7 @@ frustum_corners_from_camera :: proc(camera: ^Camera, aspect: f32) -> [8]Vec3 {
 	for x in 0 ..< 2 {
 		for y in 0 ..< 2 {
 			for z in 0 ..< 2 {
-				pt := inv * Vec4{2.0 * f32(x) - 1.0, 2.0 * f32(y) - 1.0, 2.0 * f32(z) - 1.0, 1.0}
+				pt := inv * Vec4{2.0 * f32(x) - 1.0, 2.0 * f32(y) - 1.0, f32(z), 1.0}
 
 				frustum_corners[i] = pt.xyz / pt.w
 				i += 1
