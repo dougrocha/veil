@@ -96,6 +96,7 @@ global_resources_create :: proc(engine: ^Engine) {
 engine_destroy :: proc(self: ^Engine) {
 	backend.device_wait_idle(&self.vk_ctx)
 
+	camera_system_destroy(&self.camera_system)
 	texture_system_destroy(self)
 	destroy_model_system(self)
 	material_system_destroy(self)
@@ -237,7 +238,7 @@ CUBE_FACE_DIRS := [6]struct {
 update_transforms_buffer :: proc(engine: ^Engine) {
 	transforms := (^GpuTransform)(current_frame_data(engine).transforms_buffer.alloc_info.mapped_data)
 	for &instance, i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, u32(i)) do continue
+		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
 		model_matrix := transform_to_matrix(instance.transform)
 		normal3 := linalg.transpose(linalg.inverse(linalg.matrix3_from_matrix4(model_matrix)))
 
@@ -260,7 +261,7 @@ draw_shadow_casters :: proc(engine: ^Engine, cmd: backend.CommandBuffer, light_i
 	frustum := frustum_from_view_proj(scene_data.light_view_proj[light_i][face_i])
 
 	for &instance, slot_i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, u32(slot_i)) do continue
+		if !pool_is_alive(&engine.scene.instances, Index(slot_i)) do continue
 
 		model := &pool_get(&engine.model_system.models, instance.model)^
 
@@ -298,7 +299,7 @@ draw_dir_shadow_casters :: proc(engine: ^Engine, cmd: backend.CommandBuffer, lig
 	frustum := frustum_from_view_proj(scene_data.dir_light_view_proj[light_i])
 
 	for &instance, slot_i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, u32(slot_i)) do continue
+		if !pool_is_alive(&engine.scene.instances, Index(slot_i)) do continue
 
 		model := &pool_get(&engine.model_system.models, instance.model)^
 
@@ -370,7 +371,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 
 	// opaque + mask
 	for &instance, i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, u32(i)) do continue
+		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
 		model := &pool_get(&engine.model_system.models, instance.model)^
 		for &mesh in model.meshes {
 			mat := pool_get(&engine.material_system.materials, mesh.material)
@@ -387,7 +388,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	}
 	transparent := make([dynamic]TransparentEntry, context.temp_allocator)
 	for &instance, i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, u32(i)) do continue
+		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
 		model := &pool_get(&engine.model_system.models, instance.model)^
 		for &mesh in model.meshes {
 			mat := pool_get(&engine.material_system.materials, mesh.material)

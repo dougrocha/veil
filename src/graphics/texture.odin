@@ -93,7 +93,7 @@ texture_destroy :: proc(ctx: ^backend.VulkanContext, t: Texture) {
 texture_system_destroy :: proc(engine: ^Engine) {
 	ts := &engine.texture_system
 	for &texture, i in ts.textures.values {
-		if pool_is_alive(&ts.textures, u32(i)) {
+		if pool_is_alive(&ts.textures, Index(i)) {
 			texture_destroy(&engine.vk_ctx, texture)
 		}
 	}
@@ -110,7 +110,7 @@ texture_register :: proc(engine: ^Engine, key: string, t: Texture) -> TextureHan
 	ts := &engine.texture_system
 	handle := pool_alloc(&ts.textures, t)
 	ts.texture_map[key] = handle
-	write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, handle.index)
+	write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, u32(handle.index))
 	return handle
 }
 
@@ -129,7 +129,7 @@ texture_create_builtin :: proc(engine: ^Engine) {
 		t := t
 		texture_upload(&engine.vk_ctx, pixels, &t, format)
 		handle := pool_alloc(&ts.textures, t)
-		write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, handle.index)
+		write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, u32(handle.index))
 		return handle
 	}
 

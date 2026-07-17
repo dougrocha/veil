@@ -4,7 +4,6 @@ import "core:c"
 import "core:log"
 import "core:math"
 import "core:math/linalg"
-import "core:os"
 import "core:time"
 
 import sdl "vendor:sdl3"
@@ -13,6 +12,7 @@ import gfx "graphics"
 
 main :: proc() {
 	context.logger = log.create_console_logger()
+	defer log.destroy_console_logger(context.logger)
 
 	ok := sdl.InitSubSystem({.VIDEO})
 	if !ok {

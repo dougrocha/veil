@@ -50,7 +50,7 @@ create_model_system :: proc(engine: ^Engine) {
 destroy_model_system :: proc(engine: ^Engine) {
 	ms := &engine.model_system
 	for &model, i in ms.models.values {
-		if pool_is_alive(&ms.models, u32(i)) {
+		if pool_is_alive(&ms.models, Index(i)) {
 			for &mesh in model.meshes {
 				backend.buffer_destroy(&engine.vk_ctx, mesh.vertex_buffer)
 				backend.buffer_destroy(&engine.vk_ctx, mesh.index_buffer)

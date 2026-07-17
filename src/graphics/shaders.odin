@@ -82,12 +82,15 @@ shader_system_create :: proc(self: ^Engine) -> bool {
 shader_system_destroy :: proc(self: ^Engine) {
 	ss := &self.shader_system
 	for &module, i in ss.modules.values {
-		if pool_is_alive(&ss.modules, u32(i)) {
+		if pool_is_alive(&ss.modules, Index(i)) {
 			backend.shader_module_destroy(&self.vk_ctx, module)
 		}
 	}
 	watcher.destroy(&ss.fw)
 	pool_destroy(&ss.modules)
+	for name in ss.name_to_handle {
+		delete(name)
+	}
 	delete(ss.name_to_handle)
 	ss.session->release()
 	ss.global_session->release()

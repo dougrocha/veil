@@ -89,7 +89,7 @@ instance_create :: proc(ctx: ^VulkanContext) {
 
 	extension_count: u32 = 0
 	sdl_extensions := sdl.Vulkan_GetInstanceExtensions(&extension_count)
-	extensions := make([dynamic]cstring)
+	extensions := make([dynamic]cstring, context.temp_allocator)
 	append(&extensions, vk.EXT_DEBUG_UTILS_EXTENSION_NAME)
 	for i in 0 ..< int(extension_count) {
 		append(&extensions, sdl_extensions[i])

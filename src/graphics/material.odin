@@ -101,7 +101,7 @@ material_create :: proc(
 
 	ts := &engine.texture_system
 	resolve :: proc(h, default: TextureHandle) -> u32 {
-		return h.index if h != INVALID_TEXTURE else default.index
+		return u32(h.index) if h != INVALID_TEXTURE else u32(default.index)
 	}
 
 	offset := uintptr(handle.index) * size_of(GpuMaterial)

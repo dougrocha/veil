@@ -16,7 +16,7 @@ pick :: proc(engine: ^Engine, mouse_pos: Vec2) -> InstanceHandle {
 	found_hit := false
 
 	for instance, i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, u32(i)) do continue
+		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
 
 		model := pool_get(&engine.model_system.models, instance.model)
 
@@ -52,7 +52,7 @@ pick :: proc(engine: ^Engine, mouse_pos: Vec2) -> InstanceHandle {
 		if hit_t < closest_dist {
 			closest_dist = hit_t
 			closest_instance = InstanceHandle {
-				index      = u32(i),
+				index      = Index(i),
 				generation = engine.scene.instances.generations[i],
 			}
 			found_hit = true
