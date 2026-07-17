@@ -41,10 +41,11 @@ pipeline_register :: proc(
 	self: ^Engine,
 	kind: PipelineKind,
 	shader: ShaderHandle,
-	config: ^backend.GraphicsPipelineConfig,
+	config: backend.GraphicsPipelineConfig,
 ) {
+	config := config
 	stages := default_graphics_stages(self, shader)
-	self.pipeline_registry.pipelines[kind] = backend.pipeline_create(self.vk_ctx.device, config, stages[:])
+	self.pipeline_registry.pipelines[kind] = backend.pipeline_create(self.vk_ctx.device, &config, stages[:])
 	self.pipeline_registry.configs[kind] = config
 	self.pipeline_registry.shaders[kind] = shader
 }
@@ -53,10 +54,11 @@ pipeline_register_compute :: proc(
 	self: ^Engine,
 	kind: PipelineKind,
 	shader: ShaderHandle,
-	config: ^backend.ComputePipelineConfig,
+	config: backend.ComputePipelineConfig,
 ) {
+	config := config
 	stage := default_compute_stage(self, shader)
-	self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(self.vk_ctx.device, config, stage)
+	self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(self.vk_ctx.device, &config, stage)
 	self.pipeline_registry.configs[kind] = config
 	self.pipeline_registry.shaders[kind] = shader
 }
@@ -78,14 +80,14 @@ pipeline_rebuild :: proc(self: ^Engine, kind: PipelineKind) {
 	backend.device_wait_idle(&self.vk_ctx)
 	backend.pipeline_destroy(&self.vk_ctx, old_pipeline)
 
-	switch cfg in config {
-	case ^backend.GraphicsPipelineConfig:
+	switch &cfg in config {
+	case backend.GraphicsPipelineConfig:
 		stages := default_graphics_stages(self, shader)
-		self.pipeline_registry.pipelines[kind] = backend.pipeline_create(self.vk_ctx.device, cfg, stages[:])
-	case ^backend.ComputePipelineConfig:
+		self.pipeline_registry.pipelines[kind] = backend.pipeline_create(self.vk_ctx.device, &cfg, stages[:])
+	case backend.ComputePipelineConfig:
 		self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(
 			self.vk_ctx.device,
-			cfg,
+			&cfg,
 			default_compute_stage(self, shader),
 		)
 	case nil:
@@ -97,20 +99,10 @@ destroy_pipeline_registry :: proc(ctx: ^backend.VulkanContext, reg: ^PipelineReg
 	for pipeline in reg.pipelines {
 		backend.pipeline_destroy(ctx, pipeline)
 	}
-	for config in reg.configs {
-		switch cfg in config {
-		case ^backend.GraphicsPipelineConfig:
-			free(cfg)
-		case ^backend.ComputePipelineConfig:
-			free(cfg)
-		case nil:
-		}
-	}
 }
 
-register_shadow_pipelines :: proc(engine: ^Engine, shadow_map_handle, dir_shadow_map_handle: ShaderHandle) {
-	config := new(backend.GraphicsPipelineConfig)
-	backend.pipeline_default_config(config)
+make_shadow_config :: proc() -> backend.GraphicsPipelineConfig {
+	config := backend.pipeline_default_config()
 	config.rasterization.cullMode = {}
 	config.rasterization.depthBiasEnable = true
 	config.depth_stencil.depthCompareOp = .LESS_OR_EQUAL
@@ -123,31 +115,19 @@ register_shadow_pipelines :: proc(engine: ^Engine, shadow_map_handle, dir_shadow
 		stageFlags = {.VERTEX, .FRAGMENT},
 		size       = size_of(ShadowPushConstants),
 	}
-	pipeline_register(engine, .Shadow, shadow_map_handle, config)
+	return config
+}
 
-	dir_config := new(backend.GraphicsPipelineConfig)
-	backend.pipeline_default_config(dir_config)
-	dir_config.rasterization.cullMode = {}
-	dir_config.rasterization.depthBiasEnable = true
-	dir_config.depth_stencil.depthCompareOp = .LESS_OR_EQUAL
-	dir_config.rendering_info = {
-		sType                 = .PIPELINE_RENDERING_CREATE_INFO,
-		colorAttachmentCount  = 0,
-		depthAttachmentFormat = backend.DEPTH_FORMAT,
-	}
-	dir_config.push_constant_range = {
-		stageFlags = {.VERTEX, .FRAGMENT},
-		size       = size_of(ShadowPushConstants),
-	}
-	pipeline_register(engine, .Shadow_Directional, dir_shadow_map_handle, dir_config)
+register_shadow_pipelines :: proc(engine: ^Engine, shadow_map_handle, dir_shadow_map_handle: ShaderHandle) {
+	pipeline_register(engine, .Shadow, shadow_map_handle, make_shadow_config())
+	pipeline_register(engine, .Shadow_Directional, dir_shadow_map_handle, make_shadow_config())
 }
 
 register_ui_pipeline :: proc(engine: ^Engine, ui_handle: ShaderHandle) {
-	config := new(backend.GraphicsPipelineConfig)
-	backend.pipeline_default_config(config)
+	config := backend.pipeline_default_config()
 	config.rasterization.cullMode = {}
-	backend.pipeline_config_disable_depth(config)
-	backend.pipeline_config_set_blend(config, .Alpha)
+	backend.pipeline_config_disable_depth(&config)
+	backend.pipeline_config_set_blend(&config, .Alpha)
 	config.push_constant_range = {
 		stageFlags = {.VERTEX, .FRAGMENT},
 		size       = size_of(PushConstants),
@@ -156,12 +136,11 @@ register_ui_pipeline :: proc(engine: ^Engine, ui_handle: ShaderHandle) {
 }
 
 register_mesh_pipeline :: proc(engine: ^Engine, mesh_handle: ShaderHandle) {
-	config := new(backend.GraphicsPipelineConfig)
-	backend.pipeline_default_config(config)
+	config := backend.pipeline_default_config()
 	config.multi_sample.rasterizationSamples = engine.vk_ctx.msaa_samples
-	backend.pipeline_config_set_blend(config, .Alpha)
+	backend.pipeline_config_set_blend(&config, .Alpha)
 	backend.pipeline_config_set_descriptor_layouts(
-		config,
+		&config,
 		{engine.texture_system.descriptor.layout, engine.global_descriptor.layout},
 	)
 	config.push_constant_range = {
@@ -172,20 +151,19 @@ register_mesh_pipeline :: proc(engine: ^Engine, mesh_handle: ShaderHandle) {
 }
 
 register_particle_pipelines :: proc(engine: ^Engine, particle_handle: ShaderHandle) {
-	draw_config := new(backend.GraphicsPipelineConfig)
-	backend.pipeline_default_config(draw_config)
+	draw_config := backend.pipeline_default_config()
 	draw_config.input_assembly.topology = .POINT_LIST
 	draw_config.rasterization.cullMode = {}
 	draw_config.multi_sample.rasterizationSamples = engine.vk_ctx.msaa_samples
-	backend.pipeline_config_disable_depth(draw_config)
-	backend.pipeline_config_set_blend(draw_config, .Alpha)
+	backend.pipeline_config_disable_depth(&draw_config)
+	backend.pipeline_config_set_blend(&draw_config, .Alpha)
 	draw_config.push_constant_range = {
 		stageFlags = {.VERTEX, .FRAGMENT},
 		size       = size_of(ParticlePushConstants),
 	}
 	pipeline_register(engine, .Particle_Draw, particle_handle, draw_config)
 
-	compute_config := new(backend.ComputePipelineConfig)
+	compute_config: backend.ComputePipelineConfig
 	compute_config.push_constant_range = {
 		stageFlags = {.COMPUTE},
 		size       = size_of(ParticlePushConstants),
@@ -194,13 +172,12 @@ register_particle_pipelines :: proc(engine: ^Engine, particle_handle: ShaderHand
 }
 
 register_skybox_pipeline :: proc(engine: ^Engine, skybox_handle: ShaderHandle) {
-	config := new(backend.GraphicsPipelineConfig)
-	backend.pipeline_default_config(config)
+	config := backend.pipeline_default_config()
 	config.rasterization.cullMode = {}
 	config.depth_stencil.depthWriteEnable = false
 	config.depth_stencil.depthCompareOp = .LESS_OR_EQUAL
 	config.multi_sample.rasterizationSamples = engine.vk_ctx.msaa_samples
-	backend.pipeline_config_set_descriptor_layouts(config, {engine.global_descriptor.layout})
+	backend.pipeline_config_set_descriptor_layouts(&config, {engine.global_descriptor.layout})
 	config.push_constant_range = {
 		stageFlags = {.VERTEX, .FRAGMENT},
 		size       = size_of(SkyboxPushConstants),
@@ -209,13 +186,12 @@ register_skybox_pipeline :: proc(engine: ^Engine, skybox_handle: ShaderHandle) {
 }
 
 register_debug_view_pipeline :: proc(engine: ^Engine, debug_view_handle: ShaderHandle) {
-	config := new(backend.GraphicsPipelineConfig)
-	backend.pipeline_default_config(config)
+	config := backend.pipeline_default_config()
 	config.rasterization.cullMode = {}
-	backend.pipeline_config_disable_depth(config)
+	backend.pipeline_config_disable_depth(&config)
 	config.rendering_info.depthAttachmentFormat = .UNDEFINED
 	backend.pipeline_config_set_descriptor_layouts(
-		config,
+		&config,
 		{engine.texture_system.descriptor.layout, engine.global_descriptor.layout},
 	)
 	config.push_constant_range = {
@@ -232,9 +208,9 @@ pipeline_reload :: proc(self: ^Engine, kind: PipelineKind, module_name: string) 
 	// itself, so there's nothing to manually destroy here.
 	entry_points: []string
 	switch _ in config {
-	case ^backend.GraphicsPipelineConfig:
+	case backend.GraphicsPipelineConfig:
 		entry_points = {VERTEX_ENTRY, FRAGMENT_MAIN}
-	case ^backend.ComputePipelineConfig:
+	case backend.ComputePipelineConfig:
 		entry_points = {COMPUTE_MAIN}
 	case nil:
 		log.errorf("pipeline_reload '%v': no config registered", kind)

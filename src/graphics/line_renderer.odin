@@ -22,8 +22,7 @@ LineRenderer :: struct {
 line_renderer_create :: proc(engine: ^Engine) -> (ok: bool) {
 	lr := &engine.line_renderer
 
-	config := new(backend.GraphicsPipelineConfig)
-	backend.pipeline_default_config(config)
+	config := backend.pipeline_default_config()
 	config.rasterization.cullMode = {}
 	config.input_assembly.topology = .LINE_LIST
 	config.push_constant_range = {
