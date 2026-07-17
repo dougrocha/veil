@@ -3,6 +3,13 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+BUILD_FLAGS=()
+OUT_NAME="odin-vulkan.out"
+if [ "$1" = "debug" ]; then
+    BUILD_FLAGS+=(-debug -sanitize:address)
+    OUT_NAME="odin-vulkan-debug.out"
+fi
+
 if [ "$(uname)" = "Darwin" ]; then
     SLANG_RPATH="@executable_path/shared/odin-slang/slang/lib"
 else
@@ -17,5 +24,6 @@ else
     fi
 fi
 
-odin build src -collection:shared=shared -out:odin-vulkan.out \
-    -extra-linker-flags:"-rpath '$SLANG_RPATH'"
+odin build src -collection:shared=shared -out:"$OUT_NAME" \
+    -extra-linker-flags:"-rpath '$SLANG_RPATH'" \
+    "${BUILD_FLAGS[@]}"
