@@ -334,7 +334,11 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 		}
 	}
 
-	desc := backend.image_desc_default({face_w, face_h, 1}, backend.texture_format_to_vk(.Rgba8_Unorm_Srgb), {.TRANSFER_DST, .SAMPLED})
+	desc := backend.image_desc_default(
+		{face_w, face_h, 1},
+		backend.texture_format_to_vk(.Rgba8_Unorm_Srgb),
+		{.TRANSFER_DST, .SAMPLED},
+	)
 	desc.array_layers = 6
 	desc.image_flags = {.CUBE_COMPATIBLE}
 	gpu_img := backend.image_create(&engine.vk_ctx, desc)
@@ -392,5 +396,12 @@ write_descriptor_texture :: proc(
 	array_element: u32 = 0,
 ) {
 	t := pool_get(&ts.textures, handle)
-	backend.descriptor_write_image_view(ctx, &ts.descriptor, binding, t.image_view, t.sampler, array_element = array_element)
+	backend.descriptor_write_image_view(
+		ctx,
+		&ts.descriptor,
+		binding,
+		t.image_view,
+		t.sampler,
+		array_element = array_element,
+	)
 }

@@ -46,14 +46,20 @@ struct TimeInfo {
     uint frame_count;
 };
 
+static const uint MAX_POINT_LIGHTS = 16;
+static const uint MAX_DIRECTIONAL_LIGHTS = 4;
+static const uint MAX_SPOT_LIGHTS = 4;
+// 2D shadow atlas holds directional lights first, then spot lights.
+static const uint MAX_SHADOW_2D_LIGHTS = MAX_DIRECTIONAL_LIGHTS + MAX_SPOT_LIGHTS;
+
 struct SceneData {
     float4x4 view;
     float4x4 proj;
-    float4x4 light_view_proj[6][6];
-    float4x4 dir_light_view_proj[6];
-    PointLight point_lights[16];
-    DirectionalLight directional_lights[4];
-    SpotLight spot_lights[4];
+    float4x4 point_light_view_proj[MAX_POINT_LIGHTS][6];
+    float4x4 shadow_2d_view_proj[MAX_SHADOW_2D_LIGHTS];
+    PointLight point_lights[MAX_POINT_LIGHTS];
+    DirectionalLight directional_lights[MAX_DIRECTIONAL_LIGHTS];
+    SpotLight spot_lights[MAX_SPOT_LIGHTS];
     float3 cam_pos;
     TimeInfo time_info;
     AmbientLight ambient_light;

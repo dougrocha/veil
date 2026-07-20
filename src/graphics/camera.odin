@@ -146,9 +146,7 @@ camera_get_view_matrix :: proc(c: Camera) -> Mat4x4 {
 }
 
 camera_get_projection_matrix :: proc(c: Camera, aspect: f32) -> Mat4x4 {
-	proj := matrix4_perspective_z0_f32(c.fov_y, aspect, c.near, c.far)
-	proj[1][1] *= -1.0
-	return proj
+	return matrix4_perspective_z0_f32(c.fov_y, aspect, c.near, c.far)
 }
 
 // Unprojects a screen-space mouse position into a world-space ray.

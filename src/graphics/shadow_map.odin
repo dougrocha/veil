@@ -4,6 +4,9 @@ import "backend"
 
 SHADOW_MAP_SIZE :: 2048
 
+// 2D shadow atlas holds directional lights first, then spot lights.
+MAX_SHADOW_2D_LIGHTS :: MAX_DIRECTIONAL_LIGHTS + MAX_SPOT_LIGHTS
+
 ShadowAtlas :: struct {
 	using gpu: backend.GpuImage,
 	sampler:   backend.Sampler,
@@ -12,7 +15,11 @@ ShadowAtlas :: struct {
 shadow_atlas_create :: proc(ctx: ^backend.VulkanContext, size: u32, layers: u32, cube: bool) -> ShadowAtlas {
 	atlas: ShadowAtlas
 
-	desc := backend.image_desc_default({size, size, 1}, backend.texture_format_to_vk(.D32_Sfloat), {.DEPTH_STENCIL_ATTACHMENT, .SAMPLED})
+	desc := backend.image_desc_default(
+		{size, size, 1},
+		backend.texture_format_to_vk(.D32_Sfloat),
+		{.DEPTH_STENCIL_ATTACHMENT, .SAMPLED},
+	)
 	desc.array_layers = layers
 	if cube {
 		desc.image_flags = {.CUBE_COMPATIBLE}

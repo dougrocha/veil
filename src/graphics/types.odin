@@ -7,8 +7,6 @@ import sdl "vendor:sdl3"
 
 import "backend"
 
-MAX_SHADOW_LIGHTS :: 6
-
 PARTICLE_COUNT :: 8192
 
 Vec2 :: [2]f32
@@ -67,7 +65,7 @@ Engine :: struct {
 	// global resources (binding 0 = shadow map, binding 1 = skybox)
 	global_descriptor:    backend.DescriptorSet,
 	shadow_atlas:         ShadowAtlas,
-	dir_shadow_atlas:     ShadowAtlas,
+	shadow_2d_atlas:      ShadowAtlas,
 
 	// simulation state — no Vulkan types
 	scene:                Scene,
@@ -80,7 +78,6 @@ Engine :: struct {
 	line_renderer:        LineRenderer,
 }
 
-// Everything the game mutates. No Vulkan types in here.
 Scene :: struct {
 	active_camera_name:      string,
 	ambient_light:           AmbientLight,
@@ -144,8 +141,8 @@ TimeInfo :: struct {
 SceneData :: struct {
 	view:                    Mat4x4,
 	proj:                    Mat4x4,
-	light_view_proj:         [MAX_SHADOW_LIGHTS][6]Mat4x4,
-	dir_light_view_proj:     [MAX_SHADOW_LIGHTS]Mat4x4,
+	point_light_view_proj:   [MAX_POINT_LIGHTS][6]Mat4x4,
+	shadow_2d_view_proj:     [MAX_SHADOW_2D_LIGHTS]Mat4x4,
 	point_lights:            [MAX_POINT_LIGHTS]PointLight,
 	directional_lights:      [MAX_DIRECTIONAL_LIGHTS]DirectionalLight,
 	spot_lights:             [MAX_SPOT_LIGHTS]SpotLight,
@@ -175,10 +172,16 @@ ShadowPushConstants :: struct {
 	light_index:      u32,
 }
 
-DirShadowPushConstants :: struct {
+Shadow2DType :: enum u32 {
+	Directional,
+	Spot,
+}
+
+Shadow2DPushConstants :: struct {
 	scene_data:       backend.GPUPtr(SceneData),
 	vertex_buffer:    backend.GPUPtr(Vertex),
 	transform_buffer: backend.GPUPtr(GpuTransform),
+	light_type:       Shadow2DType,
 	instance_index:   u32,
 	light_index:      u32,
 }
@@ -199,12 +202,12 @@ SkyboxPushConstants :: struct {
 DebugViewMode :: enum u32 {
 	Texture_2D,
 	Shadow_Cube_Face,
-	Dir_Shadow,
+	Shadow_2D,
 }
 
 DebugViewPushConstants :: struct {
 	mode:  DebugViewMode,
-	index: u32, // bindless texture index (Texture_2D) or light_index (Shadow_Cube_Face / Dir_Shadow)
+	index: u32, // bindless texture index (Texture_2D) or light_index (Shadow_Cube_Face / Shadow_2D)
 	face:  u32, // cube face_index (Shadow_Cube_Face only)
 }
 

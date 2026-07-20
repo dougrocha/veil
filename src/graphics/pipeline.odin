@@ -6,7 +6,7 @@ import "backend"
 
 PipelineKind :: enum u8 {
 	Shadow,
-	Shadow_Directional,
+	Shadow_2D,
 	Mesh,
 	Skybox,
 	UI,
@@ -118,9 +118,9 @@ make_shadow_config :: proc() -> backend.GraphicsPipelineConfig {
 	return config
 }
 
-register_shadow_pipelines :: proc(engine: ^Engine, shadow_map_handle, dir_shadow_map_handle: ShaderHandle) {
+register_shadow_pipelines :: proc(engine: ^Engine, shadow_map_handle, shadow_2d_handle: ShaderHandle) {
 	pipeline_register(engine, .Shadow, shadow_map_handle, make_shadow_config())
-	pipeline_register(engine, .Shadow_Directional, dir_shadow_map_handle, make_shadow_config())
+	pipeline_register(engine, .Shadow_2D, shadow_2d_handle, make_shadow_config())
 }
 
 register_ui_pipeline :: proc(engine: ^Engine, ui_handle: ShaderHandle) {

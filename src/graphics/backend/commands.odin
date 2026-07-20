@@ -64,7 +64,13 @@ cmd_set_depth_bias :: proc(cmd: CommandBuffer, bias, clamp, slope: f32) {
 	vk.CmdSetDepthBias(vk.CommandBuffer(cmd), bias, clamp, slope)
 }
 
-cmd_draw :: proc(cmd: CommandBuffer, vertex_count: u32 = 3, instance_count: u32 = 1, first_vertex: u32 = 0, first_instance: u32 = 0) {
+cmd_draw :: proc(
+	cmd: CommandBuffer,
+	vertex_count: u32 = 3,
+	instance_count: u32 = 1,
+	first_vertex: u32 = 0,
+	first_instance: u32 = 0,
+) {
 	vk.CmdDraw(vk.CommandBuffer(cmd), vertex_count, instance_count, first_vertex, first_instance)
 }
 

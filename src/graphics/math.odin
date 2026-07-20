@@ -10,6 +10,7 @@ import "core:math"
 matrix4_perspective_z0_f32 :: proc "contextless" (
 	fovy, aspect, near, far: f32,
 	flip_z_axis := true,
+	flip_y_axis := true,
 ) -> (
 	m: Mat4x4,
 ) #no_bounds_check {
@@ -24,6 +25,10 @@ matrix4_perspective_z0_f32 :: proc "contextless" (
 		m[2] = -m[2]
 	}
 
+	if flip_y_axis {
+		m[1][1] *= -1
+	}
+
 	return
 }
 
@@ -31,6 +36,7 @@ matrix4_perspective_z0_f32 :: proc "contextless" (
 matrix4_ortho3d_z0_f32 :: proc "contextless" (
 	left, right, bottom, top, near, far: f32,
 	flip_z_axis := true,
+	flip_y_axis := true,
 ) -> (
 	m: Mat4x4,
 ) #no_bounds_check {
@@ -44,6 +50,11 @@ matrix4_ortho3d_z0_f32 :: proc "contextless" (
 
 	if flip_z_axis {
 		m[2] = -m[2]
+	}
+
+	if flip_y_axis {
+		m[1][1] *= -1
+		m[1][3] *= -1 // off-center translation flips with the scale
 	}
 
 	return

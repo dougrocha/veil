@@ -34,24 +34,24 @@ load_op_to_vk :: proc(op: LoadOp) -> vk.AttachmentLoadOp {
 
 VulkanContext :: struct {
 	// core
-	instance:           vk.Instance,
-	surface:            vk.SurfaceKHR,
-	physical_device:    vk.PhysicalDevice,
-	device:             vk.Device,
-	vma_allocator:      vma.Allocator,
-	logger:             log.Logger,
-	debug_messenger:    vk.DebugUtilsMessengerEXT,
+	instance:                        vk.Instance,
+	surface:                         vk.SurfaceKHR,
+	physical_device:                 vk.PhysicalDevice,
+	device:                          vk.Device,
+	vma_allocator:                   vma.Allocator,
+	logger:                          log.Logger,
+	debug_messenger:                 vk.DebugUtilsMessengerEXT,
 
 	// queue
-	gfx_queue_fam_idx:  u32,
-	graphics_queue:     vk.Queue,
-	msaa_samples:       vk.SampleCountFlags,
-	upload_pool:        vk.CommandPool,
+	gfx_queue_fam_idx:               u32,
+	graphics_queue:                  vk.Queue,
+	msaa_samples:                    vk.SampleCountFlags,
+	upload_pool:                     vk.CommandPool,
 
 	// limits
 	max_bindless_samplers_per_stage: u32,
 
 	// sync
-	timeline_semaphore: vk.Semaphore,
-	frame_sync:         [MAX_FRAMES_IN_FLIGHT]FrameSync,
+	timeline_semaphore:              vk.Semaphore,
+	frame_sync:                      [MAX_FRAMES_IN_FLIGHT]FrameSync,
 }

@@ -105,7 +105,10 @@ swapchain_acquire_next_image :: proc(
 	ctx: ^VulkanContext,
 	swapchain: ^Swapchain,
 	acquire_semaphore: vk.Semaphore,
-) -> (AcquireImageResult, u32) {
+) -> (
+	AcquireImageResult,
+	u32,
+) {
 	image_index: u32
 	acquire_result := vk.AcquireNextImageKHR(
 		ctx.device,

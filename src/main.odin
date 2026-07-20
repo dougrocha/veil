@@ -47,6 +47,7 @@ main :: proc() {
 
 	app.engine.camera_system.default_camera = gfx.camera_create({0, 1, 5}, yaw = -90, pitch = 0)
 
+	/*
 	wood_gate_mat := gfx.material_create(
 		&app.engine,
 		"wood_gate",
@@ -117,6 +118,7 @@ main :: proc() {
 	)
 	duck := gfx.model_load(&app.engine, "assets/models/rubber_duck_toy_4k.gltf", duck_mat)
 	gfx.instance_spawn(&app.engine, duck, gfx.transform_create(translation = {-3, 0, 2}))
+	*/
 
 
 	shiny_mat := gfx.material_create(&app.engine, "shiny_mat", perceptual_roughness = 0.0)
@@ -130,7 +132,20 @@ main :: proc() {
 	ground_plane := gfx.primitive_plane(&app.engine, "ground_plane", ground_mat, half_size = {10, 10})
 	gfx.instance_spawn(&app.engine, ground_plane, gfx.transform_create(translation = {0, 0, 0}))
 
-	sponza := gfx.model_load(&app.engine, "assets/models/sponza-gltf-pbr/sponza.glb")
+	// center sphere: main shadow caster for the camera-mounted spot light
+	matte_mat := gfx.material_create(&app.engine, "matte_mat", perceptual_roughness = 0.5)
+	test_sphere := gfx.primitive_sphere(&app.engine, "test_sphere", material = matte_mat)
+	gfx.instance_spawn(&app.engine, test_sphere, gfx.transform_create(translation = {0, 1, 0}))
+
+	// back wall: vertical receiver so spot/point shadows are visible without looking at the floor
+	back_wall := gfx.primitive_cube(&app.engine, "back_wall", rough_mat)
+	gfx.instance_spawn(
+		&app.engine,
+		back_wall,
+		gfx.transform_create(translation = {0, 2, -6}, scale = {6, 2, 0.2}),
+	)
+
+	// sponza := gfx.model_load(&app.engine, "assets/models/sponza-gltf-pbr/sponza.glb")
 	// gfx.instance_spawn(&app.engine, sponza, gfx.transform_create(translation = {0, 0, 0}, scale = {0.01, 0.01, 0.01}))
 
 	space_skybox_tex := gfx.texture_load_cubemap(&app.engine, "assets/textures/StandardCubeMap.png")
@@ -140,7 +155,7 @@ main :: proc() {
 		&app.engine,
 		gfx.PointLight {
 			pos = {0, 10, 0},
-			color = {1, 1, 0},
+			color = {1, 0.2, 0.2},
 			constant = 1,
 			linear = 0.09,
 			quadratic = 0.032,
@@ -151,9 +166,9 @@ main :: proc() {
 	gfx.spawn_spot_light(
 		&app.engine,
 		gfx.SpotLight {
-			pos = {2, 2, 4},
-			direction = {0, -0.26, -1},
-			color = {0.4, 0.5, 0.7},
+			pos = {0, 6, 5},
+			direction = {0, -1, -1}, // aimed dead-center at the test sphere
+			color = {1, 1, 1},
 			inner_cutoff = math.cos(math.to_radians(f32(12.5))),
 			outer_cutoff = math.cos(math.to_radians(f32(22.5))),
 			constant = 1,
@@ -168,8 +183,8 @@ main :: proc() {
 		gfx.DirectionalLight {
 			direction = linalg.normalize(gfx.Vec3{-1.0, -1.0, 0.5}),
 			color = {1.0, 0.9, 0.8},
-			diffuse_intensity = 1.0,
-			specular_intensity = 1.0,
+			diffuse_intensity = 0.3,
+			specular_intensity = 0.2,
 		},
 	)
 
@@ -191,8 +206,8 @@ main :: proc() {
 	)
 	light_sphere2 := gfx.instance_spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
 
-	light_pos := gfx.Vec3{-2, 4, 0}
-	light_pos2 := gfx.Vec3{2, 4, 0}
+	light_pos := gfx.Vec3{-3, 3, 1}
+	light_pos2 := gfx.Vec3{3, 3, 1}
 	app.engine.scene.point_lights[0].pos = light_pos
 	app.engine.scene.point_lights[1].pos = light_pos2
 	gfx.instance_get(&app.engine, light_sphere).transform.translation = light_pos
@@ -288,6 +303,7 @@ main :: proc() {
 		}
 
 		process_input(active_cam, delta_time)
+		// app.engine.scene.spot_lights[0].pos = app.engine.camera_system.default_camera.position
 		gfx.engine_render(&app, delta_time)
 	}
 }

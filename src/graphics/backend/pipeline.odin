@@ -205,11 +205,7 @@ pipeline_default_config :: proc() -> (config: GraphicsPipelineConfig) {
 	return
 }
 
-pipeline_create :: proc(
-	device: vk.Device,
-	config: ^GraphicsPipelineConfig,
-	stages: []ShaderStageDesc,
-) -> Pipeline {
+pipeline_create :: proc(device: vk.Device, config: ^GraphicsPipelineConfig, stages: []ShaderStageDesc) -> Pipeline {
 	layout_info := pipeline_build_layout_info(
 		&config.descriptor_layouts,
 		config.descriptor_layout_count,

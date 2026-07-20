@@ -118,12 +118,7 @@ frame_wait_before_render :: proc(ctx: ^VulkanContext, next_signal_value: u64) {
 	}
 }
 
-queue_submit_frame :: proc(
-	ctx: ^VulkanContext,
-	cmd: CommandBuffer,
-	frame_sync: ^FrameSync,
-	signal_value: u64,
-) {
+queue_submit_frame :: proc(ctx: ^VulkanContext, cmd: CommandBuffer, frame_sync: ^FrameSync, signal_value: u64) {
 	image_acquired_wait_info := vk.SemaphoreSubmitInfo {
 		sType     = .SEMAPHORE_SUBMIT_INFO,
 		semaphore = frame_sync.image_acquired_semaphore,
@@ -132,14 +127,14 @@ queue_submit_frame :: proc(
 
 	semaphore_signals := [2]vk.SemaphoreSubmitInfo {
 		{
-			sType     = .SEMAPHORE_SUBMIT_INFO,
+			sType = .SEMAPHORE_SUBMIT_INFO,
 			semaphore = frame_sync.render_complete_semaphore,
 			stageMask = {.ALL_GRAPHICS},
 		},
 		{
-			sType     = .SEMAPHORE_SUBMIT_INFO,
+			sType = .SEMAPHORE_SUBMIT_INFO,
 			semaphore = ctx.timeline_semaphore,
-			value     = signal_value,
+			value = signal_value,
 			stageMask = {.ALL_COMMANDS},
 		},
 	}

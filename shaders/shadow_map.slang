@@ -23,7 +23,7 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     float4 world_pos = mul(transform.model, float4(v.pos, 1.0));
 
     VSOutput output;
-    output.pos = mul(pc.scene_data.light_view_proj[pc.light_index][pc.face_index], world_pos);
+    output.pos = mul(pc.scene_data.point_light_view_proj[pc.light_index][pc.face_index], world_pos);
     output.world_pos = world_pos.xyz;
     return output;
 }

@@ -77,36 +77,32 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 	light_far: f32 = 100.0
 	scene.shadow_near = light_near
 	scene.shadow_far = light_far
-	// No Y-flip here: unlike the main camera projection, this feeds a cube face render
-	// target that's later sampled by direction via SamplerCube, which uses Vulkan's
-	// fixed per-face UV convention rather than our own projected coordinates. Flipping Y
-	// mirrors what's rasterized into each face relative to what that convention expects,
-	// so lookups read the wrong texel.
-	light_proj := matrix4_perspective_z0_f32(linalg.to_radians(light_fov), 1.0, light_near, light_far)
 
-	shadow_light_count := min(int(engine.scene.point_light_count), MAX_SHADOW_LIGHTS)
+	// cube face orientation follows the cube-map sampling convention (CUBE_FACE_DIRS), not screen y
+	light_proj := matrix4_perspective_z0_f32(
+		linalg.to_radians(light_fov),
+		1.0,
+		light_near,
+		light_far,
+		flip_y_axis = false,
+	)
+
+	shadow_light_count := min(int(engine.scene.point_light_count), MAX_POINT_LIGHTS)
 	for light_i in 0 ..< shadow_light_count {
 		light := engine.scene.point_lights[light_i]
 		for face_dir, face_i in CUBE_FACE_DIRS {
 			light_view := linalg.matrix4_look_at(light.pos, light.pos + face_dir.target, face_dir.up)
-			scene.light_view_proj[light_i][face_i] = light_proj * light_view
+			scene.point_light_view_proj[light_i][face_i] = light_proj * light_view
 		}
 	}
 
-	dir_count := min(int(engine.scene.directional_light_count), MAX_SHADOW_LIGHTS)
+	dir_count := min(int(engine.scene.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
 	for light_i in 0 ..< dir_count {
 		light := engine.scene.directional_lights[light_i]
 
 		up := Vec3{0, 1, 0}
 		if abs(light.direction.y) > 0.999 do up = {0, 0, 1}
 
-		// Fit the light's ortho volume to the camera's view frustum: tighter than a
-		// fixed-size box, and using a bounding sphere (orientation-independent) keeps
-		// the extent stable as the camera rotates, so only the center needs snapping.
-		// Clamp to the shadow-relevant distance rather than the camera's real draw
-		// distance (which can be huge, e.g. 5000) — otherwise the ortho volume balloons
-		// and the scene's actual depth range collapses into a sliver of [near, far],
-		// leaving barely any contrast in the shadow map.
 		shadow_camera := active_camera^
 		shadow_camera.far = min(shadow_camera.far, light_far)
 		corners := frustum_corners_from_camera(&shadow_camera, aspect)
@@ -118,8 +114,6 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		radius: f32 = 0
 		for c in corners do radius = max(radius, linalg.length(c - center))
 
-		// Snap the center to texel-sized steps in light space so it doesn't shimmer
-		// as the camera moves.
 		texel_size := (radius * 2) / f32(SHADOW_MAP_SIZE)
 		snap_view := linalg.matrix4_look_at(Vec3{0, 0, 0}, light.direction, up, true)
 		center_light_space := (snap_view * Vec4{center.x, center.y, center.z, 1.0}).xyz
@@ -133,7 +127,23 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 
 		dir_proj := matrix4_ortho3d_z0_f32(-radius, radius, -radius, radius, light_near, radius * 4)
 
-		scene.dir_light_view_proj[light_i] = dir_proj * dir_view
+		scene.shadow_2d_view_proj[light_i] = dir_proj * dir_view
+	}
+
+	// Spot lights live in the second half of the 2D shadow atlas, after the directional slots.
+	spot_count := min(int(engine.scene.spot_light_count), MAX_SPOT_LIGHTS)
+	for light_i in 0 ..< spot_count {
+		light := engine.scene.spot_lights[light_i]
+
+		up := Vec3{0, 1, 0}
+		if abs(light.direction.y) > 0.999 do up = {0, 0, 1}
+
+		// outer_cutoff is stored as a cosine; the cone's full angle is the fov
+		spot_fov := 2 * math.acos(light.outer_cutoff)
+		spot_view := linalg.matrix4_look_at(light.pos, light.pos + light.direction, up)
+		spot_proj := matrix4_perspective_z0_f32(spot_fov, 1.0, light_near, light_far)
+
+		scene.shadow_2d_view_proj[MAX_DIRECTIONAL_LIGHTS + light_i] = spot_proj * spot_view
 	}
 
 	mem.copy(engine.frame_data[frame_index].scene_data_buffer.alloc_info.mapped_data, &scene, size_of(SceneData))

@@ -210,10 +210,6 @@ poll :: proc(w: ^Watcher, allocator := context.temp_allocator) -> []Event_Data {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Darwin FSEvents bindings (foreign imports are allowed inside `when` blocks,
-// regular imports are not — which is why core:sys/linux is imported above).
-// ---------------------------------------------------------------------------
 when ODIN_OS == .Darwin {
 	foreign import CoreFoundation "system:CoreFoundation.framework"
 	foreign import CoreServices "system:CoreServices.framework"
