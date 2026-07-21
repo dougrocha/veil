@@ -30,8 +30,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	)
 
 	shader_system_create(engine) or_return
-	shadow_2d_handle := shader_load(engine, "shadow_2d", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
-	shadow_map_handle := shader_load(engine, "shadow_map", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
+	shadow_handle := shader_load(engine, "shadow", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	ui_handle := shader_load(engine, "ui", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	mesh_handle := shader_load(engine, "mesh", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	particle_handle := shader_load(engine, "particle", {VERTEX_ENTRY, FRAGMENT_MAIN, COMPUTE_MAIN}) or_return
@@ -49,7 +48,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 
 	global_resources_create(engine)
 
-	register_shadow_pipelines(engine, shadow_map_handle, shadow_2d_handle)
+	register_shadow_pipelines(engine, shadow_handle)
 	register_ui_pipeline(engine, ui_handle)
 	register_mesh_pipeline(engine, mesh_handle)
 	register_particle_pipelines(engine, particle_handle)
@@ -249,16 +248,21 @@ update_transforms_buffer :: proc(engine: ^Engine) {
 	}
 }
 
-draw_shadow_cube :: proc(engine: ^Engine, cmd: backend.CommandBuffer, light_i: u32, face_i: u32) {
-	shadow_map_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow)
+draw_shadow :: proc(
+	engine: ^Engine,
+	cmd: backend.CommandBuffer,
+	light_type: ShadowLightType,
+	light_i: u32,
+	view_proj: Mat4x4,
+) {
+	shadow_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow)
 
-	backend.pipeline_bind(cmd, shadow_map_pipeline)
+	backend.pipeline_bind(cmd, shadow_pipeline)
 	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
 
 	frame := current_frame_data(engine)
 
-	scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
-	frustum := frustum_from_view_proj(scene_data.point_light_view_proj[light_i][face_i])
+	frustum := frustum_from_view_proj(view_proj)
 
 	for &instance, slot_i in engine.scene.instances.values {
 		if !pool_is_alive(&engine.scene.instances, Index(slot_i)) do continue
@@ -277,50 +281,12 @@ draw_shadow_cube :: proc(engine: ^Engine, cmd: backend.CommandBuffer, light_i: u
 				scene_data       = frame.scene_data_buffer.ptr,
 				vertex_buffer    = mesh.vertex_buffer.ptr,
 				transform_buffer = frame.transforms_buffer.ptr,
+				view_proj        = view_proj,
 				instance_index   = u32(slot_i),
-				face_index       = face_i,
+				light_type       = light_type,
 				light_index      = light_i,
 			}
-			backend.pipeline_push(cmd, shadow_map_pipeline, {.VERTEX, .FRAGMENT}, &pc)
-			backend.cmd_draw_indexed(cmd, mesh.index_buffer.buffer, mesh.index_count)
-		}
-	}
-}
-
-draw_shadow_2d :: proc(engine: ^Engine, cmd: backend.CommandBuffer, shadow_type: Shadow2DType, light_i: u32) {
-	shadow_map_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow_2D)
-
-	backend.pipeline_bind(cmd, shadow_map_pipeline)
-	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
-
-	frame := current_frame_data(engine)
-
-	scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
-	slot := light_i if shadow_type == .Directional else (MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + light_i
-	frustum := frustum_from_view_proj(scene_data.shadow_2d_view_proj[slot])
-
-	for &instance, slot_i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, Index(slot_i)) do continue
-
-		model := &pool_get(&engine.model_system.models, instance.model)^
-
-		if !volume_is_on_frustum(frustum, model.bounds, instance.transform) {
-			continue
-		}
-
-		for &mesh in model.meshes {
-			mat := pool_get(&engine.material_system.materials, mesh.material)
-			if mat.alpha_mode == .Blend do continue
-
-			pc := Shadow2DPushConstants {
-				scene_data       = frame.scene_data_buffer.ptr,
-				vertex_buffer    = mesh.vertex_buffer.ptr,
-				transform_buffer = frame.transforms_buffer.ptr,
-				light_type       = shadow_type,
-				instance_index   = u32(slot_i),
-				light_index      = light_i,
-			}
-			backend.pipeline_push(cmd, shadow_map_pipeline, {.VERTEX, .FRAGMENT}, &pc)
+			backend.pipeline_push(cmd, shadow_pipeline, {.VERTEX, .FRAGMENT}, &pc)
 			backend.cmd_draw_indexed(cmd, mesh.index_buffer.buffer, mesh.index_count)
 		}
 	}
@@ -523,7 +489,8 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 					skip_depth_transition = true,
 				},
 			)
-			draw_shadow_2d(engine, cmd, .Directional, slot)
+			scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
+			draw_shadow(engine, cmd, .Directional, slot, scene_data.shadow_2d_view_proj[slot])
 			end_render_pass(cmd)
 		}
 	}
@@ -541,7 +508,9 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 				skip_depth_transition = true,
 			},
 		)
-		draw_shadow_2d(engine, cmd, .Spot, u32(i))
+		scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
+		slot := u32((MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + i)
+		draw_shadow(engine, cmd, .Spot, u32(i), scene_data.shadow_2d_view_proj[slot])
 		end_render_pass(cmd)
 	}
 	// Transition 2D shadow atlas to read-only for the mesh pass
@@ -577,7 +546,8 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 					skip_depth_transition = true,
 				},
 			)
-			draw_shadow_cube(engine, cmd, u32(light_i), u32(face_i))
+			scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
+			draw_shadow(engine, cmd, .Point, u32(light_i), scene_data.point_light_view_proj[light_i][face_i])
 			end_render_pass(cmd)
 		}
 	}

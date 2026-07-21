@@ -174,26 +174,19 @@ Vertex :: struct {
 	tangent: Vec4, // xyz = tangent direction, w = handedness
 }
 
-ShadowPushConstants :: struct {
-	scene_data:       backend.GPUPtr(SceneData),
-	vertex_buffer:    backend.GPUPtr(Vertex),
-	transform_buffer: backend.GPUPtr(GpuTransform),
-	instance_index:   u32,
-	face_index:       u32,
-	light_index:      u32,
-}
-
-Shadow2DType :: enum u32 {
+ShadowLightType :: enum u32 {
 	Directional,
 	Spot,
+	Point,
 }
 
-Shadow2DPushConstants :: struct {
+ShadowPushConstants :: struct #packed {
 	scene_data:       backend.GPUPtr(SceneData),
 	vertex_buffer:    backend.GPUPtr(Vertex),
 	transform_buffer: backend.GPUPtr(GpuTransform),
-	light_type:       Shadow2DType,
+	view_proj:        Mat4x4,
 	instance_index:   u32,
+	light_type:       ShadowLightType,
 	light_index:      u32,
 }
 
