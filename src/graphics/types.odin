@@ -76,6 +76,11 @@ Engine :: struct {
 
 	// other stuff
 	line_renderer:        LineRenderer,
+	debug_settings:       DebugSettings,
+}
+
+DebugSettings :: struct {
+	show_cascades: u32,
 }
 
 Scene :: struct {
@@ -141,19 +146,25 @@ TimeInfo :: struct {
 SceneData :: struct {
 	view:                    Mat4x4,
 	proj:                    Mat4x4,
-	point_light_view_proj:   [MAX_POINT_LIGHTS][6]Mat4x4,
-	shadow_2d_view_proj:     [MAX_SHADOW_2D_LIGHTS]Mat4x4,
-	point_lights:            [MAX_POINT_LIGHTS]PointLight,
-	directional_lights:      [MAX_DIRECTIONAL_LIGHTS]DirectionalLight,
-	spot_lights:             [MAX_SPOT_LIGHTS]SpotLight,
 	cam_pos:                 Vec3,
 	time_info:               TimeInfo,
-	ambient_light:           AmbientLight,
+
+	// lights and shadows
+	point_lights:            [MAX_POINT_LIGHTS]PointLight,
 	point_light_count:       u32,
+	directional_lights:      [MAX_DIRECTIONAL_LIGHTS]DirectionalLight,
 	directional_light_count: u32,
+	spot_lights:             [MAX_SPOT_LIGHTS]SpotLight,
 	spot_light_count:        u32,
+	ambient_light:           AmbientLight,
 	shadow_near:             f32,
 	shadow_far:              f32,
+	point_light_view_proj:   [MAX_POINT_LIGHTS][6]Mat4x4,
+	shadow_2d_view_proj:     [MAX_SHADOW_2D_SLOTS]Mat4x4,
+	shadow_cascade_splits:   [MAX_DIRECTIONAL_LIGHTS]Vec4,
+
+	// debug
+	debug_settings:          DebugSettings,
 }
 
 Vertex :: struct {

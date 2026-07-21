@@ -4,8 +4,10 @@ import "backend"
 
 SHADOW_MAP_SIZE :: 2048
 
+SHADOW_MAP_CASCADE_COUNT :: 4
+
 // 2D shadow atlas holds directional lights first, then spot lights.
-MAX_SHADOW_2D_LIGHTS :: MAX_DIRECTIONAL_LIGHTS + MAX_SPOT_LIGHTS
+MAX_SHADOW_2D_SLOTS :: (MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + MAX_SPOT_LIGHTS
 
 ShadowAtlas :: struct {
 	using gpu: backend.GpuImage,

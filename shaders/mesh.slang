@@ -109,7 +109,24 @@ float calc_point_shadow_factor(float3 frag_pos, float3 light_pos, float3 normal,
     return shadow_cubes.SampleCmp(float4(light_to_frag, float(light_index)), current_depth - bias);
 }
 
-float calc_dir_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, uint slot) {
+float calc_dir_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, uint light_index, out uint cascade_out) {
+    // view space in this engine looks down -Z, so distance from the camera is -view_z
+    float view_depth = -mul(pc.scene_data.view, float4(frag_pos, 1.0)).z;
+
+    float4 splits = pc.scene_data.shadow_cascade_splits[light_index];
+    uint cascade = SHADOW_MAP_CASCADE_COUNT;
+    if (view_depth < splits.x) cascade = 0;
+    else if (view_depth < splits.y) cascade = 1;
+    else if (view_depth < splits.z) cascade = 2;
+    else if (view_depth < splits.w) cascade = 3;
+
+    cascade_out = cascade;
+
+    // fragment is beyond the last cascade split; leave it unshadowed rather than sampling garbage
+    if (cascade == SHADOW_MAP_CASCADE_COUNT) return 1.0;
+
+    uint slot = light_index * SHADOW_MAP_CASCADE_COUNT + cascade;
+
     float4 light_space_pos = mul(pc.scene_data.shadow_2d_view_proj[slot], float4(frag_pos, 1.0));
     float3 proj_coords = light_space_pos.xyz / light_space_pos.w;
     proj_coords.xy = proj_coords.xy * 0.5 + 0.5;
@@ -120,7 +137,7 @@ float calc_dir_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, ui
 }
 
 float calc_spot_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, uint light_index) {
-    uint slot = MAX_DIRECTIONAL_LIGHTS + light_index;
+    uint slot = (MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + light_index;
 
     // projection is now only used to find WHERE to sample...
     float4 light_space_pos = mul(pc.scene_data.shadow_2d_view_proj[slot], float4(frag_pos, 1.0));
@@ -160,11 +177,25 @@ float4 fragment_main(VSOutput vert) : SV_TARGET {
 
     float ao = textures[mat.occlusion_texture].Sample(vert.frag_uv).r;
     float3 total_light = pc.scene_data.ambient_light.color.rgb * pc.scene_data.ambient_light.brightness * ao;
+
+    static const float3 CASCADE_DEBUG_COLORS[5] = {
+        float3(1.0, 0.0, 0.0), // cascade 0
+        float3(0.0, 1.0, 0.0), // cascade 1
+        float3(0.0, 0.0, 1.0), // cascade 2
+        float3(1.0, 1.0, 0.0), // cascade 3
+        float3(1.0, 1.0, 1.0), // past last split, unshadowed
+    };
+    float3 cascade_tint = float3(1.0, 1.0, 1.0);
+
     for (uint i = 0; i < pc.scene_data.directional_light_count; i++) {
         float3 to_light = normalize(-pc.scene_data.directional_lights[i].direction);
-        float shadow = calc_dir_shadow_factor(vert.frag_pos, normal, to_light, i);
+        uint cascade;
+        float shadow = calc_dir_shadow_factor(vert.frag_pos, normal, to_light, i, cascade);
         total_light += calc_dir_light(pc.scene_data.directional_lights[i], normal, view_dir, shininess, smoothness) * shadow;
+        if (i == 0) cascade_tint = CASCADE_DEBUG_COLORS[cascade];
     }
+
+    if (pc.scene_data.debug_settings.show_cascades != 0) total_light *= cascade_tint;
 
     for (uint i = 0; i < pc.scene_data.point_light_count; i++) {
         float shadow = calc_point_shadow_factor(vert.frag_pos, pc.scene_data.point_lights[i].pos, normalize(vert.frag_normal), i);

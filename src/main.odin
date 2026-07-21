@@ -250,6 +250,8 @@ main :: proc() {
 				case ._4:
 					active_cam.near = 80.0
 					active_cam.far = 400.0
+				case .C:
+					app.engine.debug_settings.show_cascades = 1 - app.engine.debug_settings.show_cascades
 				}
 			case .MOUSE_MOTION:
 				if mouse_captured do gfx.camera_process_mouse_movement(active_cam, ev.motion.xrel, -ev.motion.yrel)

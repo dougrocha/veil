@@ -120,7 +120,7 @@ camera_create :: proc(
 		mouse_sensitivity = 0.1,
 		fov_y             = linalg.to_radians(f32(60)),
 		near              = 0.1,
-		far               = 5000.0,
+		far               = 100.0,
 	}
 	camera_update_vectors(&c)
 	return c

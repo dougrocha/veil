@@ -82,7 +82,7 @@ global_resources_create :: proc(engine: ^Engine) {
 		engine.shadow_atlas.sampler,
 		.Depth_Read,
 	)
-	engine.shadow_2d_atlas = shadow_atlas_create(vk_ctx, SHADOW_MAP_SIZE, MAX_SHADOW_2D_LIGHTS, cube = false)
+	engine.shadow_2d_atlas = shadow_atlas_create(vk_ctx, SHADOW_MAP_SIZE, MAX_SHADOW_2D_SLOTS, cube = false)
 	backend.descriptor_write_image_view(
 		vk_ctx,
 		&engine.global_descriptor,
@@ -296,7 +296,7 @@ draw_shadow_2d :: proc(engine: ^Engine, cmd: backend.CommandBuffer, shadow_type:
 	frame := current_frame_data(engine)
 
 	scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
-	slot := light_i if shadow_type == .Directional else MAX_DIRECTIONAL_LIGHTS + light_i
+	slot := light_i if shadow_type == .Directional else (MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + light_i
 	frustum := frustum_from_view_proj(scene_data.shadow_2d_view_proj[slot])
 
 	for &instance, slot_i in engine.scene.instances.values {
@@ -453,28 +453,32 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		PassConfig{color = {image = &engine.swapchain.render_targets.draw}, load_op = .Load},
 	)
 
-	for i in 0 ..< 8 {
+	// 6 point-light cube faces, then the first directional light's cascades, then the first spot light.
+	tile_count := 6 + SHADOW_MAP_CASCADE_COUNT + 1
+	for i in 0 ..< tile_count {
 		rect := Rect2D {
 			offset = {i32(i) * DEBUG_SIZE, 0},
 			extent = {DEBUG_SIZE, DEBUG_SIZE},
 		}
 		pc: DebugViewPushConstants
-		if i == 7 {
-			// first spot light's slot in the 2D shadow atlas
-			pc = {
-				mode  = .Shadow_2D,
-				index = MAX_DIRECTIONAL_LIGHTS,
-			}
-		} else if i == 6 {
-			pc = {
-				mode  = .Shadow_2D,
-				index = 0,
-			}
-		} else {
+		if i < 6 {
 			pc = {
 				mode  = .Shadow_Cube_Face,
 				index = 0,
 				face  = u32(i),
+			}
+		} else if i < 6 + SHADOW_MAP_CASCADE_COUNT {
+			// cascades of directional light 0 only
+			cascade := i - 6
+			pc = {
+				mode  = .Shadow_2D,
+				index = u32(cascade),
+			}
+		} else {
+			// first spot light's slot in the 2D shadow atlas
+			pc = {
+				mode  = .Shadow_2D,
+				index = MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT,
 			}
 		}
 		draw_debug_view(engine, cmd, pc, rect)
@@ -503,29 +507,35 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		.Undefined,
 		.Depth_Write,
 		{.DEPTH},
-		layer_count = MAX_SHADOW_2D_LIGHTS,
+		layer_count = MAX_SHADOW_2D_SLOTS,
 	)
 
 	for i in 0 ..< dir_shadow_light_count {
-		begin_render_pass(
-			engine,
-			cmd,
-			PassConfig {
-				depth = {image = &engine.shadow_2d_atlas.gpu, layer = u32(i)},
-				load_op = .Clear,
-				store_depth = true,
-				skip_depth_transition = true,
-			},
-		)
-		draw_shadow_2d(engine, cmd, .Directional, u32(i))
-		end_render_pass(cmd)
+		for cascade in 0 ..< SHADOW_MAP_CASCADE_COUNT {
+			slot := u32(i * SHADOW_MAP_CASCADE_COUNT + cascade)
+			begin_render_pass(
+				engine,
+				cmd,
+				PassConfig {
+					depth = {image = &engine.shadow_2d_atlas.gpu, layer = slot},
+					load_op = .Clear,
+					store_depth = true,
+					skip_depth_transition = true,
+				},
+			)
+			draw_shadow_2d(engine, cmd, .Directional, slot)
+			end_render_pass(cmd)
+		}
 	}
 	for i in 0 ..< spot_shadow_light_count {
 		begin_render_pass(
 			engine,
 			cmd,
 			PassConfig {
-				depth = {image = &engine.shadow_2d_atlas.gpu, layer = u32(MAX_DIRECTIONAL_LIGHTS + i)},
+				depth = {
+					image = &engine.shadow_2d_atlas.gpu,
+					layer = u32((MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + i),
+				},
 				load_op = .Clear,
 				store_depth = true,
 				skip_depth_transition = true,
@@ -541,7 +551,7 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		.Depth_Write,
 		.Depth_Read,
 		{.DEPTH},
-		layer_count = MAX_SHADOW_2D_LIGHTS,
+		layer_count = MAX_SHADOW_2D_SLOTS,
 	)
 
 	// Always transition all MAX_POINT_LIGHTS*6 layers so unused layers are in the
