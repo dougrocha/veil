@@ -36,5 +36,6 @@ float fragment_main(VSOutput input) : SV_Depth {
     }
 
     float3 light_pos = pc.light_type == 1 ? pc.scene_data.spot_lights[pc.light_index].pos : pc.scene_data.point_lights[pc.light_index].pos;
-    return length(input.world_pos - light_pos) / pc.scene_data.shadow_far;
+    float range = pc.light_type == 1 ? pc.scene_data.spot_lights[pc.light_index].range : pc.scene_data.point_lights[pc.light_index].range;
+    return length(input.world_pos - light_pos) / range;
 }

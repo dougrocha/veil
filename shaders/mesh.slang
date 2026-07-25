@@ -71,6 +71,11 @@ float calc_attenuation(float distance, float constant, float linear, float quadr
     return 1.0 / (constant + linear * distance + quadratic * (distance * distance));
 }
 
+// smoothly fades to 0 at range instead of hard-clipping, avoiding a visible pop at the cutoff
+float calc_range_attenuation(float distance, float range) {
+    return clamp(1.0 - pow(distance / range, 4.0), 0.0, 1.0);
+}
+
 float3 calc_dir_light(DirectionalLight light, float3 normal, float3 view_dir, float shininess, float smoothness) {
     float3 to_light = normalize(-light.direction);
     return calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color, shininess, smoothness);
@@ -79,7 +84,7 @@ float3 calc_dir_light(DirectionalLight light, float3 normal, float3 view_dir, fl
 float3 calc_point_light(PointLight light, float3 normal, float3 view_dir, float3 frag_pos, float shininess, float smoothness) {
     float3 to_light = normalize(light.pos - frag_pos);
     float distance = length(light.pos - frag_pos);
-    float attenuation = calc_attenuation(distance, light.constant, light.linear, light.quadratic);
+    float attenuation = calc_attenuation(distance, light.constant, light.linear, light.quadratic) * calc_range_attenuation(distance, light.range);
     float3 base_color = calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color, shininess, smoothness);
     return base_color * attenuation;
 }
@@ -90,7 +95,7 @@ float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 f
     float epsilon = light.inner_cutoff - light.outer_cutoff;
     float intensity = clamp((theta - light.outer_cutoff) / epsilon, 0.0, 1.0);
     float distance = length(light.pos - frag_pos);
-    float attenuation = calc_attenuation(distance, light.constant, light.linear, light.quadratic);
+    float attenuation = calc_attenuation(distance, light.constant, light.linear, light.quadratic) * calc_range_attenuation(distance, light.range);
     float3 base_color = calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color, shininess, smoothness);
     return base_color * intensity * attenuation;
 }
@@ -99,9 +104,10 @@ float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 f
 [[vk_binding(0, 1)]] SamplerCubeArrayShadow shadow_cubes;
 [[vk_binding(1, 1)]] Sampler2DArrayShadow shadow_2d_maps;
 
-float calc_point_shadow_factor(float3 frag_pos, float3 light_pos, float3 normal, uint light_index) {
+float calc_point_shadow_factor(PointLight light, uint light_index, float3 frag_pos, float3 normal) {
+    float3 light_pos = light.pos;
     float3 light_to_frag = frag_pos - light_pos;
-    float current_depth = length(light_to_frag) / pc.scene_data.shadow_far;
+    float current_depth = length(light_to_frag) / light.range;
 
     float3 light_dir = normalize(light_to_frag);
     float bias = max(0.005 * (1.0 - dot(normal, -light_dir)), 0.0005);
@@ -109,11 +115,40 @@ float calc_point_shadow_factor(float3 frag_pos, float3 light_pos, float3 normal,
     return shadow_cubes.SampleCmp(float4(light_to_frag, float(light_index)), current_depth - bias);
 }
 
+// dynamic (runtime-index) subscript into a float4 isn't reliable here; select via compile-time swizzles instead
+float select_component(float4 v, uint idx) {
+    if (idx == 0) return v.x;
+    if (idx == 1) return v.y;
+    if (idx == 2) return v.z;
+    return v.w;
+}
+
+float sample_cascade(float3 frag_pos, float3 normal, float3 to_light, uint light_index, uint cascade) {
+    uint slot = light_index * SHADOW_MAP_CASCADE_COUNT + cascade;
+
+    float4 light_space_pos = mul(pc.scene_data.shadow_2d_view_proj[slot], float4(frag_pos, 1.0));
+    float3 proj_coords = light_space_pos.xyz / light_space_pos.w;
+    proj_coords.xy = proj_coords.xy * 0.5 + 0.5;
+
+    float cascade_bias = select_component(pc.scene_data.shadow_cascade_data[light_index].bias, cascade);
+    float bias = max(cascade_bias * (1.0 - dot(normal, to_light)), cascade_bias * 0.1);
+
+    float texel_size = 1.0 / pc.scene_data.shadow_map_size;
+    float shadow = 0.0;
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            float2 offset = float2(x, y) * texel_size;
+            shadow += shadow_2d_maps.SampleCmp(float3(proj_coords.xy + offset, float(slot)), proj_coords.z - bias);
+        }
+    }
+    return shadow / 9.0;
+}
+
 float calc_dir_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, uint light_index, out uint cascade_out) {
     // view space in this engine looks down -Z, so distance from the camera is -view_z
     float view_depth = -mul(pc.scene_data.view, float4(frag_pos, 1.0)).z;
 
-    float4 splits = pc.scene_data.shadow_cascade_splits[light_index];
+    float4 splits = pc.scene_data.shadow_cascade_data[light_index].split;
     uint cascade = SHADOW_MAP_CASCADE_COUNT;
     if (view_depth < splits.x) cascade = 0;
     else if (view_depth < splits.y) cascade = 1;
@@ -125,27 +160,18 @@ float calc_dir_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, ui
     // fragment is beyond the last cascade split; leave it unshadowed rather than sampling garbage
     if (cascade == SHADOW_MAP_CASCADE_COUNT) return 1.0;
 
-    uint slot = light_index * SHADOW_MAP_CASCADE_COUNT + cascade;
-
-    float4 light_space_pos = mul(pc.scene_data.shadow_2d_view_proj[slot], float4(frag_pos, 1.0));
-    float3 proj_coords = light_space_pos.xyz / light_space_pos.w;
-    proj_coords.xy = proj_coords.xy * 0.5 + 0.5;
-
-    float bias = max(0.005 * (1.0 - dot(normal, to_light)), 0.0005);
-
-    return shadow_2d_maps.SampleCmp(float3(proj_coords.xy, float(slot)), proj_coords.z - bias);
+    return sample_cascade(frag_pos, normal, to_light, light_index, cascade);
 }
 
-float calc_spot_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, uint light_index) {
-    uint slot = (MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + light_index;
+uint spot_shadow_slot(uint light_index) {
+    return (MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + light_index;
+}
 
-    // projection is now only used to find WHERE to sample...
+float calc_spot_shadow_factor(SpotLight light, uint slot, float3 frag_pos, float3 normal, float3 to_light) {
     float4 light_space_pos = mul(pc.scene_data.shadow_2d_view_proj[slot], float4(frag_pos, 1.0));
     float2 uv = (light_space_pos.xy / light_space_pos.w) * 0.5 + 0.5;
 
-    // while the compared value is linear distance, same as the cube path
-    float3 light_pos = pc.scene_data.spot_lights[light_index].pos;
-    float current_depth = length(frag_pos - light_pos) / pc.scene_data.shadow_far;
+    float current_depth = length(frag_pos - light.pos) / light.range;
 
     float bias = max(0.005 * (1.0 - dot(normal, to_light)), 0.0005);
     return shadow_2d_maps.SampleCmp(float3(uv, float(slot)), current_depth - bias);
@@ -198,13 +224,13 @@ float4 fragment_main(VSOutput vert) : SV_TARGET {
     if (pc.scene_data.debug_settings.show_cascades != 0) total_light *= cascade_tint;
 
     for (uint i = 0; i < pc.scene_data.point_light_count; i++) {
-        float shadow = calc_point_shadow_factor(vert.frag_pos, pc.scene_data.point_lights[i].pos, normalize(vert.frag_normal), i);
+        float shadow = calc_point_shadow_factor(pc.scene_data.point_lights[i], i, vert.frag_pos, normalize(vert.frag_normal));
         total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
     }
 
     for (uint i = 0; i < pc.scene_data.spot_light_count; i++) {
         float3 to_light = normalize(pc.scene_data.spot_lights[i].pos - vert.frag_pos);
-        float shadow = calc_spot_shadow_factor(vert.frag_pos, normal, to_light, i);
+        float shadow = calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, to_light);
         total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
     }
 

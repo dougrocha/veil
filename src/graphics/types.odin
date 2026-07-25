@@ -96,45 +96,10 @@ Scene :: struct {
 	selected_instance:       InstanceHandle,
 }
 
-PointLight :: struct {
-	pos:                Vec3,
-	constant:           f32,
-	color:              Vec3,
-	linear:             f32,
-	quadratic:          f32,
-	diffuse_intensity:  f32,
-	specular_intensity: f32,
-}
-
-DirectionalLight :: struct {
-	direction:          Vec3,
-	color:              Vec3,
-	diffuse_intensity:  f32,
-	specular_intensity: f32,
-}
-
-SpotLight :: struct {
-	pos:                Vec3,
-	inner_cutoff:       f32,
-	direction:          Vec3,
-	outer_cutoff:       f32,
-	color:              Vec3,
-	constant:           f32,
-	linear:             f32,
-	quadratic:          f32,
-	diffuse_intensity:  f32,
-	specular_intensity: f32,
-}
-
 AlphaMode :: enum {
 	Opaque,
 	Mask,
 	Blend,
-}
-
-AmbientLight :: struct {
-	color:      Vec4,
-	brightness: f32,
 }
 
 TimeInfo :: struct {
@@ -143,7 +108,7 @@ TimeInfo :: struct {
 	frame_count: u32,
 }
 
-SceneData :: struct {
+SceneData :: struct #packed {
 	view:                    Mat4x4,
 	proj:                    Mat4x4,
 	cam_pos:                 Vec3,
@@ -157,11 +122,10 @@ SceneData :: struct {
 	spot_lights:             [MAX_SPOT_LIGHTS]SpotLight,
 	spot_light_count:        u32,
 	ambient_light:           AmbientLight,
-	shadow_near:             f32,
-	shadow_far:              f32,
+	shadow_map_size:         f32,
 	point_light_view_proj:   [MAX_POINT_LIGHTS][6]Mat4x4,
 	shadow_2d_view_proj:     [MAX_SHADOW_2D_SLOTS]Mat4x4,
-	shadow_cascade_splits:   [MAX_DIRECTIONAL_LIGHTS]Vec4,
+	shadow_cascade_data:     [MAX_DIRECTIONAL_LIGHTS]ShadowCascadeData,
 
 	// debug
 	debug_settings:          DebugSettings,

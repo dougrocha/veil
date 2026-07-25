@@ -22,24 +22,15 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		debug_settings          = engine.debug_settings,
 	}
 	scene.time_info = engine.time_info
-
-	light_near: f32 = 0.1
-	light_far: f32 = 100.0
-	scene.shadow_near = light_near
-	scene.shadow_far = light_far
+	scene.shadow_map_size = f32(SHADOW_MAP_SIZE)
 
 	params := ShadowParams {
 		aspect = aspect,
-		near   = light_near,
-		far    = light_far,
 	}
 
 	point_count := min(int(engine.scene.point_light_count), MAX_POINT_LIGHTS)
 	for light_i in 0 ..< point_count {
-		scene.point_light_view_proj[light_i] = compute_point_light_view_proj(
-			engine.scene.point_lights[light_i],
-			params,
-		)
+		scene.point_light_view_proj[light_i] = compute_point_light_view_proj(engine.scene.point_lights[light_i])
 	}
 
 	dir_count := min(int(engine.scene.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
@@ -48,14 +39,17 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		for i in 0 ..< SHADOW_MAP_CASCADE_COUNT {
 			scene.shadow_2d_view_proj[light_i * SHADOW_MAP_CASCADE_COUNT + i] = data.view_proj[i]
 		}
-		scene.shadow_cascade_splits[light_i] = data.splits
+		scene.shadow_cascade_data[light_i] = {
+			split = data.splits,
+			bias  = data.bias,
+		}
 	}
 
 	// Spot lights live in the second half of the 2D shadow atlas, after the directional slots.
 	spot_count := min(int(engine.scene.spot_light_count), MAX_SPOT_LIGHTS)
 	for light_i in 0 ..< spot_count {
 		scene.shadow_2d_view_proj[MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT + light_i] =
-			compute_spot_light_view_proj(engine.scene.spot_lights[light_i], params)
+			compute_spot_light_view_proj(engine.scene.spot_lights[light_i])
 	}
 
 	mem.copy(engine.frame_data[frame_index].scene_data_buffer.alloc_info.mapped_data, &scene, size_of(SceneData))

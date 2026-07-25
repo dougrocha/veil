@@ -5,22 +5,26 @@ import "core:math/linalg"
 
 ShadowParams :: struct {
 	aspect: f32,
-	near:   f32,
-	far:    f32,
 }
 
 DirectionalShadowData :: struct {
 	view_proj: [SHADOW_MAP_CASCADE_COUNT]Mat4x4,
 	splits:    Vec4,
+	bias:      Vec4,
+}
+
+ShadowCascadeData :: struct {
+	split: Vec4,
+	bias:  Vec4,
 }
 
 // cube face orientation follows the cube-map sampling convention (CUBE_FACE_DIRS), not screen y
-compute_point_light_view_proj :: proc(light: PointLight, params: ShadowParams) -> [6]Mat4x4 {
+compute_point_light_view_proj :: proc(light: PointLight) -> [6]Mat4x4 {
 	light_proj := matrix4_perspective_z0_f32(
 		linalg.to_radians(f32(90.0)),
 		1.0,
-		params.near,
-		params.far,
+		light.shadow_near,
+		light.range,
 		flip_y_axis = false,
 	)
 
@@ -74,6 +78,8 @@ compute_directional_shadow_data :: proc(
 		for c in corners do radius = max(radius, linalg.length(c - center))
 
 		texel_size := (radius * 2) / f32(SHADOW_MAP_SIZE)
+		data.bias[i] = texel_size / (radius * 2)
+
 		snap_view := linalg.matrix4_look_at(Vec3{0, 0, 0}, light.direction, up, true)
 		center_light_space := (snap_view * Vec4{center.x, center.y, center.z, 1.0}).xyz
 		center_light_space.x = math.floor(center_light_space.x / texel_size) * texel_size
@@ -93,14 +99,14 @@ compute_directional_shadow_data :: proc(
 	return data
 }
 
-compute_spot_light_view_proj :: proc(light: SpotLight, params: ShadowParams) -> Mat4x4 {
+compute_spot_light_view_proj :: proc(light: SpotLight) -> Mat4x4 {
 	up := Vec3{0, 1, 0}
 	if abs(light.direction.y) > 0.999 do up = {0, 0, 1}
 
 	// outer_cutoff is stored as a cosine; the cone's full angle is the fov
 	spot_fov := 2 * math.acos(light.outer_cutoff)
 	spot_view := linalg.matrix4_look_at(light.pos, light.pos + light.direction, up)
-	spot_proj := matrix4_perspective_z0_f32(spot_fov, 1.0, params.near, params.far)
+	spot_proj := matrix4_perspective_z0_f32(spot_fov, 1.0, light.shadow_near, light.range)
 
 	return spot_proj * spot_view
 }

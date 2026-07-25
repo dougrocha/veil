@@ -139,11 +139,7 @@ main :: proc() {
 
 	// back wall: vertical receiver so spot/point shadows are visible without looking at the floor
 	back_wall := gfx.primitive_cube(&app.engine, "back_wall", rough_mat)
-	gfx.instance_spawn(
-		&app.engine,
-		back_wall,
-		gfx.transform_create(translation = {0, 2, -6}, scale = {6, 2, 0.2}),
-	)
+	gfx.instance_spawn(&app.engine, back_wall, gfx.transform_create(translation = {0, 2, -6}, scale = {6, 2, 0.2}))
 
 	// sponza := gfx.model_load(&app.engine, "assets/models/sponza-gltf-pbr/sponza.glb")
 	// gfx.instance_spawn(&app.engine, sponza, gfx.transform_create(translation = {0, 0, 0}, scale = {0.01, 0.01, 0.01}))
@@ -155,6 +151,8 @@ main :: proc() {
 		&app.engine,
 		gfx.PointLight {
 			pos = {0, 10, 0},
+			range = 20.0,
+			shadow_near = 0.1,
 			color = {1, 0.2, 0.2},
 			constant = 1,
 			linear = 0.09,
@@ -166,15 +164,17 @@ main :: proc() {
 	gfx.spawn_spot_light(
 		&app.engine,
 		gfx.SpotLight {
-			pos = {0, 6, 5},
-			direction = {0, -1, -1}, // aimed dead-center at the test sphere
-			color = {1, 1, 1},
-			inner_cutoff = math.cos(math.to_radians(f32(12.5))),
-			outer_cutoff = math.cos(math.to_radians(f32(22.5))),
-			constant = 1,
-			linear = 0.09,
-			quadratic = 0.032,
-			diffuse_intensity = 1.0,
+			pos                = {0, 6, 5},
+			range              = 20.0,
+			shadow_near        = 0.1,
+			direction          = {0, -1, -1}, // aimed dead-center at the test sphere
+			color              = {1, 1, 1},
+			inner_cutoff       = math.cos(math.to_radians(f32(12.5))),
+			outer_cutoff       = math.cos(math.to_radians(f32(22.5))),
+			constant           = 1,
+			linear             = 0.09,
+			quadratic          = 0.032,
+			diffuse_intensity  = 1.0,
 			specular_intensity = 1.0,
 		},
 	)
@@ -192,26 +192,9 @@ main :: proc() {
 	light_sphere_model := gfx.primitive_sphere(&app.engine, "light_sphere", material = yellow_mat)
 	light_sphere := gfx.instance_spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
 
-	gfx.light_spawn_point(
-		&app.engine,
-		gfx.PointLight {
-			pos = {0, 10, 0},
-			color = {0.2, 0.5, 1},
-			constant = 1,
-			linear = 0.09,
-			quadratic = 0.032,
-			diffuse_intensity = 1.0,
-			specular_intensity = 0.5,
-		},
-	)
-	light_sphere2 := gfx.instance_spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
-
 	light_pos := gfx.Vec3{-3, 3, 1}
-	light_pos2 := gfx.Vec3{3, 3, 1}
 	app.engine.scene.point_lights[0].pos = light_pos
-	app.engine.scene.point_lights[1].pos = light_pos2
 	gfx.instance_get(&app.engine, light_sphere).transform.translation = light_pos
-	gfx.instance_get(&app.engine, light_sphere2).transform.translation = light_pos2
 
 	gfx.camera_system_add_camera(
 		&app.engine.camera_system,
@@ -240,16 +223,16 @@ main :: proc() {
 					}
 				case ._1:
 					active_cam.near = 0.1
-					active_cam.far = 5000.0
+					active_cam.far = 100.0
 				case ._2:
-					active_cam.near = 0.1
-					active_cam.far = 20.0
+					active_cam.near = 100.0
+					active_cam.far = 200.0
 				case ._3:
-					active_cam.near = 20.0
-					active_cam.far = 80.0
+					active_cam.near = 200.0
+					active_cam.far = 500.0
 				case ._4:
-					active_cam.near = 80.0
-					active_cam.far = 400.0
+					active_cam.near = 500.0
+					active_cam.far = 5000.0
 				case .C:
 					app.engine.debug_settings.show_cascades = 1 - app.engine.debug_settings.show_cascades
 				}

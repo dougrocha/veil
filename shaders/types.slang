@@ -12,6 +12,8 @@ struct AmbientLight {
 
 struct PointLight {
     float3 pos;
+    float range;
+    float shadow_near;
     float constant;
     float3 color;
     float linear;
@@ -29,6 +31,8 @@ struct DirectionalLight {
 
 struct SpotLight {
     float3 pos;
+    float range;
+    float shadow_near;
     float inner_cutoff;
     float3 direction;
     float outer_cutoff;
@@ -71,15 +75,19 @@ struct SceneData {
     SpotLight spot_lights[MAX_SPOT_LIGHTS];
     uint spot_light_count;
     AmbientLight ambient_light;
-    float shadow_near;
-    float shadow_far;
+    float shadow_map_size;
     float4x4 point_light_view_proj[MAX_POINT_LIGHTS][6];
     float4x4 shadow_2d_view_proj[MAX_SHADOW_2D_SLOTS];
-    float4 shadow_cascade_splits[MAX_DIRECTIONAL_LIGHTS];
+    ShadowCascadeData shadow_cascade_data[MAX_DIRECTIONAL_LIGHTS];
 
     // debug
     DebugSettings debug_settings;
 };
+
+struct ShadowCascadeData {
+	float4 split;
+	float4 bias;
+}
 
 struct Material {
     float4 base_color;

@@ -6,6 +6,45 @@ MAX_POINT_LIGHTS :: 16
 MAX_DIRECTIONAL_LIGHTS :: 4
 MAX_SPOT_LIGHTS :: 4
 
+AmbientLight :: struct {
+	color:      Vec4,
+	brightness: f32,
+}
+
+PointLight :: struct {
+	pos:                Vec3,
+	range:              f32,
+	shadow_near:        f32,
+	constant:           f32,
+	color:              Vec3,
+	linear:             f32,
+	quadratic:          f32,
+	diffuse_intensity:  f32,
+	specular_intensity: f32,
+}
+
+DirectionalLight :: struct {
+	direction:          Vec3,
+	color:              Vec3,
+	diffuse_intensity:  f32,
+	specular_intensity: f32,
+}
+
+SpotLight :: struct {
+	pos:                Vec3,
+	range:              f32,
+	shadow_near:        f32,
+	inner_cutoff:       f32,
+	direction:          Vec3,
+	outer_cutoff:       f32,
+	color:              Vec3,
+	constant:           f32,
+	linear:             f32,
+	quadratic:          f32,
+	diffuse_intensity:  f32,
+	specular_intensity: f32,
+}
+
 light_spawn_point :: proc(engine: ^Engine, light: PointLight) {
 	if engine.scene.point_light_count >= len(engine.scene.point_lights) {
 		log.errorf("max point lights reached (%d)", len(engine.scene.point_lights))
