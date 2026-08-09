@@ -8,7 +8,6 @@ import "core:strings"
 import "backend"
 
 import stbi "vendor:stb/image"
-import vk "vendor:vulkan"
 
 DEFAULT_TEXTURE_NAME :: "default"
 DEFAULT_METALLIC_ROUGHNESS_TEXTURE_NAME :: "default_roughness"
@@ -77,7 +76,7 @@ texture_system_create :: proc(engine: ^Engine, config: TextureSystemConfig) {
 			},
 		},
 		count = backend.MAX_FRAMES_IN_FLIGHT,
-		binding_flags = {vk.DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND}},
+		binding_flags = {backend.DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND}},
 		layout_flags = {.UPDATE_AFTER_BIND_POOL},
 		pool_flags = {.UPDATE_AFTER_BIND},
 	)
@@ -267,11 +266,11 @@ texture_upload :: proc(
 
 	{
 		cmd := backend.immediate_submit(ctx)
-		backend.image_barrier(cmd, gpu_img.image, .Undefined, .Transfer_Dst, {.COLOR}, level_count = mip_levels)
+		backend.image_barrier(cmd, &gpu_img, .Transfer_Dst, backend.ImageAspectFlags{.COLOR}, level_count = mip_levels)
 		backend.copy_buffer_to_image(cmd, staging.buffer, gpu_img.image, w, h)
 	}
 
-	backend.generate_mipmaps(ctx, gpu_img.image, img_format, w, h, mip_levels)
+	backend.generate_mipmaps(ctx, &gpu_img, img_format, w, h, mip_levels)
 
 	texture.gpu = gpu_img
 	texture_image_view_create(ctx, texture)
@@ -305,7 +304,7 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 
 	face_w := u32(width) / 4
 	face_h := u32(height) / 3
-	face_size := vk.DeviceSize(face_w * face_h * 4)
+	face_size := face_w * face_h * 4
 
 	// Vulkan cubemap face order: +X, -X, +Y, -Y, +Z, -Z
 	// Horizontal cross layout (col, row):
@@ -346,9 +345,9 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	{
 		cmd := backend.immediate_submit(&engine.vk_ctx)
 
-		backend.image_barrier(cmd, gpu_img.image, .Undefined, .Transfer_Dst, {.COLOR}, layer_count = 6)
+		backend.image_barrier(cmd, &gpu_img, .Transfer_Dst, backend.ImageAspectFlags{.COLOR}, layer_count = 6)
 		backend.copy_buffer_to_cubemap(cmd, staging.buffer, gpu_img.image, face_w, face_h, face_size)
-		backend.image_barrier(cmd, gpu_img.image, .Transfer_Dst, .Shader_Read, {.COLOR}, layer_count = 6)
+		backend.image_barrier(cmd, &gpu_img, .Shader_Read, backend.ImageAspectFlags{.COLOR}, layer_count = 6)
 	}
 
 	t := Texture {

@@ -5,18 +5,25 @@ import "core:log"
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
+ImageAspectFlags :: vk.ImageAspectFlags
+
 GpuImage :: struct {
 	image:        vk.Image,
 	image_view:   vk.ImageView,
 	layer_views:  []vk.ImageView, // one per array layer; only for multi-layer attachment images
+	mip_views:    []vk.ImageView, // one per mip level; only for multi-mip storage (bloom)
 	alloc:        vma.Allocation,
 	alloc_info:   vma.Allocation_Info,
 	extent:       vk.Extent3D,
 	format:       vk.Format,
 	mip_levels:   u32,
 	array_layers: u32,
-	layout:       vk.ImageLayout,
+	layout:       []vk.ImageLayout, // one per (mip, layer); index with image_layout_index
 	usage:        vk.ImageUsageFlags,
+}
+
+image_layout_index :: proc(img: ^GpuImage, mip, layer: u32) -> u32 {
+	return mip * img.array_layers + layer
 }
 
 ImageDesc :: struct {
@@ -72,8 +79,12 @@ image_create :: proc(ctx: ^VulkanContext, desc: ImageDesc) -> GpuImage {
 		format       = desc.format,
 		mip_levels   = desc.mip_levels,
 		array_layers = desc.array_layers,
-		layout       = .UNDEFINED,
 		usage        = desc.image_usage_flags,
+	}
+
+	gpu_img.layout = make([]vk.ImageLayout, desc.mip_levels * desc.array_layers)
+	for i in 0 ..< len(gpu_img.layout) {
+		gpu_img.layout[i] = .UNDEFINED
 	}
 
 	vk_check(
@@ -98,15 +109,31 @@ image_create :: proc(ctx: ^VulkanContext, desc: ImageDesc) -> GpuImage {
 		}
 	}
 
+	if desc.mip_levels > 1 && desc.image_usage_flags & {.STORAGE} != {} {
+		gpu_img.mip_views = make([]vk.ImageView, desc.mip_levels)
+		for i in 0 ..< desc.mip_levels {
+			view_desc := image_view_desc_default(gpu_img)
+			view_desc.base_mip_level = i
+			view_desc.mip_levels = 1
+			view_desc.array_layers = 1
+			gpu_img.mip_views[i] = image_view_create(ctx, gpu_img, view_desc)
+		}
+	}
+
 	return gpu_img
 }
 
 image_destroy :: proc(ctx: ^VulkanContext, img: GpuImage) {
 	image_view_destroy(ctx, img.image_view)
+	for view in img.mip_views {
+		image_view_destroy(ctx, view)
+	}
+	delete(img.mip_views)
 	for view in img.layer_views {
 		image_view_destroy(ctx, view)
 	}
 	delete(img.layer_views)
+	delete(img.layout)
 	vma.destroy_image(ctx.vma_allocator, img.image, img.alloc)
 }
 
@@ -189,13 +216,70 @@ ImageStateKind :: enum {
 	Shader_Read,
 }
 
-image_barrier :: proc(
+layout_to_state_kind :: proc(layout: vk.ImageLayout) -> ImageState {
+	for state in IMAGE_STATES {
+		if state.layout == layout {
+			return state
+		}
+	}
+	log.panicf("no ImageState registered for layout %v", layout)
+}
+
+image_barrier :: proc {
+	image_barrier_gpu,
+	image_barrier_raw,
+}
+
+image_barrier_gpu :: proc(
+	cmd: CommandBuffer,
+	img: ^GpuImage,
+	dst: ImageStateKind,
+	aspect_mask: vk.ImageAspectFlags,
+	base_mip_level: u32 = 0,
+	level_count: u32 = 1,
+	base_array_layer: u32 = 0,
+	layer_count: u32 = 1,
+) {
+	src := layout_to_state_kind(img.layout[image_layout_index(img, base_mip_level, base_array_layer)])
+	dst := IMAGE_STATES[dst]
+
+	barrier := vk.ImageMemoryBarrier2 {
+		sType               = .IMAGE_MEMORY_BARRIER_2,
+		srcStageMask        = src.stage,
+		srcAccessMask       = src.access,
+		oldLayout           = src.layout,
+		dstStageMask        = dst.stage,
+		dstAccessMask       = dst.access,
+		newLayout           = dst.layout,
+		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+		image               = img.image,
+		subresourceRange    = {aspect_mask, base_mip_level, level_count, base_array_layer, layer_count},
+	}
+	dep_info := vk.DependencyInfo {
+		sType                   = .DEPENDENCY_INFO,
+		imageMemoryBarrierCount = 1,
+		pImageMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(vk.CommandBuffer(cmd), &dep_info)
+
+	for m in base_mip_level ..< base_mip_level + level_count {
+		for l in base_array_layer ..< base_array_layer + layer_count {
+			img.layout[image_layout_index(img, m, l)] = dst.layout
+		}
+	}
+}
+
+// for raw vk.Image handles with no GpuImage wrapper (e.g. swapchain images), where the
+// caller must track/know the current layout itself.
+image_barrier_raw :: proc(
 	cmd: CommandBuffer,
 	img: vk.Image,
 	src, dst: ImageStateKind,
 	aspect_mask: vk.ImageAspectFlags,
 	base_mip_level: u32 = 0,
 	level_count: u32 = 1,
+	base_array_layer: u32 = 0,
 	layer_count: u32 = 1,
 ) {
 	src := IMAGE_STATES[src]
@@ -212,7 +296,7 @@ image_barrier :: proc(
 		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		image               = img,
-		subresourceRange    = {aspect_mask, base_mip_level, level_count, 0, layer_count},
+		subresourceRange    = {aspect_mask, base_mip_level, level_count, base_array_layer, layer_count},
 	}
 	dep_info := vk.DependencyInfo {
 		sType                   = .DEPENDENCY_INFO,
@@ -224,7 +308,7 @@ image_barrier :: proc(
 
 // image helpers
 
-generate_mipmaps :: proc(ctx: ^VulkanContext, image: vk.Image, format: vk.Format, width, height, mip_levels: u32) {
+generate_mipmaps :: proc(ctx: ^VulkanContext, img: ^GpuImage, format: vk.Format, width, height, mip_levels: u32) {
 	format_props := vk_get_physical_device_format_properties(ctx, format)
 
 	if .SAMPLED_IMAGE_FILTER_LINEAR not_in format_props.optimalTilingFeatures {
@@ -236,7 +320,14 @@ generate_mipmaps :: proc(ctx: ^VulkanContext, image: vk.Image, format: vk.Format
 
 		mip_width, mip_height := width, height
 		for i in 1 ..< mip_levels {
-			image_barrier(cmd, image, .Transfer_Dst, .Transfer_Src, {.COLOR}, level_count = 1, base_mip_level = i - 1)
+			image_barrier(
+				cmd,
+				img,
+				.Transfer_Src,
+				vk.ImageAspectFlags{.COLOR},
+				level_count = 1,
+				base_mip_level = i - 1,
+			)
 
 			blit := vk.ImageBlit2 {
 				sType = .IMAGE_BLIT_2,
@@ -247,9 +338,9 @@ generate_mipmaps :: proc(ctx: ^VulkanContext, image: vk.Image, format: vk.Format
 			}
 			blit_info := vk.BlitImageInfo2 {
 				sType          = .BLIT_IMAGE_INFO_2,
-				srcImage       = image,
+				srcImage       = img.image,
 				srcImageLayout = .TRANSFER_SRC_OPTIMAL,
-				dstImage       = image,
+				dstImage       = img.image,
 				dstImageLayout = .TRANSFER_DST_OPTIMAL,
 				regionCount    = 1,
 				pRegions       = &blit,
@@ -257,7 +348,7 @@ generate_mipmaps :: proc(ctx: ^VulkanContext, image: vk.Image, format: vk.Format
 			}
 			vk.CmdBlitImage2(vk.CommandBuffer(cmd), &blit_info)
 
-			image_barrier(cmd, image, .Transfer_Src, .Shader_Read, {.COLOR}, level_count = 1, base_mip_level = i - 1)
+			image_barrier(cmd, img, .Shader_Read, vk.ImageAspectFlags{.COLOR}, level_count = 1, base_mip_level = i - 1)
 
 			if mip_width > 1 do mip_width /= 2
 			if mip_height > 1 do mip_height /= 2
@@ -265,10 +356,9 @@ generate_mipmaps :: proc(ctx: ^VulkanContext, image: vk.Image, format: vk.Format
 
 		image_barrier(
 			cmd,
-			image,
-			.Transfer_Dst,
+			img,
 			.Shader_Read,
-			{.COLOR},
+			vk.ImageAspectFlags{.COLOR},
 			level_count = 1,
 			base_mip_level = mip_levels - 1,
 		)
@@ -328,13 +418,13 @@ copy_buffer_to_cubemap :: proc(
 	buffer: vk.Buffer,
 	img: vk.Image,
 	face_w, face_h: u32,
-	face_size: vk.DeviceSize,
+	face_size: u32,
 ) {
 	regions: [6]vk.BufferImageCopy2
 	for i in 0 ..< 6 {
 		regions[i] = vk.BufferImageCopy2 {
 			sType = .BUFFER_IMAGE_COPY_2,
-			bufferOffset = vk.DeviceSize(i) * face_size,
+			bufferOffset = vk.DeviceSize(u32(i) * face_size),
 			imageSubresource = {aspectMask = {.COLOR}, mipLevel = 0, baseArrayLayer = u32(i), layerCount = 1},
 			imageExtent = {face_w, face_h, 1},
 		}

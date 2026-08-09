@@ -6,6 +6,7 @@ RenderTargets :: struct {
 	color: GpuImage,
 	depth: GpuImage,
 	draw:  GpuImage,
+	bloom: GpuImage,
 }
 
 Swapchain :: struct {

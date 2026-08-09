@@ -8,6 +8,8 @@ import vk "vendor:vulkan"
 // Raw per-frame descriptor set handle, e.g. for building the desc_sets slice passed to pipeline_bind.
 DescriptorSetHandle :: vk.DescriptorSet
 
+DescriptorBindingFlags :: vk.DescriptorBindingFlags
+
 // SetLayoutBinding: Holds the connection between the CPU and GPU, much like a contract for what will be stored
 DescriptorSet :: struct {
 	layout: vk.DescriptorSetLayout,

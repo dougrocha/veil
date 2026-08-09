@@ -413,10 +413,9 @@ draw_debug_view :: proc(engine: ^Engine, cmd: backend.CommandBuffer, pc: DebugVi
 draw_debug_shadow_map :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	DEBUG_SIZE :: 128
 
-	begin_render_pass(
-		engine,
+	backend.begin_render_pass(
 		cmd,
-		PassConfig{color = {image = &engine.swapchain.render_targets.draw}, load_op = .Load},
+		backend.PassConfig{color = {image = &engine.swapchain.render_targets.draw}, load_op = .Load},
 	)
 
 	// 6 point-light cube faces, then the first directional light's cascades, then the first spot light.
@@ -450,7 +449,7 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		draw_debug_view(engine, cmd, pc, rect)
 	}
 
-	end_render_pass(cmd)
+	backend.end_render_pass(cmd)
 }
 
 draw_ui :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
@@ -469,20 +468,18 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	// 2D shadow maps (directional lights first, then spot lights)
 	backend.image_barrier(
 		cmd,
-		engine.shadow_2d_atlas.image,
-		.Undefined,
+		&engine.shadow_2d_atlas.gpu,
 		.Depth_Write,
-		{.DEPTH},
+		backend.ImageAspectFlags{.DEPTH},
 		layer_count = MAX_SHADOW_2D_SLOTS,
 	)
 
 	for i in 0 ..< dir_shadow_light_count {
 		for cascade in 0 ..< SHADOW_MAP_CASCADE_COUNT {
 			slot := u32(i * SHADOW_MAP_CASCADE_COUNT + cascade)
-			begin_render_pass(
-				engine,
+			backend.begin_render_pass(
 				cmd,
-				PassConfig {
+				backend.PassConfig {
 					depth = {image = &engine.shadow_2d_atlas.gpu, layer = slot},
 					load_op = .Clear,
 					store_depth = true,
@@ -491,14 +488,13 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			)
 			scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
 			draw_shadow(engine, cmd, .Directional, slot, scene_data.shadow_2d_view_proj[slot])
-			end_render_pass(cmd)
+			backend.end_render_pass(cmd)
 		}
 	}
 	for i in 0 ..< spot_shadow_light_count {
-		begin_render_pass(
-			engine,
+		backend.begin_render_pass(
 			cmd,
-			PassConfig {
+			backend.PassConfig {
 				depth = {
 					image = &engine.shadow_2d_atlas.gpu,
 					layer = u32((MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + i),
@@ -511,15 +507,14 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
 		slot := u32((MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + i)
 		draw_shadow(engine, cmd, .Spot, u32(i), scene_data.shadow_2d_view_proj[slot])
-		end_render_pass(cmd)
+		backend.end_render_pass(cmd)
 	}
 	// Transition 2D shadow atlas to read-only for the mesh pass
 	backend.image_barrier(
 		cmd,
-		engine.shadow_2d_atlas.image,
-		.Depth_Write,
+		&engine.shadow_2d_atlas.gpu,
 		.Depth_Read,
-		{.DEPTH},
+		backend.ImageAspectFlags{.DEPTH},
 		layer_count = MAX_SHADOW_2D_SLOTS,
 	)
 
@@ -527,19 +522,17 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	// expected layout when the mesh pass samples the descriptor.
 	backend.image_barrier(
 		cmd,
-		engine.shadow_atlas.image,
-		.Undefined,
+		&engine.shadow_atlas.gpu,
 		.Depth_Write,
-		{.DEPTH},
+		backend.ImageAspectFlags{.DEPTH},
 		layer_count = MAX_POINT_LIGHTS * 6,
 	)
 	for light_i in 0 ..< shadow_light_count {
 		for face_i in 0 ..< 6 {
 			view_i := light_i * 6 + face_i
-			begin_render_pass(
-				engine,
+			backend.begin_render_pass(
 				cmd,
-				PassConfig {
+				backend.PassConfig {
 					depth = {image = &engine.shadow_atlas.gpu, layer = u32(view_i)},
 					load_op = .Clear,
 					store_depth = true,
@@ -548,23 +541,21 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			)
 			scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
 			draw_shadow(engine, cmd, .Point, u32(light_i), scene_data.point_light_view_proj[light_i][face_i])
-			end_render_pass(cmd)
+			backend.end_render_pass(cmd)
 		}
 	}
 
 	backend.image_barrier(
 		cmd,
-		engine.shadow_atlas.image,
-		.Depth_Write,
+		&engine.shadow_atlas.gpu,
 		.Depth_Read,
-		{.DEPTH},
+		backend.ImageAspectFlags{.DEPTH},
 		layer_count = MAX_POINT_LIGHTS * 6,
 	)
 
-	begin_render_pass(
-		engine,
+	backend.begin_render_pass(
 		cmd,
-		PassConfig {
+		backend.PassConfig {
 			color = {image = &engine.swapchain.render_targets.color},
 			resolve = {image = &engine.swapchain.render_targets.draw},
 			depth = {image = &engine.swapchain.render_targets.depth},
@@ -575,13 +566,13 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	draw_meshes(engine, cmd)
 	draw_skybox(engine, cmd)
 	// draw_particles(engine, cmd)
-	end_render_pass(cmd)
+	backend.end_render_pass(cmd)
 
 	draw_debug_shadow_map(engine, cmd)
 
-	// begin_render_pass(engine, cmd, PassConfig{color = {image = &engine.swapchain.draw_image}, load_op = .Load})
+	// backend.begin_render_pass(cmd, backend.PassConfig{color = {image = &engine.swapchain.draw_image}, load_op = .Load})
 	// draw_ui(engine, cmd)
-	// end_render_pass(cmd)
+	// backend.end_render_pass(cmd)
 }
 
 record_command_buffer :: proc(engine: ^Engine) {
@@ -592,13 +583,13 @@ record_command_buffer :: proc(engine: ^Engine) {
 
 	draw_scene(engine, cmd)
 
-	backend.image_barrier(cmd, engine.swapchain.render_targets.draw.image, .Color_Write, .Transfer_Src, {.COLOR})
-	backend.image_barrier(
+	backend.image_barrier(cmd, &engine.swapchain.render_targets.draw, .Transfer_Src, backend.ImageAspectFlags{.COLOR})
+	backend.image_barrier_raw(
 		cmd,
 		engine.swapchain.images[engine.current_image_index],
 		.Undefined,
 		.Transfer_Dst,
-		{.COLOR},
+		backend.ImageAspectFlags{.COLOR},
 	)
 	backend.copy_image_to_image(
 		cmd,
@@ -607,7 +598,13 @@ record_command_buffer :: proc(engine: ^Engine) {
 		engine.swapchain.extent,
 		engine.swapchain.extent,
 	)
-	backend.image_barrier(cmd, engine.swapchain.images[engine.current_image_index], .Transfer_Dst, .Present, {.COLOR})
+	backend.image_barrier_raw(
+		cmd,
+		engine.swapchain.images[engine.current_image_index],
+		.Transfer_Dst,
+		.Present,
+		backend.ImageAspectFlags{.COLOR},
+	)
 
 	backend.cmd_end_recording(cmd)
 }

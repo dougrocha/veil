@@ -23,6 +23,12 @@ Rect2D :: struct {
 	extent: [2]u32,
 }
 
+// vk.Extent2D-shaped but backend-agnostic so callers don't need to import vk.
+Extent2D :: struct {
+	width:  u32,
+	height: u32,
+}
+
 vec3_splat :: proc(v: f32) -> Vec3 {return {v, v, v}}
 
 App :: struct {
