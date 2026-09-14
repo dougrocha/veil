@@ -97,6 +97,8 @@ struct Material {
     uint   metallic_roughness_texture;
     uint   normal_map_texture;
     uint   occlusion_texture;
+    uint   alpha_mode;
+    float  alpha_cutoff;
 };
 
 struct Transform {

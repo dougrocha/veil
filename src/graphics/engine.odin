@@ -104,7 +104,7 @@ engine_destroy :: proc(self: ^Engine) {
 	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_atlas)
 	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_2d_atlas)
 
-	line_renderer_destroy(self, &self.line_renderer)
+	line_renderer_destroy(self)
 
 	destroy_pipeline_registry(&self.vk_ctx, &self.pipeline_registry)
 
@@ -118,6 +118,14 @@ engine_destroy :: proc(self: ^Engine) {
 }
 
 engine_render :: proc(app: ^App, delta_time: f32) {
+	// A minimized window has no drawable pixels; keep the old swapchain until it returns.
+	// Still drain per-frame debug batches so producers that keep running (e.g. gizmo
+	// drawing) don't overflow them while no frame is being rendered.
+	if app.width == 0 || app.height == 0 {
+		line_renderer_clear(&app.engine)
+		return
+	}
+
 	app.engine.time_info.delta_time = delta_time
 	app.engine.time_info.time += delta_time
 	app.engine.time_info.frame_count += 1
@@ -257,7 +265,8 @@ draw_shadow :: proc(
 ) {
 	shadow_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow)
 
-	backend.pipeline_bind(cmd, shadow_pipeline)
+	frame_idx := current_frame_res_index(engine)
+	backend.pipeline_bind(cmd, shadow_pipeline, .GRAPHICS, {engine.texture_system.descriptor.sets[frame_idx]})
 	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
 
 	frame := current_frame_data(engine)
@@ -266,6 +275,7 @@ draw_shadow :: proc(
 
 	for &instance, slot_i in engine.scene.instances.values {
 		if !pool_is_alive(&engine.scene.instances, Index(slot_i)) do continue
+		if !instance.casts_shadow do continue
 
 		model := &pool_get(&engine.model_system.models, instance.model)^
 
@@ -280,11 +290,13 @@ draw_shadow :: proc(
 			pc := ShadowPushConstants {
 				scene_data       = frame.scene_data_buffer.ptr,
 				vertex_buffer    = mesh.vertex_buffer.ptr,
+				material_buffer  = engine.material_system.buffer.ptr,
 				transform_buffer = frame.transforms_buffer.ptr,
 				view_proj        = view_proj,
 				instance_index   = u32(slot_i),
 				light_type       = light_type,
 				light_index      = light_i,
+				material_index   = u32(mesh.material.index),
 			}
 			backend.pipeline_push(cmd, shadow_pipeline, {.VERTEX, .FRAGMENT}, &pc)
 			backend.cmd_draw_indexed(cmd, mesh.index_buffer.buffer, mesh.index_count)
@@ -303,6 +315,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		engine.global_descriptor.sets[frame_idx],
 	}
 	backend.pipeline_bind(cmd, mesh_pipeline, .GRAPHICS, sets[:])
+	backend.pipeline_set_depth_write(cmd, true)
 
 	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	frustum := frustum_create_from_camera(
@@ -370,6 +383,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	}
 
 	slice.sort_by(transparent[:], proc(a, b: TransparentEntry) -> bool {return a.dist > b.dist})
+	backend.pipeline_set_depth_write(cmd, false)
 	for entry in transparent {
 		draw_instance(engine, frustum, cmd, entry.index, true)
 	}
@@ -566,6 +580,7 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	draw_meshes(engine, cmd)
 	draw_skybox(engine, cmd)
 	// draw_particles(engine, cmd)
+	line_renderer_flush(engine, cmd)
 	backend.end_render_pass(cmd)
 
 	draw_debug_shadow_map(engine, cmd)

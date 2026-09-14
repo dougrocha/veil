@@ -3,17 +3,20 @@ import types;
 struct ShadowPushConstants {
     SceneData* scene_data;
     Vertex* vertex_buffer;
+    Material* material_buffer;
     Transform* transform_buffer;
     float4x4 view_proj;
     uint instance_index;
     uint light_type; // 0 = directional, 1 = spot, 2 = point
     uint light_index;
+    uint material_index;
 };
 [[vk_push_constant]] ShadowPushConstants pc;
 
 struct VSOutput {
     float4 pos : SV_Position;
     float3 world_pos;
+    float2 uv;
 };
 
 [shader("vertex")]
@@ -26,11 +29,20 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     VSOutput output;
     output.pos = mul(pc.view_proj, world_pos);
     output.world_pos = world_pos.xyz;
+    output.uv = v.uv;
     return output;
 }
 
+[[vk_binding(0, 0)]] Sampler2D textures[];
+
 [shader("fragment")]
 float fragment_main(VSOutput input) : SV_Depth {
+    let mat = pc.material_buffer[pc.material_index];
+    if (mat.alpha_mode == 1) {
+        float alpha = textures[mat.base_color_texture].Sample(input.uv).a * mat.base_color.a;
+        if (alpha < mat.alpha_cutoff) discard;
+    }
+
     if (pc.light_type == 0) { // directional
         return input.pos.z;
     }

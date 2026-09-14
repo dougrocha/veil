@@ -25,5 +25,5 @@ else
 fi
 
 odin build src -collection:shared=shared -out:"$OUT_NAME" \
-    -extra-linker-flags:"-rpath '$SLANG_RPATH'" \
+    -extra-linker-flags:"-rpath $SLANG_RPATH" \
     "${BUILD_FLAGS[@]}"

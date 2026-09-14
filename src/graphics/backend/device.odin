@@ -233,9 +233,13 @@ logical_device_create :: proc(ctx: ^VulkanContext) -> bool {
 		sType = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
 		pNext = &features_12,
 	}
+	extended_dynamic_state_features := vk.PhysicalDeviceExtendedDynamicStateFeaturesEXT {
+		sType = .PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
+		pNext = &features_11,
+	}
 	supported_features := vk.PhysicalDeviceFeatures2 {
 		sType = .PHYSICAL_DEVICE_FEATURES_2,
-		pNext = &features_11,
+		pNext = &extended_dynamic_state_features,
 	}
 	vk.GetPhysicalDeviceFeatures2(ctx.physical_device, &supported_features)
 
@@ -248,6 +252,7 @@ logical_device_create :: proc(ctx: ^VulkanContext) -> bool {
 	   !features_12.runtimeDescriptorArray ||
 	   !features_12.descriptorBindingSampledImageUpdateAfterBind ||
 	   !features_11.shaderDrawParameters ||
+	   !extended_dynamic_state_features.extendedDynamicState ||
 	   !supported_features.features.samplerAnisotropy ||
 	   !supported_features.features.sampleRateShading {
 		log.errorf("Physical Device does not meet feature requirement")
@@ -278,9 +283,14 @@ logical_device_create :: proc(ctx: ^VulkanContext) -> bool {
 		pNext                = &enabled_features_12,
 		shaderDrawParameters = true,
 	}
+	enabled_extended_dynamic_state_features := vk.PhysicalDeviceExtendedDynamicStateFeaturesEXT {
+		sType                = .PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
+		pNext                = &enabled_features_11,
+		extendedDynamicState = true,
+	}
 	enabled_features := vk.PhysicalDeviceFeatures2 {
 		sType = .PHYSICAL_DEVICE_FEATURES_2,
-		pNext = &enabled_features_11,
+		pNext = &enabled_extended_dynamic_state_features,
 		features = {samplerAnisotropy = true, sampleRateShading = true, imageCubeArray = true},
 	}
 
@@ -294,6 +304,7 @@ logical_device_create :: proc(ctx: ^VulkanContext) -> bool {
 
 	device_extensions := make([dynamic]cstring, context.temp_allocator)
 	append(&device_extensions, vk.KHR_SWAPCHAIN_EXTENSION_NAME)
+	append(&device_extensions, vk.EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME)
 	when ODIN_OS == .Darwin {
 		// Required by the spec whenever the device advertises it, which MoltenVK does.
 		append(&device_extensions, vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME)

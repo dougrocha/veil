@@ -12,7 +12,9 @@ PipelineKind :: enum u8 {
 	Particle_Draw,
 	Particle_Compute,
 	Debug_View,
-	Line_List,
+	Debug_Line,
+	Debug_Line_Overlay,
+	Debug_Sector,
 }
 
 PipelineRegistry :: struct {
@@ -100,8 +102,9 @@ destroy_pipeline_registry :: proc(ctx: ^backend.VulkanContext, reg: ^PipelineReg
 	}
 }
 
-make_shadow_config :: proc() -> backend.GraphicsPipelineConfig {
+make_shadow_config :: proc(engine: ^Engine) -> backend.GraphicsPipelineConfig {
 	config := backend.pipeline_default_config()
+	backend.pipeline_config_set_descriptor_layouts(&config, {engine.texture_system.descriptor.layout})
 	config.rasterization.cullMode = {}
 	config.rasterization.depthBiasEnable = true
 	config.depth_stencil.depthCompareOp = .LESS_OR_EQUAL
@@ -118,7 +121,7 @@ make_shadow_config :: proc() -> backend.GraphicsPipelineConfig {
 }
 
 register_shadow_pipelines :: proc(engine: ^Engine, shadow_handle: ShaderHandle) {
-	pipeline_register(engine, .Shadow, shadow_handle, make_shadow_config())
+	pipeline_register(engine, .Shadow, shadow_handle, make_shadow_config(engine))
 }
 
 register_ui_pipeline :: proc(engine: ^Engine, ui_handle: ShaderHandle) {
@@ -136,6 +139,8 @@ register_ui_pipeline :: proc(engine: ^Engine, ui_handle: ShaderHandle) {
 register_mesh_pipeline :: proc(engine: ^Engine, mesh_handle: ShaderHandle) {
 	config := backend.pipeline_default_config()
 	config.multi_sample.rasterizationSamples = engine.vk_ctx.msaa_samples
+	config.dynamic_states[3] = .DEPTH_WRITE_ENABLE
+	config.dynamic_state_count = 4
 	backend.pipeline_config_set_blend(&config, .Alpha)
 	backend.pipeline_config_set_descriptor_layouts(
 		&config,
@@ -222,4 +227,3 @@ pipeline_reload :: proc(self: ^Engine, kind: PipelineKind, module_name: string) 
 	}
 	pipeline_rebuild(self, kind)
 }
-

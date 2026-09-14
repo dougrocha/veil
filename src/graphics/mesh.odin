@@ -13,6 +13,8 @@ Mesh :: struct {
 	index_buffer:  backend.GpuBuffer(u32),
 	index_count:   u32,
 	material:      MaterialHandle,
+	positions:     []Vec3,
+	indices:       []u32,
 }
 
 ModelHandle :: Handle(Model)
@@ -30,8 +32,9 @@ Model :: struct {
 }
 
 Instance :: struct {
-	model:     ModelHandle,
-	transform: Transform,
+	model:        ModelHandle,
+	transform:    Transform,
+	casts_shadow: bool,
 }
 
 MAX_MODEL_INSTANCES :: 4096
@@ -54,6 +57,8 @@ destroy_model_system :: proc(engine: ^Engine) {
 			for &mesh in model.meshes {
 				backend.buffer_destroy(&engine.vk_ctx, mesh.vertex_buffer)
 				backend.buffer_destroy(&engine.vk_ctx, mesh.index_buffer)
+				delete(mesh.positions)
+				delete(mesh.indices)
 			}
 			delete(model.meshes)
 		}
@@ -130,12 +135,20 @@ model_register :: proc(
 	index_buf := backend.buffer_upload(&engine.vk_ctx, indices, .Index)
 
 	material_handle := material_get_default(engine) if material == INVALID_MATERIAL else material
+	positions := make([]Vec3, len(vertices))
+	for v, i in vertices {
+		positions[i] = v.pos
+	}
+	mesh_indices := make([]u32, len(indices))
+	copy(mesh_indices, indices)
 
 	mesh := Mesh {
 		vertex_buffer = vertex_buf,
 		index_buffer  = index_buf,
 		index_count   = u32(len(indices)),
 		material      = material_handle,
+		positions     = positions,
+		indices       = mesh_indices,
 	}
 
 	center := Vec3{0, 0, 0}
@@ -167,10 +180,10 @@ instance_get :: proc(engine: ^Engine, handle: InstanceHandle) -> ^Instance {
 	return pool_get(&engine.scene.instances, handle)
 }
 
-instance_spawn :: proc(engine: ^Engine, model: ModelHandle, transform: Transform) -> InstanceHandle {
+instance_spawn :: proc(engine: ^Engine, model: ModelHandle, transform: Transform, casts_shadow := true) -> InstanceHandle {
 	if model == INVALID_MODEL {
 		log.errorf("spawn: refusing to spawn an instance of an invalid model handle")
 		return INVALID_INSTANCE
 	}
-	return pool_alloc(&engine.scene.instances, Instance{model = model, transform = transform})
+	return pool_alloc(&engine.scene.instances, Instance{model = model, transform = transform, casts_shadow = casts_shadow})
 }

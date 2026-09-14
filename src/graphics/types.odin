@@ -153,11 +153,13 @@ ShadowLightType :: enum u32 {
 ShadowPushConstants :: struct #packed {
 	scene_data:       backend.GPUPtr(SceneData),
 	vertex_buffer:    backend.GPUPtr(Vertex),
+	material_buffer:  backend.GPUPtr(GpuMaterial),
 	transform_buffer: backend.GPUPtr(GpuTransform),
 	view_proj:        Mat4x4,
 	instance_index:   u32,
 	light_type:       ShadowLightType,
 	light_index:      u32,
+	material_index:   u32,
 }
 
 PushConstants :: struct {

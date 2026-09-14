@@ -35,18 +35,18 @@ frustum_corners_from_camera :: proc(camera: ^Camera, aspect: f32) -> [8]Vec3 {
 	return frustum_corners
 }
 
-// Gribb-Hartmann plane extraction: each frustum plane is a row-combination
-// of the view-projection matrix. Works for any camera or light's view-proj.
+// Gribb-Hartmann plane extraction from the rows of Odin's view-projection
+// matrix. Vulkan clip-space depth is [0, 1], so the near plane is row 2.
 frustum_from_view_proj :: proc(proj: Mat4x4) -> Frustum {
 	frustum: Frustum
 
-	row0 := Vec4{proj[0, 0], proj[1, 0], proj[2, 0], proj[3, 0]}
-	row1 := Vec4{proj[0, 1], proj[1, 1], proj[2, 1], proj[3, 1]}
-	row2 := Vec4{proj[0, 2], proj[1, 2], proj[2, 2], proj[3, 2]}
-	row3 := Vec4{proj[0, 3], proj[1, 3], proj[2, 3], proj[3, 3]}
+	row0 := Vec4{proj[0, 0], proj[0, 1], proj[0, 2], proj[0, 3]}
+	row1 := Vec4{proj[1, 0], proj[1, 1], proj[1, 2], proj[1, 3]}
+	row2 := Vec4{proj[2, 0], proj[2, 1], proj[2, 2], proj[2, 3]}
+	row3 := Vec4{proj[3, 0], proj[3, 1], proj[3, 2], proj[3, 3]}
 
 	raw_planes := [6]Vec4 {
-		row3 + row2, // near
+		row2,        // near
 		row3 - row2, // far
 		row3 + row0, // left
 		row3 - row0, // right
@@ -209,4 +209,3 @@ aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, transform: Transform)
 
 	return true
 }
-

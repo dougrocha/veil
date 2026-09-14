@@ -50,9 +50,11 @@ TextureSystem :: struct {
 	descriptor:  backend.DescriptorSet,
 
 	// storage pool
-	textures:    Pool(Texture),
-	texture_map: map[string]TextureHandle,
-	defaults:    [DefaultTexture]TextureHandle,
+	textures:           Pool(Texture),
+	srgb_texture_map:   map[string]TextureHandle,
+	linear_texture_map: map[string]TextureHandle,
+	cubemap_map:        map[string]TextureHandle,
+	defaults:           [DefaultTexture]TextureHandle,
 }
 
 TextureSystemConfig :: struct {
@@ -63,7 +65,9 @@ texture_system_create :: proc(engine: ^Engine, config: TextureSystemConfig) {
 	ts := &engine.texture_system
 	ts.config = config
 	ts.textures = pool_init(config.max_textures_count, Texture)
-	ts.texture_map = make(map[string]TextureHandle)
+	ts.srgb_texture_map = make(map[string]TextureHandle)
+	ts.linear_texture_map = make(map[string]TextureHandle)
+	ts.cubemap_map = make(map[string]TextureHandle)
 
 	ts.descriptor = backend.descriptor_set_create(
 		&engine.vk_ctx,
@@ -97,7 +101,9 @@ texture_system_destroy :: proc(engine: ^Engine) {
 		}
 	}
 	pool_destroy(&ts.textures)
-	delete(ts.texture_map)
+	delete(ts.srgb_texture_map)
+	delete(ts.linear_texture_map)
+	delete(ts.cubemap_map)
 	backend.descriptor_set_destroy(&engine.vk_ctx, &ts.descriptor)
 }
 
@@ -105,10 +111,10 @@ texture_system_has_capacity :: proc(ts: ^TextureSystem) -> bool {
 	return ts.textures.count < ts.config.max_textures_count
 }
 
-texture_register :: proc(engine: ^Engine, key: string, t: Texture) -> TextureHandle {
+texture_register :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: string, t: Texture) -> TextureHandle {
 	ts := &engine.texture_system
 	handle := pool_alloc(&ts.textures, t)
-	ts.texture_map[key] = handle
+	cache^[key] = handle
 	write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, u32(handle.index))
 	return handle
 }
@@ -159,11 +165,12 @@ texture_load_default :: #force_inline proc(engine: ^Engine, which: DefaultTextur
 }
 
 texture_load_from_file :: proc(engine: ^Engine, path: string, is_srgb: bool = true) -> TextureHandle {
-	if handle, ok := engine.texture_system.texture_map[path]; ok {
+	ts := &engine.texture_system
+	cache := &ts.srgb_texture_map if is_srgb else &ts.linear_texture_map
+	if handle, ok := cache^[path]; ok {
 		return handle
 	}
 
-	ts := &engine.texture_system
 	if !texture_system_has_capacity(ts) {
 		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
 		return texture_load(engine, DefaultTexture.White)
@@ -186,11 +193,12 @@ texture_load_from_file :: proc(engine: ^Engine, path: string, is_srgb: bool = tr
 }
 
 texture_load_from_memory :: proc(engine: ^Engine, name: string, data: []byte, is_srgb: bool = true) -> TextureHandle {
-	if handle, ok := engine.texture_system.texture_map[name]; ok {
+	ts := &engine.texture_system
+	cache := &ts.srgb_texture_map if is_srgb else &ts.linear_texture_map
+	if handle, ok := cache^[name]; ok {
 		return handle
 	}
 
-	ts := &engine.texture_system
 	if !texture_system_has_capacity(ts) {
 		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
 		return texture_load(engine, DefaultTexture.White)
@@ -235,7 +243,9 @@ texture_load_from_pixels :: proc(
 	}
 	texture_upload(&engine.vk_ctx, pixels, &texture, is_srgb ? .Rgba8_Unorm_Srgb : .Rgba8_Unorm)
 
-	return texture_register(engine, key, texture)
+	ts := &engine.texture_system
+	cache := &ts.srgb_texture_map if is_srgb else &ts.linear_texture_map
+	return texture_register(engine, cache, key, texture)
 }
 
 // Uploads a texture to the GPU buffer
@@ -279,7 +289,7 @@ texture_upload :: proc(
 
 
 texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
-	if handle, ok := engine.texture_system.texture_map[path]; ok {
+	if handle, ok := engine.texture_system.cubemap_map[path]; ok {
 		return handle
 	}
 
@@ -360,7 +370,7 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	t.image_view = backend.image_view_create(&engine.vk_ctx, t.gpu, view_desc)
 	texture_sampler_create(&engine.vk_ctx, &t)
 
-	return texture_register(engine, path, t)
+	return texture_register(engine, &ts.cubemap_map, path, t)
 }
 
 texture_image_view_create :: proc(ctx: ^backend.VulkanContext, t: ^Texture) {

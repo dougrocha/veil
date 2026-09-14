@@ -17,6 +17,8 @@ GpuMaterial :: struct {
 	metallic_roughness_texture: u32,
 	normal_map_texture:         u32,
 	occlusion_texture:          u32,
+	alpha_mode:                 u32,
+	alpha_cutoff:               f32,
 }
 
 Material :: struct {
@@ -29,6 +31,7 @@ Material :: struct {
 	normal_map_texture:         TextureHandle,
 	occlusion_texture:          TextureHandle,
 	alpha_mode:                 AlphaMode,
+	alpha_cutoff:               f32,
 }
 
 MaterialHandle :: Handle(Material)
@@ -71,6 +74,7 @@ material_create :: proc(
 	normal_map_texture: TextureHandle = INVALID_TEXTURE,
 	occlusion_texture: TextureHandle = INVALID_TEXTURE,
 	alpha_mode: AlphaMode = .Opaque,
+	alpha_cutoff: f32 = 0.5,
 ) -> MaterialHandle {
 	if handle, ok := engine.material_system.material_map[name]; ok {
 		log.warnf("Material \"%s\" already exists; returning existing material", name)
@@ -94,6 +98,7 @@ material_create :: proc(
 		normal_map_texture         = normal_map_texture,
 		occlusion_texture          = occlusion_texture,
 		alpha_mode                 = alpha_mode,
+		alpha_cutoff               = alpha_cutoff,
 	}
 
 	handle := pool_alloc(&engine.material_system.materials, material)
@@ -117,6 +122,8 @@ material_create :: proc(
 		),
 		normal_map_texture         = resolve(normal_map_texture, texture_load(engine, DefaultTexture.Flat_Normal)),
 		occlusion_texture          = resolve(occlusion_texture, texture_load(engine, DefaultTexture.Occlusion)),
+		alpha_mode                 = u32(alpha_mode),
+		alpha_cutoff               = alpha_cutoff,
 	}
 	mem.copy(rawptr(dst), &gpu_mat, size_of(GpuMaterial))
 

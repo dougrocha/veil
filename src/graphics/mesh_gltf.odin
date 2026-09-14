@@ -108,6 +108,12 @@ model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 
 			vertex_buf := backend.buffer_upload(&engine.vk_ctx, vertices[:], .Storage)
 			index_buf := backend.buffer_upload(&engine.vk_ctx, indices[:], .Index)
+			positions := make([]Vec3, len(vertices))
+			for vertex, i in vertices {
+				positions[i] = vertex.pos
+			}
+			mesh_indices := make([]u32, len(indices))
+			copy(mesh_indices, indices[:])
 
 			append(
 				&model.meshes,
@@ -116,6 +122,8 @@ model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 					index_buffer = index_buf,
 					index_count = u32(len(indices)),
 					material = prim_mat,
+					positions = positions,
+					indices = mesh_indices,
 				},
 			)
 		}
@@ -192,6 +200,12 @@ gltf_extract_material :: proc(
 		pbr.base_color_factor[2],
 		pbr.base_color_factor[3],
 	}
+	alpha_mode: AlphaMode
+	switch mat.alpha_mode {
+	case .opaque: alpha_mode = .Opaque
+	case .mask:   alpha_mode = .Mask
+	case .blend:  alpha_mode = .Blend
+	}
 
 	return material_create(
 		engine,
@@ -203,5 +217,7 @@ gltf_extract_material :: proc(
 		metallic_roughness_texture = mr_tex,
 		normal_map_texture = normal_tex,
 		occlusion_texture = occlusion_tex,
+		alpha_mode = alpha_mode,
+		alpha_cutoff = mat.alpha_cutoff,
 	)
 }

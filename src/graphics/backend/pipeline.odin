@@ -60,6 +60,10 @@ pipeline_set_scissor :: proc(cmd: CommandBuffer, width: u32, height: u32, offset
 	vk.CmdSetScissor(vk.CommandBuffer(cmd), 0, 1, &scissor)
 }
 
+pipeline_set_depth_write :: proc(cmd: CommandBuffer, enabled: bool) {
+	vk.CmdSetDepthWriteEnable(vk.CommandBuffer(cmd), b32(enabled))
+}
+
 BlendModeAttachment :: enum {
 	Alpha,
 	Additive,
@@ -104,7 +108,8 @@ GraphicsPipelineConfig :: struct {
 	color_blend_attachment:   vk.PipelineColorBlendAttachmentState,
 	color_blend:              vk.PipelineColorBlendStateCreateInfo,
 	depth_stencil:            vk.PipelineDepthStencilStateCreateInfo,
-	dynamic_states:           [3]vk.DynamicState,
+	dynamic_states:           [4]vk.DynamicState,
+	dynamic_state_count:      u32,
 	color_attachment_formats: [8]vk.Format,
 	color_attachment_count:   u32,
 	rendering_info:           vk.PipelineRenderingCreateInfo,
@@ -153,7 +158,10 @@ pipeline_default_config :: proc() -> (config: GraphicsPipelineConfig) {
 		lineWidth               = 1.0,
 	}
 
-	config.dynamic_states = {.VIEWPORT, .SCISSOR, .DEPTH_BIAS}
+	config.dynamic_states[0] = .VIEWPORT
+	config.dynamic_states[1] = .SCISSOR
+	config.dynamic_states[2] = .DEPTH_BIAS
+	config.dynamic_state_count = 3
 
 	config.multi_sample = {
 		sType                 = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
@@ -226,7 +234,7 @@ pipeline_create :: proc(device: vk.Device, config: ^GraphicsPipelineConfig, stag
 
 	dynamic_state_info := vk.PipelineDynamicStateCreateInfo {
 		sType             = .PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-		dynamicStateCount = u32(len(config.dynamic_states)),
+		dynamicStateCount = config.dynamic_state_count,
 		pDynamicStates    = raw_data(&config.dynamic_states),
 	}
 
@@ -312,4 +320,3 @@ pipeline_build_layout_info :: proc(
 	}
 	return info
 }
-

@@ -125,8 +125,8 @@ main :: proc() {
 	rough_mat := gfx.material_create(&app.engine, "rough_mat", perceptual_roughness = 1.0)
 	shiny_cube := gfx.primitive_cube(&app.engine, "shiny_cube", shiny_mat)
 	rough_cube := gfx.primitive_cube(&app.engine, "rough_cube", rough_mat)
-	gfx.instance_spawn(&app.engine, shiny_cube, gfx.transform_create(translation = {-2, 1, 0}))
-	gfx.instance_spawn(&app.engine, rough_cube, gfx.transform_create(translation = {2, 1, 0}))
+	shiny_cube_instance := gfx.instance_spawn(&app.engine, shiny_cube, gfx.transform_create(translation = {-2, 1, 0}))
+	rough_cube_instance := gfx.instance_spawn(&app.engine, rough_cube, gfx.transform_create(translation = {2, 1, 0}))
 
 	ground_mat := gfx.material_create(&app.engine, "ground_mat", perceptual_roughness = 0.9)
 	ground_plane := gfx.primitive_plane(&app.engine, "ground_plane", ground_mat, half_size = {10, 10})
@@ -147,6 +147,7 @@ main :: proc() {
 	space_skybox_tex := gfx.texture_load_cubemap(&app.engine, "assets/textures/StandardCubeMap.png")
 	gfx.set_skybox_texture(&app.engine, space_skybox_tex)
 
+	point_light_index := app.engine.scene.point_light_count
 	gfx.light_spawn_point(
 		&app.engine,
 		gfx.PointLight {
@@ -190,10 +191,12 @@ main :: proc() {
 
 	yellow_mat := gfx.material_create(&app.engine, "yellow_mat", base_color = {1, 1, 0, 1})
 	light_sphere_model := gfx.primitive_sphere(&app.engine, "light_sphere", material = yellow_mat)
-	light_sphere := gfx.instance_spawn(&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}))
+	light_sphere := gfx.instance_spawn(
+		&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}), casts_shadow = false,
+	)
 
 	light_pos := gfx.Vec3{-3, 3, 1}
-	app.engine.scene.point_lights[0].pos = light_pos
+	app.engine.scene.point_lights[point_light_index].pos = light_pos
 	gfx.instance_get(&app.engine, light_sphere).transform.translation = light_pos
 
 	gfx.camera_system_add_camera(
@@ -202,6 +205,16 @@ main :: proc() {
 		gfx.camera_create({-9, 5, 1}, yaw = -6, pitch = -29),
 	)
 
+	active_gizmo_axis: gfx.GizmoAxis = .None
+	gizmo_mode: gfx.GizmoMode = .Translate
+	translation_space: gfx.GizmoSpace = .World
+	gizmo_dragging := false
+	drag_origin: gfx.Vec3
+	drag_direction: gfx.Vec3
+	drag_start_parameter: f32
+	drag_start_radial: gfx.Vec3
+	drag_previous_radial: gfx.Vec3
+	drag_sweep_angle: f32
 	main_loop: for {
 		ev: sdl.Event
 		active_cam := gfx.camera_system_get_camera(&app.engine.camera_system, app.engine.scene.active_camera_name)
@@ -213,13 +226,29 @@ main :: proc() {
 			case .KEY_DOWN:
 				#partial switch ev.key.scancode {
 				case .ESCAPE:
+					gizmo_dragging = false
 					mouse_captured = !mouse_captured
 					_ = sdl.SetWindowRelativeMouseMode(app.window, mouse_captured)
 				case .E:
+					gizmo_dragging = false
 					if app.engine.scene.active_camera_name == gfx.DEFAULT_CAMERA_NAME {
 						app.engine.scene.active_camera_name = "flipped_camera"
 					} else {
 						app.engine.scene.active_camera_name = gfx.DEFAULT_CAMERA_NAME
+					}
+				case .G:
+					gizmo_dragging = false
+					active_gizmo_axis = .None
+					gizmo_mode = .Translate
+				case .R:
+					gizmo_dragging = false
+					active_gizmo_axis = .None
+					gizmo_mode = .Rotate
+				case .L:
+					if gizmo_mode == .Translate {
+						gizmo_dragging = false
+						active_gizmo_axis = .None
+						translation_space = .Local if translation_space == .World else .World
 					}
 				case ._1:
 					active_cam.near = 0.1
@@ -237,34 +266,83 @@ main :: proc() {
 					app.engine.debug_settings.show_cascades = 1 - app.engine.debug_settings.show_cascades
 				}
 			case .MOUSE_MOTION:
-				if mouse_captured do gfx.camera_process_mouse_movement(active_cam, ev.motion.xrel, -ev.motion.yrel)
+				if mouse_captured {
+					gfx.camera_process_mouse_movement(active_cam, ev.motion.xrel, -ev.motion.yrel)
+				} else if gizmo_dragging {
+					mouse_pos, viewport_size := mouse_to_pixels(app.window, ev.motion.x, ev.motion.y)
+					selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
+					if gizmo_mode == .Translate {
+						parameter, ok := gfx.gizmo_drag_parameter(
+							active_cam^, drag_origin, drag_direction, mouse_pos, viewport_size,
+						)
+						if ok do selected.transform.translation = drag_origin + drag_direction * (parameter - drag_start_parameter)
+					} else {
+						radial, ok := gfx.gizmo_rotation_radial(
+							active_cam^, drag_origin, drag_direction, mouse_pos, viewport_size,
+						)
+						if ok {
+							angle := math.atan2(
+								linalg.dot(drag_direction, linalg.cross(drag_previous_radial, radial)),
+								linalg.dot(drag_previous_radial, radial),
+							)
+							step := linalg.quaternion_angle_axis_f32(angle, drag_direction)
+							selected.transform.rotation = linalg.normalize(step * selected.transform.rotation)
+							drag_sweep_angle += angle
+							if drag_sweep_angle >= 2 * math.PI do drag_sweep_angle -= 2 * math.PI
+							if drag_sweep_angle <= -2 * math.PI do drag_sweep_angle += 2 * math.PI
+							drag_previous_radial = radial
+						}
+					}
+				}
 			case .MOUSE_BUTTON_DOWN:
 				if !mouse_captured && ev.button.button == sdl.BUTTON_LEFT {
-					// mouse events report window/logical coordinates, but rendering (and pick())
-					// works in pixel coordinates — these differ on displays with content scaling.
-					window_w, window_h: c.int
-					pixel_w, pixel_h: c.int
-					_ = sdl.GetWindowSize(app.window, &window_w, &window_h)
-					_ = sdl.GetWindowSizeInPixels(app.window, &pixel_w, &pixel_h)
-
-					mouse_pos := gfx.Vec2 {
-						ev.button.x * f32(pixel_w) / f32(window_w),
-						ev.button.y * f32(pixel_h) / f32(window_h),
-					}
-
-					viewport_size := gfx.Vec2{f32(pixel_w), f32(pixel_h)}
+					mouse_pos, viewport_size := mouse_to_pixels(app.window, ev.button.x, ev.button.y)
+					if viewport_size.x <= 0 || viewport_size.y <= 0 do continue
 					ray_origin, ray_dir := gfx.screen_to_world_ray(active_cam^, mouse_pos, viewport_size)
 					log.infof("mouse_pos: %v, ray_origin: %v, ray_dir: %v", mouse_pos, ray_origin, ray_dir)
 
-					hit := gfx.pick(&app.engine, mouse_pos)
-					app.engine.scene.selected_instance = hit
-
-					if hit != gfx.INVALID_INSTANCE {
-						instance := gfx.instance_get(&app.engine, hit)
-						model := gfx.pool_get(&app.engine.model_system.models, instance.model)
-						log.infof("selected: %v", model.name)
+					axis: gfx.GizmoAxis = .None
+					if app.engine.scene.selected_instance != gfx.INVALID_INSTANCE {
+						selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
+						if gizmo_mode == .Translate {
+							axis = gfx.gizmo_pick_translation(&app.engine, selected.transform, mouse_pos, viewport_size, translation_space)
+						} else {
+							model := gfx.pool_get(&app.engine.model_system.models, selected.model)
+							axis = gfx.gizmo_pick_rotation(&app.engine, selected.transform, model.bounds, mouse_pos, viewport_size)
+						}
+					}
+					if axis != .None {
+						active_gizmo_axis = axis
+						selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
+						drag_origin = selected.transform.translation
+						drag_direction = gfx.gizmo_translation_axis_direction(selected.transform, axis, translation_space) if gizmo_mode == .Translate else gfx.gizmo_axis_direction(selected.transform, axis)
+						if gizmo_mode == .Translate {
+							drag_start_parameter, gizmo_dragging = gfx.gizmo_drag_parameter(
+								active_cam^, drag_origin, drag_direction, mouse_pos, viewport_size,
+							)
+						} else {
+							drag_previous_radial, gizmo_dragging = gfx.gizmo_rotation_radial(
+								active_cam^, drag_origin, drag_direction, mouse_pos, viewport_size,
+							)
+							if gizmo_dragging {
+								drag_start_radial = drag_previous_radial
+								drag_sweep_angle = 0
+							}
+						}
+					} else {
+						gizmo_dragging = false
+						active_gizmo_axis = .None
+						hit := gfx.pick(&app.engine, mouse_pos)
+						app.engine.scene.selected_instance = hit
+						if hit != gfx.INVALID_INSTANCE {
+							instance := gfx.instance_get(&app.engine, hit)
+							model := gfx.pool_get(&app.engine.model_system.models, instance.model)
+							log.infof("selected: %v", model.name)
+						}
 					}
 				}
+			case .MOUSE_BUTTON_UP:
+				if ev.button.button == sdl.BUTTON_LEFT do gizmo_dragging = false
 			case .MOUSE_WHEEL:
 				gfx.camera_process_mouse_scroll(active_cam, ev.wheel.y)
 			case .WINDOW_PIXEL_SIZE_CHANGED:
@@ -280,17 +358,45 @@ main :: proc() {
 
 		app.fps_frame_count += 1
 		app.fps_timer += delta_time
+		process_input(active_cam, delta_time)
+		app.engine.scene.point_lights[point_light_index].pos = gfx.instance_get(&app.engine, light_sphere).transform.translation
 		if app.fps_timer >= 1.0 {
 			log.infof("FPS: %d, models drawn: %d", app.fps_frame_count, app.engine.drawn_instance_count)
 			log.infof("(%v) Camera position: %v", app.engine.scene.active_camera_name, active_cam.position)
+			log.infof("Point light position: %v", app.engine.scene.point_lights[point_light_index].pos)
+			log.infof("Shiny cube position: %v", gfx.instance_get(&app.engine, shiny_cube_instance).transform.translation)
+			log.infof("Rough cube position: %v", gfx.instance_get(&app.engine, rough_cube_instance).transform.translation)
 			app.fps_frame_count = 0
 			app.fps_timer = 0
 		}
 
-		process_input(active_cam, delta_time)
 		// app.engine.scene.spot_lights[0].pos = app.engine.camera_system.default_camera.position
+		// gfx.line_renderer_push(&app.engine.line_renderer, {0, 0, 0}, {0, 5, 0}, {1, 0, 0, 1})
+		if app.engine.scene.selected_instance != gfx.INVALID_INSTANCE {
+			selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
+			if gizmo_mode == .Translate {
+				gfx.gizmo_draw_translation(&app.engine, selected.transform, active_gizmo_axis, gizmo_dragging, translation_space)
+			} else {
+				model := gfx.pool_get(&app.engine.model_system.models, selected.model)
+				gfx.gizmo_draw_rotation(
+					&app.engine, selected.transform, model.bounds, active_gizmo_axis,
+					gizmo_dragging, drag_start_radial, drag_sweep_angle,
+				)
+			}
+		}
 		gfx.engine_render(&app, delta_time)
 	}
+}
+
+// SDL reports logical window coordinates; rendering and picking use pixels.
+mouse_to_pixels :: proc(window: ^sdl.Window, x, y: f32) -> (gfx.Vec2, gfx.Vec2) {
+	window_w, window_h: c.int
+	pixel_w, pixel_h: c.int
+	_ = sdl.GetWindowSize(window, &window_w, &window_h)
+	_ = sdl.GetWindowSizeInPixels(window, &pixel_w, &pixel_h)
+	viewport := gfx.Vec2{f32(pixel_w), f32(pixel_h)}
+	if window_w <= 0 || window_h <= 0 do return {}, viewport
+	return {x * viewport.x / f32(window_w), y * viewport.y / f32(window_h)}, viewport
 }
 
 process_input :: proc(camera: ^gfx.Camera, dt: f32) {
@@ -303,4 +409,3 @@ process_input :: proc(camera: ^gfx.Camera, dt: f32) {
 	if keys[sdl.Scancode.SPACE] do gfx.camera_process_keyboard(camera, .Up, dt)
 	if keys[sdl.Scancode.LCTRL] do gfx.camera_process_keyboard(camera, .Down, dt)
 }
-
