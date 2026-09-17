@@ -16,3 +16,6 @@
 
 # ctags
 /tags
+
+# local project instructions
+/CLAUDE.md
