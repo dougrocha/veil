@@ -77,6 +77,55 @@ CameraType :: enum {
 	Free,
 }
 
+Perspective_Projection :: struct {
+	fov_y: f32, // fov control for perspective, in radians
+}
+
+// Fixed_Size gives explicit world-space extents; Fixed_Vertical locks the
+// vertical extent and derives width from aspect. More modes (window-relative
+// pixel matching, fit-inside/outside) can be added here for UI use later.
+Fixed_Size :: struct {
+	width, height: f32,
+}
+
+Fixed_Vertical :: struct {
+	height: f32,
+}
+
+Ortho_Scaling_Mode :: union {
+	Fixed_Size,
+	Fixed_Vertical,
+}
+
+Ortho_Projection :: struct {
+	scaling_mode:              Ortho_Scaling_Mode,
+	// Derived world-space extents; recomputed from scaling_mode each frame,
+	// not meant to be set directly.
+	left, right, bottom, top:  f32,
+}
+
+Projection :: union {
+	Perspective_Projection,
+	Ortho_Projection,
+}
+
+// Computes ortho extents from a scaling mode and the current viewport aspect
+// (width / height). Shared by camera_get_projection_matrix and
+// frustum_create_from_camera so both stay in sync.
+ortho_extents_from_scaling_mode :: proc(mode: Ortho_Scaling_Mode, aspect: f32) -> (left, right, bottom, top: f32) {
+	switch m in mode {
+	case Fixed_Size:
+		left, right = -m.width * 0.5, m.width * 0.5
+		bottom, top = -m.height * 0.5, m.height * 0.5
+	case Fixed_Vertical:
+		half_h := m.height * 0.5
+		half_w := half_h * aspect
+		left, right = -half_w, half_w
+		bottom, top = -half_h, half_h
+	}
+	return
+}
+
 Camera :: struct {
 	name:              string,
 
@@ -100,7 +149,7 @@ Camera :: struct {
 	mouse_sensitivity: f32,
 
 	// projection stuff
-	fov_y:             f32, // fov control for perspective, in radians
+	projection:        Projection,
 	near:              f32,
 	far:               f32,
 }
@@ -118,7 +167,7 @@ camera_create :: proc(
 		pitch             = pitch,
 		movement_speed    = 10,
 		mouse_sensitivity = 0.1,
-		fov_y             = linalg.to_radians(f32(60)),
+		projection        = Perspective_Projection{fov_y = linalg.to_radians(f32(60))},
 		near              = 0.1,
 		far               = 100.0,
 	}
@@ -146,7 +195,14 @@ camera_get_view_matrix :: proc(c: Camera) -> Mat4x4 {
 }
 
 camera_get_projection_matrix :: proc(c: Camera, aspect: f32) -> Mat4x4 {
-	return matrix4_perspective_z0_f32(c.fov_y, aspect, c.near, c.far)
+	switch p in c.projection {
+	case Perspective_Projection:
+		return matrix4_perspective_z0_f32(p.fov_y, aspect, c.near, c.far)
+	case Ortho_Projection:
+		left, right, bottom, top := ortho_extents_from_scaling_mode(p.scaling_mode, aspect)
+		return matrix4_ortho3d_z0_f32(left, right, bottom, top, c.near, c.far)
+	}
+	return {}
 }
 
 // Unprojects a screen-space mouse position into a world-space ray.
@@ -212,6 +268,8 @@ camera_process_mouse_movement :: proc(c: ^Camera, x_offset: f32, y_offset: f32, 
 }
 
 camera_process_mouse_scroll :: proc(c: ^Camera, y_offset: f32) {
-	c.fov_y = clamp(c.fov_y - linalg.to_radians(y_offset), linalg.to_radians(f32(1)), linalg.to_radians(f32(90)))
+	if p, ok := &c.projection.(Perspective_Projection); ok {
+		p.fov_y = clamp(p.fov_y - linalg.to_radians(y_offset), linalg.to_radians(f32(1)), linalg.to_radians(f32(90)))
+	}
 }
 

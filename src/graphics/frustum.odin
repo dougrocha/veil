@@ -69,14 +69,8 @@ frustum_from_view_proj :: proc(proj: Mat4x4) -> Frustum {
 frustum_create_from_camera :: proc(camera: ^Camera, aspect: f32) -> Frustum {
 	frustum: Frustum
 
-	fov_y := camera.fov_y
 	near := camera.near
 	far := camera.far
-
-	half_v_side := far * math.tan_f32(fov_y * 0.5)
-	half_h_side := half_v_side * aspect
-
-	front_mul_far := far * camera.front
 
 	frustum.planes[0] = {
 		normal   = camera.front,
@@ -84,31 +78,59 @@ frustum_create_from_camera :: proc(camera: ^Camera, aspect: f32) -> Frustum {
 	}
 	frustum.planes[1] = {
 		normal   = -camera.front,
-		distance = linalg.dot(-camera.front, camera.position + front_mul_far),
+		distance = linalg.dot(-camera.front, camera.position + far * camera.front),
 	}
 
-	right_normal := linalg.normalize(linalg.cross(camera.up, front_mul_far + half_h_side * camera.right))
-	frustum.planes[2] = {
-		normal   = right_normal,
-		distance = linalg.dot(right_normal, camera.position),
-	}
+	switch p in camera.projection {
+	case Perspective_Projection:
+		front_mul_far := far * camera.front
+		half_v_side := far * math.tan_f32(p.fov_y * 0.5)
+		half_h_side := half_v_side * aspect
 
-	left_normal := linalg.normalize(linalg.cross(front_mul_far - half_h_side * camera.right, camera.up))
-	frustum.planes[3] = {
-		normal   = left_normal,
-		distance = linalg.dot(left_normal, camera.position),
-	}
+		right_normal := linalg.normalize(linalg.cross(camera.up, front_mul_far + half_h_side * camera.right))
+		frustum.planes[2] = {
+			normal   = right_normal,
+			distance = linalg.dot(right_normal, camera.position),
+		}
 
-	top_normal := linalg.normalize(linalg.cross(front_mul_far + half_v_side * camera.up, camera.right))
-	frustum.planes[4] = {
-		normal   = top_normal,
-		distance = linalg.dot(top_normal, camera.position),
-	}
+		left_normal := linalg.normalize(linalg.cross(front_mul_far - half_h_side * camera.right, camera.up))
+		frustum.planes[3] = {
+			normal   = left_normal,
+			distance = linalg.dot(left_normal, camera.position),
+		}
 
-	bottom_normal := linalg.normalize(linalg.cross(camera.right, front_mul_far - half_v_side * camera.up))
-	frustum.planes[5] = {
-		normal   = bottom_normal,
-		distance = linalg.dot(bottom_normal, camera.position),
+		top_normal := linalg.normalize(linalg.cross(front_mul_far + half_v_side * camera.up, camera.right))
+		frustum.planes[4] = {
+			normal   = top_normal,
+			distance = linalg.dot(top_normal, camera.position),
+		}
+
+		bottom_normal := linalg.normalize(linalg.cross(camera.right, front_mul_far - half_v_side * camera.up))
+		frustum.planes[5] = {
+			normal   = bottom_normal,
+			distance = linalg.dot(bottom_normal, camera.position),
+		}
+
+	case Ortho_Projection:
+		// Ortho side planes are parallel to the view axis: normals are just
+		// ±right/±up through the offset extents, no convergence at the eye.
+		left, right, bottom, top := ortho_extents_from_scaling_mode(p.scaling_mode, aspect)
+		frustum.planes[2] = {
+			normal   = -camera.right,
+			distance = linalg.dot(-camera.right, camera.position + right * camera.right),
+		}
+		frustum.planes[3] = {
+			normal   = camera.right,
+			distance = linalg.dot(camera.right, camera.position + left * camera.right),
+		}
+		frustum.planes[4] = {
+			normal   = -camera.up,
+			distance = linalg.dot(-camera.up, camera.position + top * camera.up),
+		}
+		frustum.planes[5] = {
+			normal   = camera.up,
+			distance = linalg.dot(camera.up, camera.position + bottom * camera.up),
+		}
 	}
 
 	return frustum
