@@ -20,8 +20,15 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     float4x4 proj = pc.scene_data.proj;
     float4x4 view = pc.scene_data.view;
 
+    // proj[3][3] == 1 marks an orthographic matrix (see matrix4_ortho3d_z0_f32),
+    // 0 marks perspective. Ortho rays are parallel (no per-pixel divergence),
+    // so every pixel samples the same view-space direction.
+    bool is_ortho = proj[3][3] > 0.5;
+
     // Unproject clip -> view space direction (camera looks down -Z in view space)
-    float3 view_dir = float3(clip_pos.x / proj[0][0], clip_pos.y / proj[1][1], -1.0);
+    float3 view_dir = is_ortho
+        ? float3(0.0, 0.0, -1.0)
+        : float3(clip_pos.x / proj[0][0], clip_pos.y / proj[1][1], -1.0);
 
     // Rotate view-space direction to world space (transpose of rotation = inverse)
     float3x3 view_rot = float3x3(view[0].xyz, view[1].xyz, view[2].xyz);

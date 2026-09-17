@@ -69,7 +69,6 @@ camera_system_get_default :: proc(cs: ^CameraSystem) -> ^Camera {
 	return &cs.default_camera
 }
 
-// TODO: wire up later
 CameraType :: enum {
 	FirstPerson,
 	ThirdPerson,
@@ -148,6 +147,12 @@ Camera :: struct {
 	movement_speed:    f32,
 	mouse_sensitivity: f32,
 
+	// orbit mode (control_type == .Orbit): position is derived from these
+	// each camera_update_vectors call, instead of being moved directly.
+	control_type:      CameraType,
+	orbit_target:      Vec3,
+	orbit_distance:    f32,
+
 	// projection stuff
 	projection:        Projection,
 	near:              f32,
@@ -167,6 +172,7 @@ camera_create :: proc(
 		pitch             = pitch,
 		movement_speed    = 10,
 		mouse_sensitivity = 0.1,
+		control_type      = .Free,
 		projection        = Perspective_Projection{fov_y = linalg.to_radians(f32(60))},
 		near              = 0.1,
 		far               = 100.0,
@@ -188,6 +194,34 @@ camera_update_vectors :: proc(camera: ^Camera) {
 
 	camera.right = linalg.normalize(linalg.cross(camera.front, camera.world_up))
 	camera.up = linalg.normalize(linalg.cross(camera.right, camera.front))
+
+	if camera.control_type == .Orbit {
+		// front points from camera toward the target, so stepping back along
+		// it by orbit_distance places the camera on the orbit sphere.
+		camera.position = camera.orbit_target - camera.front * camera.orbit_distance
+	}
+}
+
+// Switches c into orbit mode around `target`, choosing yaw/pitch/distance so
+// the camera's position doesn't move — front is set to point at target from
+// wherever the camera currently is, rather than leaving it at its old look
+// direction (which would place position at distance-from-target along a
+// direction the camera was never actually standing in).
+camera_orbit_begin :: proc(c: ^Camera, target: Vec3) {
+	c.orbit_target = target
+
+	to_target := target - c.position
+	dist := linalg.length(to_target)
+	c.orbit_distance = max(dist, MIN_ORBIT_DISTANCE)
+
+	if dist > 0.0001 {
+		front := to_target / dist
+		c.pitch = linalg.to_degrees(linalg.asin(clamp(front.y, -1, 1)))
+		c.yaw = linalg.to_degrees(linalg.atan2(front.z, front.x))
+	}
+
+	c.control_type = .Orbit
+	camera_update_vectors(c)
 }
 
 camera_get_view_matrix :: proc(c: Camera) -> Mat4x4 {
@@ -237,8 +271,56 @@ CameraMovement :: enum {
 	Down,
 }
 
+MIN_ORTHO_EXTENT :: 0.1
+MIN_ORBIT_DISTANCE :: 0.1
+
 camera_process_keyboard :: proc(c: ^Camera, direction: CameraMovement, delta_time: f32) {
 	velocity := c.movement_speed * delta_time
+
+	// Dolly movement is invisible in orthographic projection (no perspective
+	// divide), so forward/backward zooms the ortho extent instead. Takes
+	// priority over orbit distance below: in ortho, distance alone wouldn't
+	// change what's visible either.
+	if p, ok := &c.projection.(Ortho_Projection); ok {
+		switch direction {
+		case .Forward:
+			ortho_scaling_mode_zoom(&p.scaling_mode, -velocity)
+			return
+		case .Backward:
+			ortho_scaling_mode_zoom(&p.scaling_mode, velocity)
+			return
+		case .Left, .Right, .Up, .Down:
+		}
+	}
+
+	if c.control_type == .Orbit {
+		switch direction {
+		case .Forward:
+			c.orbit_distance = max(c.orbit_distance - velocity, MIN_ORBIT_DISTANCE)
+			camera_update_vectors(c)
+			return
+		case .Backward:
+			c.orbit_distance += velocity
+			camera_update_vectors(c)
+			return
+		case .Left:
+			c.orbit_target -= c.right * velocity
+			camera_update_vectors(c)
+			return
+		case .Right:
+			c.orbit_target += c.right * velocity
+			camera_update_vectors(c)
+			return
+		case .Up:
+			c.orbit_target += c.up * velocity
+			camera_update_vectors(c)
+			return
+		case .Down:
+			c.orbit_target -= c.up * velocity
+			camera_update_vectors(c)
+			return
+		}
+	}
 
 	switch direction {
 	case .Forward:
@@ -253,6 +335,16 @@ camera_process_keyboard :: proc(c: ^Camera, direction: CameraMovement, delta_tim
 		c.position += c.up * velocity
 	case .Down:
 		c.position -= c.up * velocity
+	}
+}
+
+ortho_scaling_mode_zoom :: proc(mode: ^Ortho_Scaling_Mode, delta: f32) {
+	switch &m in mode {
+	case Fixed_Size:
+		m.width = max(m.width + delta, MIN_ORTHO_EXTENT)
+		m.height = max(m.height + delta, MIN_ORTHO_EXTENT)
+	case Fixed_Vertical:
+		m.height = max(m.height + delta, MIN_ORTHO_EXTENT)
 	}
 }
 

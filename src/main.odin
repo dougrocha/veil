@@ -203,12 +203,6 @@ main :: proc() {
 	app.engine.scene.point_lights[point_light_index].pos = light_pos
 	gfx.instance_get(&app.engine, light_sphere).transform.translation = light_pos
 
-	gfx.camera_system_add_camera(
-		&app.engine.camera_system,
-		"flipped_camera",
-		gfx.camera_create({-9, 5, 1}, yaw = -6, pitch = -29),
-	)
-
 	active_gizmo_axis: gfx.GizmoAxis = .None
 	gizmo_mode: gfx.GizmoMode = .Translate
 	translation_space: gfx.GizmoSpace = .World
@@ -233,13 +227,6 @@ main :: proc() {
 					gizmo_dragging = false
 					mouse_captured = !mouse_captured
 					_ = sdl.SetWindowRelativeMouseMode(app.window, mouse_captured)
-				case .E:
-					gizmo_dragging = false
-					if app.engine.scene.active_camera_name == gfx.DEFAULT_CAMERA_NAME {
-						app.engine.scene.active_camera_name = "flipped_camera"
-					} else {
-						app.engine.scene.active_camera_name = gfx.DEFAULT_CAMERA_NAME
-					}
 				case .G:
 					gizmo_dragging = false
 					active_gizmo_axis = .None
@@ -268,6 +255,28 @@ main :: proc() {
 					active_cam.far = 5000.0
 				case .C:
 					app.engine.debug_settings.show_cascades = 1 - app.engine.debug_settings.show_cascades
+				case .O:
+					switch _ in active_cam.projection {
+					case gfx.Perspective_Projection:
+						active_cam.projection = gfx.Ortho_Projection {
+							scaling_mode = gfx.Fixed_Vertical{height = 10},
+						}
+					case gfx.Ortho_Projection:
+						active_cam.projection = gfx.Perspective_Projection {
+							fov_y = linalg.to_radians(f32(60)),
+						}
+					}
+				case .T:
+					if active_cam.control_type == .Orbit {
+						active_cam.control_type = .Free
+					} else {
+						target := gfx.Vec3{0, 0, 0}
+						if app.engine.scene.selected_instance != gfx.INVALID_INSTANCE {
+							selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
+							target = selected.transform.translation
+						}
+						gfx.camera_orbit_begin(active_cam, target)
+					}
 				}
 			case .MOUSE_MOTION:
 				if mouse_captured {
