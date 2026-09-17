@@ -111,6 +111,20 @@ texture_system_has_capacity :: proc(ts: ^TextureSystem) -> bool {
 	return ts.textures.count < ts.config.max_textures_count
 }
 
+// Frees a single texture's GPU resources and removes it from the given cache
+// (srgb_texture_map / linear_texture_map / cubemap_map) and the pool. The
+// bindless descriptor slot is left stale until reused by a future registration.
+texture_unload :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: string) {
+	ts := &engine.texture_system
+	handle, ok := cache[key]
+	if !ok {
+		return
+	}
+	texture_destroy(&engine.vk_ctx, pool_get(&ts.textures, handle)^)
+	pool_free(&ts.textures, handle)
+	delete_key(cache, key)
+}
+
 texture_register :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: string, t: Texture) -> TextureHandle {
 	ts := &engine.texture_system
 	handle := pool_alloc(&ts.textures, t)

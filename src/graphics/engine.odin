@@ -56,6 +56,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	register_debug_view_pipeline(engine, debug_view_handle)
 
 	line_renderer_create(engine) or_return
+	ui_renderer_create(engine)
 
 	return true
 }
@@ -105,6 +106,7 @@ engine_destroy :: proc(self: ^Engine) {
 	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_2d_atlas)
 
 	line_renderer_destroy(self)
+	ui_renderer_destroy(self)
 
 	destroy_pipeline_registry(&self.vk_ctx, &self.pipeline_registry)
 
@@ -123,6 +125,7 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 	// drawing) don't overflow them while no frame is being rendered.
 	if app.width == 0 || app.height == 0 {
 		line_renderer_clear(&app.engine)
+		ui_renderer_clear(&app.engine)
 		return
 	}
 
@@ -467,9 +470,14 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 }
 
 draw_ui :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+	frame_idx := current_frame_res_index(engine)
+	sets := [2]backend.DescriptorSetHandle {
+		engine.texture_system.descriptor.sets[frame_idx],
+		engine.global_descriptor.sets[frame_idx],
+	}
 	pipeline := get_pipeline(&engine.pipeline_registry, .UI)
-	backend.pipeline_bind(cmd, pipeline)
-	backend.cmd_draw(cmd, 6)
+	backend.pipeline_bind(cmd, pipeline, .GRAPHICS, sets[:])
+	ui_renderer_flush(engine, cmd)
 }
 
 draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
@@ -585,9 +593,12 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 
 	draw_debug_shadow_map(engine, cmd)
 
-	// backend.begin_render_pass(cmd, backend.PassConfig{color = {image = &engine.swapchain.draw_image}, load_op = .Load})
-	// draw_ui(engine, cmd)
-	// backend.end_render_pass(cmd)
+	backend.begin_render_pass(
+		cmd,
+		backend.PassConfig{color = {image = &engine.swapchain.render_targets.draw}, load_op = .Load},
+	)
+	draw_ui(engine, cmd)
+	backend.end_render_pass(cmd)
 }
 
 record_command_buffer :: proc(engine: ^Engine) {

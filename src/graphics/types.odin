@@ -39,6 +39,7 @@ App :: struct {
 	last_frame_time: time.Time,
 	fps_timer:       f32,
 	fps_frame_count: u32,
+	avg_fps:         u32,
 }
 
 Engine :: struct {
@@ -82,6 +83,7 @@ Engine :: struct {
 
 	// other stuff
 	line_renderer:        LineRenderer,
+	ui_renderer:          UIRenderer,
 	debug_settings:       DebugSettings,
 }
 
@@ -173,6 +175,12 @@ PushConstants :: struct {
 
 SkyboxPushConstants :: struct {
 	scene_data: backend.GPUPtr(SceneData),
+}
+
+UIPushConstants :: struct {
+	vertex_buffer: backend.GPUPtr(UI_Vertex),
+	screen_size:   Vec2,
+	atlas_texture: u32, // bindless index into the texture descriptor array
 }
 
 DebugViewMode :: enum u32 {

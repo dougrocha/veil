@@ -1,6 +1,7 @@
 package main
 
 import "core:c"
+import "core:fmt"
 import "core:log"
 import "core:math"
 import "core:math/linalg"
@@ -42,6 +43,9 @@ main :: proc() {
 		return
 	}
 	defer gfx.engine_destroy(&app.engine)
+
+	ui_font, font_ok := gfx.font_load_default_system(&app.engine, 32)
+	assert(font_ok, "no default system font found")
 
 	app.last_frame_time = time.now()
 
@@ -361,6 +365,7 @@ main :: proc() {
 		process_input(active_cam, delta_time)
 		app.engine.scene.point_lights[point_light_index].pos = gfx.instance_get(&app.engine, light_sphere).transform.translation
 		if app.fps_timer >= 1.0 {
+			app.avg_fps = app.fps_frame_count
 			log.infof("FPS: %d, models drawn: %d", app.fps_frame_count, app.engine.drawn_instance_count)
 			log.infof("(%v) Camera position: %v", app.engine.scene.active_camera_name, active_cam.position)
 			log.infof("Point light position: %v", app.engine.scene.point_lights[point_light_index].pos)
@@ -384,6 +389,10 @@ main :: proc() {
 				)
 			}
 		}
+
+		fps_text := fmt.tprintf("%d Avg FPS", app.avg_fps)
+		gfx.ui_draw_text(&app.engine, &ui_font, fps_text, 10, 30, {0, 0, 0, 255})
+
 		gfx.engine_render(&app, delta_time)
 	}
 }

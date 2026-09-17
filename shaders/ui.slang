@@ -1,24 +1,49 @@
-static const float2 positions[6] = {
-    float2(-1.0, -1.0),
-    float2(-0.7, -1.0),
-    float2(-0.7, -0.7),
-    float2(-1.0, -1.0),
-    float2(-0.7, -0.7),
-    float2(-1.0, -0.7),
+[[vk_binding(0, 0)]] Sampler2D textures[];
+
+struct UIVertex {
+    float2 position; // screen-space pixels, top-left origin, y-down
+    float2 uv;
+    uint color; // packed RGBA8, matches Odin's [4]u8 layout
 };
+
+struct PushConstants {
+    UIVertex* vertex_buffer;
+    float2 screen_size;
+    uint atlas_texture;
+};
+[[vk_push_constant]] PushConstants pc;
 
 struct VSOutput {
     float4 pos : SV_Position;
+    float2 uv;
+    float4 color;
 };
+
+float4 unpack_color(uint c) {
+    return float4(
+        float((c >> 0) & 0xFF),
+        float((c >> 8) & 0xFF),
+        float((c >> 16) & 0xFF),
+        float((c >> 24) & 0xFF)
+    ) / 255.0;
+}
 
 [shader("vertex")]
 VSOutput vertex_main(uint vertex_index : SV_VertexID) {
+    let v = pc.vertex_buffer[vertex_index];
+
+    // Vulkan NDC is already y-down, same as our screen-space convention, so no flip needed.
+    float2 ndc = (v.position / pc.screen_size) * 2.0 - 1.0;
+
     VSOutput output;
-    output.pos = float4(positions[vertex_index], 0.0, 1.0);
+    output.pos = float4(ndc, 0.0, 1.0);
+    output.uv = v.uv;
+    output.color = unpack_color(v.color);
     return output;
 }
 
 [shader("fragment")]
-float4 fragment_main(VSOutput vertIn) : SV_TARGET {
-    return float4(1.0, 0.0, 0.0, 1.0);
+float4 fragment_main(VSOutput input) : SV_TARGET {
+    float coverage = textures[pc.atlas_texture].Sample(input.uv).r;
+    return float4(input.color.rgb, input.color.a * coverage);
 }

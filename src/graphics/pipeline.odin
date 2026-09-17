@@ -129,9 +129,13 @@ register_ui_pipeline :: proc(engine: ^Engine, ui_handle: ShaderHandle) {
 	config.rasterization.cullMode = {}
 	backend.pipeline_config_disable_depth(&config)
 	backend.pipeline_config_set_blend(&config, .Alpha)
+	backend.pipeline_config_set_descriptor_layouts(
+		&config,
+		{engine.texture_system.descriptor.layout, engine.global_descriptor.layout},
+	)
 	config.push_constant_range = {
 		stageFlags = {.VERTEX, .FRAGMENT},
-		size       = size_of(PushConstants),
+		size       = size_of(UIPushConstants),
 	}
 	pipeline_register(engine, .UI, ui_handle, config)
 }

@@ -22,6 +22,7 @@ TextureFormat :: enum {
 	Rgba8_Unorm_Srgb,
 	Rgba8_Unorm,
 	D32_Sfloat,
+	R8_Unorm,
 }
 
 texture_repeat_to_vk :: proc(repeat: TextureRepeat) -> vk.SamplerAddressMode {
@@ -50,6 +51,8 @@ texture_format_to_vk :: proc(format: TextureFormat) -> vk.Format {
 		return .R8G8B8A8_UNORM
 	case .D32_Sfloat:
 		return .D32_SFLOAT
+	case .R8_Unorm:
+		return .R8_UNORM
 	case:
 		log.warn("cannot convert %v, default: R8G8B8A8_SRGB", format)
 	}
