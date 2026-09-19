@@ -1,7 +1,7 @@
 import types;
 
 struct LineVertex {
-    float3 pos;
+    float4 pos; // xyz
     float4 color;
 };
 
@@ -30,8 +30,8 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     let v0 = pc.vertex_buffer[segment * 2 + 0];
     let v1 = pc.vertex_buffer[segment * 2 + 1];
 
-    float4 clip0 = mul(pc.scene_data.proj, mul(pc.scene_data.view, float4(v0.pos, 1.0)));
-    float4 clip1 = mul(pc.scene_data.proj, mul(pc.scene_data.view, float4(v1.pos, 1.0)));
+    float4 clip0 = mul(pc.scene_data.proj, mul(pc.scene_data.view, float4(v0.pos.xyz, 1.0)));
+    float4 clip1 = mul(pc.scene_data.proj, mul(pc.scene_data.view, float4(v1.pos.xyz, 1.0)));
     float4 color0 = v0.color;
     float4 color1 = v1.color;
 

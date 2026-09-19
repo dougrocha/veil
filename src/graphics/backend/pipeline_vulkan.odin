@@ -1,3 +1,5 @@
+#+build linux
+
 package backend
 
 import vk "vendor:vulkan"
@@ -7,19 +9,14 @@ Pipeline :: struct {
 	pipeline: vk.Pipeline,
 }
 
-pipeline_bind :: proc(
-	cmd: CommandBuffer,
-	pipeline: Pipeline,
-	bind_point: vk.PipelineBindPoint = .GRAPHICS,
-	desc_sets: []vk.DescriptorSet = {},
-) {
+pipeline_bind :: proc(cmd: CommandBuffer, pipeline: Pipeline, desc_sets: []vk.DescriptorSet = {}) {
 	raw_cmd := vk.CommandBuffer(cmd)
-	vk.CmdBindPipeline(raw_cmd, bind_point, pipeline.pipeline)
+	vk.CmdBindPipeline(raw_cmd, .GRAPHICS, pipeline.pipeline)
 
 	if len(desc_sets) > 0 {
 		vk.CmdBindDescriptorSets(
 			raw_cmd,
-			bind_point,
+			.GRAPHICS,
 			pipeline.layout,
 			0,
 			u32(len(desc_sets)),
@@ -33,11 +30,11 @@ pipeline_bind :: proc(
 pipeline_push :: proc(
 	cmd: CommandBuffer,
 	pipeline: Pipeline,
-	stages: vk.ShaderStageFlags,
+	stages: bit_set[ShaderStage],
 	data: ^$T,
-	offset: u32 = 0,
+	index: u32 = 0,
 ) {
-	vk.CmdPushConstants(vk.CommandBuffer(cmd), pipeline.layout, stages, offset, u32(size_of(T)), data)
+	vk.CmdPushConstants(vk.CommandBuffer(cmd), pipeline.layout, shader_stages_to_vk(stages), 0, u32(size_of(T)), data)
 }
 
 pipeline_set_viewport :: proc(cmd: CommandBuffer, width: f32, height: f32, offset_x: f32 = 0, offset_y: f32 = 0) {
@@ -60,7 +57,7 @@ pipeline_set_scissor :: proc(cmd: CommandBuffer, width: u32, height: u32, offset
 	vk.CmdSetScissor(vk.CommandBuffer(cmd), 0, 1, &scissor)
 }
 
-pipeline_set_depth_write :: proc(cmd: CommandBuffer, enabled: bool) {
+pipeline_set_depth_write :: proc(cmd: CommandBuffer, pipeline: Pipeline, enabled: bool) {
 	vk.CmdSetDepthWriteEnable(vk.CommandBuffer(cmd), b32(enabled))
 }
 
@@ -92,11 +89,97 @@ pipeline_config_disable_depth :: proc(config: ^GraphicsPipelineConfig) {
 	config.depth_stencil.depthWriteEnable = false
 }
 
-pipeline_config_set_descriptor_layouts :: proc(config: ^GraphicsPipelineConfig, layouts: []vk.DescriptorSetLayout) {
-	for layout, i in layouts {
-		config.descriptor_layouts[i] = layout
+pipeline_config_set_descriptor_layouts :: proc(config: ^GraphicsPipelineConfig, sets: ..DescriptorSet) {
+	for set, i in sets {
+		config.descriptor_layouts[i] = set.layout
 	}
-	config.descriptor_layout_count = u32(len(layouts))
+	config.descriptor_layout_count = u32(len(sets))
+}
+
+pipeline_config_set_no_cull :: proc(config: ^GraphicsPipelineConfig) {
+	config.rasterization.cullMode = {}
+}
+
+pipeline_config_enable_depth_bias :: proc(config: ^GraphicsPipelineConfig) {
+	config.rasterization.depthBiasEnable = true
+}
+
+compare_op_to_vk :: proc(op: CompareOp) -> vk.CompareOp {
+	switch op {
+	case .Never:
+		return .NEVER
+	case .Less:
+		return .LESS
+	case .Equal:
+		return .EQUAL
+	case .LessOrEqual:
+		return .LESS_OR_EQUAL
+	case .Greater:
+		return .GREATER
+	case .NotEqual:
+		return .NOT_EQUAL
+	case .GreaterOrEqual:
+		return .GREATER_OR_EQUAL
+	case .Always:
+		return .ALWAYS
+	}
+	return .LESS
+}
+
+pipeline_config_set_depth_compare :: proc(config: ^GraphicsPipelineConfig, op: CompareOp) {
+	config.depth_stencil.depthCompareOp = compare_op_to_vk(op)
+}
+
+pipeline_config_set_depth_write_default :: proc(config: ^GraphicsPipelineConfig, enabled: bool) {
+	config.depth_stencil.depthWriteEnable = b32(enabled)
+}
+
+pipeline_config_set_depth_dynamic :: proc(config: ^GraphicsPipelineConfig) {
+	config.dynamic_states[config.dynamic_state_count] = .DEPTH_WRITE_ENABLE
+	config.dynamic_state_count += 1
+}
+
+pipeline_config_disable_color_attachment :: proc(config: ^GraphicsPipelineConfig) {
+	config.color_attachment_count = 0
+	config.rendering_info.colorAttachmentCount = 0
+}
+
+pipeline_config_set_no_depth_attachment :: proc(config: ^GraphicsPipelineConfig) {
+	config.rendering_info.depthAttachmentFormat = .UNDEFINED
+}
+
+pipeline_config_set_topology_points :: proc(config: ^GraphicsPipelineConfig) {
+	config.input_assembly.topology = .POINT_LIST
+}
+
+pipeline_config_set_msaa :: proc(config: ^GraphicsPipelineConfig, ctx: ^Context) {
+	config.multi_sample.rasterizationSamples = ctx.msaa_samples
+}
+
+shader_stages_to_vk :: proc(stages: bit_set[ShaderStage]) -> vk.ShaderStageFlags {
+	flags: vk.ShaderStageFlags
+	if .Vertex in stages do flags += {.VERTEX}
+	if .Fragment in stages do flags += {.FRAGMENT}
+	if .Compute in stages do flags += {.COMPUTE}
+	return flags
+}
+
+pipeline_config_set_push_constant :: proc(config: ^GraphicsPipelineConfig, size: int, stages: bit_set[ShaderStage]) {
+	config.push_constant_range = {
+		stageFlags = shader_stages_to_vk(stages),
+		size       = u32(size),
+	}
+}
+
+pipeline_config_set_push_constant_compute :: proc(
+	config: ^ComputePipelineConfig,
+	size: int,
+	stages: bit_set[ShaderStage],
+) {
+	config.push_constant_range = {
+		stageFlags = shader_stages_to_vk(stages),
+		size       = u32(size),
+	}
 }
 
 
@@ -213,7 +296,8 @@ pipeline_default_config :: proc() -> (config: GraphicsPipelineConfig) {
 	return
 }
 
-pipeline_create :: proc(device: vk.Device, config: ^GraphicsPipelineConfig, stages: []ShaderStageDesc) -> Pipeline {
+pipeline_create :: proc(ctx: ^Context, config: ^GraphicsPipelineConfig, stages: []ShaderStageDesc) -> Pipeline {
+	device := ctx.device
 	layout_info := pipeline_build_layout_info(
 		&config.descriptor_layouts,
 		config.descriptor_layout_count,
@@ -271,11 +355,8 @@ pipeline_create :: proc(device: vk.Device, config: ^GraphicsPipelineConfig, stag
 	return Pipeline{layout = layout, pipeline = pipeline}
 }
 
-pipeline_create_compute :: proc(
-	device: vk.Device,
-	config: ^ComputePipelineConfig,
-	stage: ShaderStageDesc,
-) -> Pipeline {
+pipeline_create_compute :: proc(ctx: ^Context, config: ^ComputePipelineConfig, stage: ShaderStageDesc) -> Pipeline {
+	device := ctx.device
 	layout_info := pipeline_build_layout_info(
 		&config.descriptor_layouts,
 		config.descriptor_layout_count,
@@ -297,7 +378,7 @@ pipeline_create_compute :: proc(
 	return Pipeline{layout = layout, pipeline = pipeline}
 }
 
-pipeline_destroy :: proc(ctx: ^VulkanContext, pipeline: Pipeline) {
+pipeline_destroy :: proc(ctx: ^Context, pipeline: Pipeline) {
 	vk.DestroyPipeline(ctx.device, pipeline.pipeline, nil)
 	vk.DestroyPipelineLayout(ctx.device, pipeline.layout, nil)
 }

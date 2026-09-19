@@ -13,10 +13,13 @@ import "backend"
 engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) -> (ok: bool) {
 	engine.camera_system = camera_system_create({max_camera_count = 10})
 	engine.scene.active_camera_name = DEFAULT_CAMERA_NAME
-	engine.scene.ambient_light = AmbientLight {
-		color      = {1, 1, 1, 1},
-		brightness = 0.03,
-	}
+	engine.debug_settings.light_mask = LIGHT_MASK_ALL
+	frame_dump_init(engine)
+	debug_env_init(engine)
+	engine.scene.ambient_light = AmbientLight{color = {1, 1, 1, 1}, brightness = 0.03}
+
+	pool := backend.autorelease_pool_begin()
+	defer backend.autorelease_pool_end(pool)
 
 	vk_ctx := &engine.vk_ctx
 	backend.context_init(vk_ctx, window)
@@ -29,7 +32,10 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 		engine.vk_ctx.msaa_samples,
 	)
 
-	shader_system_create(engine) or_return
+	// macos (Moltenvk) wont support what we set for MAX_TEXTURES
+	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_samplers_per_stage - 3)
+
+	shader_system_create(engine, max_bindless_textures) or_return
 	shadow_handle := shader_load(engine, "shadow", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	ui_handle := shader_load(engine, "ui", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	mesh_handle := shader_load(engine, "mesh", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
@@ -40,8 +46,6 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	backend.frame_sync_create(vk_ctx)
 	frame_data_create(engine)
 
-	// macos (Moltenvk) wont support what we set for MAX_TEXTURES
-	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_samplers_per_stage - 3)
 	texture_system_create(engine, {max_textures_count = max_bindless_textures})
 	material_system_create(engine, {max_material_count = MAX_MATERIALS})
 	create_model_system(engine)
@@ -61,24 +65,24 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	return true
 }
 
+window_backend_flags :: proc() -> sdl.WindowFlags {
+	when backend.VEIL_METAL {
+		return {.METAL}
+	} else when backend.VEIL_VULKAN {
+		return {.VULKAN}
+	}
+}
+
 global_resources_create :: proc(engine: ^Engine) {
 	vk_ctx := &engine.vk_ctx
 
-	engine.global_descriptor = backend.descriptor_set_create(
-		vk_ctx,
-		{
-			{binding = 0, descriptorType = .COMBINED_IMAGE_SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
-			{binding = 1, descriptorType = .COMBINED_IMAGE_SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
-			{binding = 2, descriptorType = .COMBINED_IMAGE_SAMPLER, descriptorCount = 1, stageFlags = {.FRAGMENT}},
-		},
-		count = backend.MAX_FRAMES_IN_FLIGHT,
-	)
+	engine.global_descriptor = backend.descriptor_set_create_sampler_array(vk_ctx, 3)
 	engine.shadow_atlas = shadow_atlas_create(vk_ctx, SHADOW_MAP_SIZE, MAX_POINT_LIGHTS * 6, cube = true)
 	backend.descriptor_write_image_view(
 		vk_ctx,
 		&engine.global_descriptor,
 		0,
-		engine.shadow_atlas.image_view,
+		&engine.shadow_atlas.gpu,
 		engine.shadow_atlas.sampler,
 		.Depth_Read,
 	)
@@ -87,7 +91,7 @@ global_resources_create :: proc(engine: ^Engine) {
 		vk_ctx,
 		&engine.global_descriptor,
 		1,
-		engine.shadow_2d_atlas.image_view,
+		&engine.shadow_2d_atlas.gpu,
 		engine.shadow_2d_atlas.sampler,
 		.Depth_Read,
 	)
@@ -97,6 +101,7 @@ engine_destroy :: proc(self: ^Engine) {
 	backend.device_wait_idle(&self.vk_ctx)
 
 	camera_system_destroy(&self.camera_system)
+	frame_dump_destroy(self)
 	texture_system_destroy(self)
 	destroy_model_system(self)
 	material_system_destroy(self)
@@ -129,6 +134,9 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 		return
 	}
 
+	pool := backend.autorelease_pool_begin()
+	defer backend.autorelease_pool_end(pool)
+
 	app.engine.time_info.delta_time = delta_time
 	app.engine.time_info.time += delta_time
 	app.engine.time_info.frame_count += 1
@@ -154,15 +162,20 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 
 	// NOTE: purely chance, but your frame resources and swapchain count can be different
 	// in our case, it was chance they are both two.
-	acquire_result, image_index := backend.swapchain_acquire_next_image(
-		&app.engine.vk_ctx,
-		&app.engine.swapchain,
-		current_frame_sync.image_acquired_semaphore,
-	)
-	app.engine.current_image_index = image_index
+	acquire_result := backend.swapchain_acquire_next_image(&app.engine.vk_ctx, &app.engine.swapchain, current_frame_sync)
+
+	if acquire_result == .NotReady {
+		// Nothing to draw into yet. Drain the debug batches like the minimized path does,
+		// otherwise producers keep appending while we skip frames.
+		line_renderer_clear(&app.engine)
+		ui_renderer_clear(&app.engine)
+		return
+	}
 
 	if acquire_result == .OutOfDate {
 		app.engine.swapchain.require_recreate = true
+		line_renderer_clear(&app.engine)
+		ui_renderer_clear(&app.engine)
 		return
 	} else if acquire_result == .Suboptimal {
 		app.engine.swapchain.require_recreate = true
@@ -172,19 +185,13 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 	update_transforms_buffer(&app.engine)
 	shader_poll_hotreload(&app.engine)
 
-	record_command_buffer(&app.engine)
+	cmd := record_command_buffer(&app.engine)
 
-	cmd := current_frame_sync.command_buffer
 	signal_value := next_signal_value
 
 	backend.queue_submit_frame(&app.engine.vk_ctx, cmd, current_frame_sync, signal_value)
 
-	present_result := backend.queue_present_frame(
-		&app.engine.vk_ctx,
-		app.engine.swapchain.handle,
-		current_frame_sync.render_complete_semaphore,
-		app.engine.current_image_index,
-	)
+	present_result := backend.queue_present_frame(&app.engine.vk_ctx, cmd, &app.engine.swapchain, current_frame_sync)
 
 	if present_result == .OutOfDate {
 		app.engine.swapchain.require_recreate = true
@@ -192,6 +199,17 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 		app.engine.swapchain.require_recreate = true
 	} else if present_result == .Error {
 		log.errorf("queue_present_frame failed")
+	}
+
+	if app.engine.frame_dump.enabled {
+		backend.device_wait_idle(&app.engine.vk_ctx)
+		pick_test_run(&app.engine)
+		if frame_dump_capture(&app.engine) {
+			quit := sdl.Event {
+				type = .QUIT,
+			}
+			_ = sdl.PushEvent(&quit)
+		}
 	}
 
 	app.engine.frame_index += 1
@@ -215,13 +233,15 @@ dispatch_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		particles_out = engine.frame_data[frame_res_index].particle_buffer.ptr,
 		delta_time    = engine.time_info.delta_time,
 	}
-	backend.pipeline_bind(cmd, pipeline, .COMPUTE)
-	backend.pipeline_push(cmd, pipeline, {.COMPUTE}, &compute_pc)
-	backend.cmd_dispatch(cmd, PARTICLE_COUNT / 256, 1, 1)
-	backend.cmd_pipeline_barrier_memory(cmd, {.COMPUTE_SHADER}, {.VERTEX_SHADER}, {.SHADER_WRITE}, {.SHADER_READ})
+	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
+	backend.pipeline_bind_compute(encoder, pipeline)
+	backend.pipeline_push_compute(encoder, pipeline, &compute_pc)
+	backend.cmd_dispatch(encoder, PARTICLE_COUNT / 256, 1, 1)
+	backend.cmd_barrier_compute_write_to_vertex_read(encoder)
+	backend.end_compute_pass(encoder)
 }
 
-draw_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	pipeline := get_pipeline(&engine.pipeline_registry, .Particle_Draw)
 
 	frame_res_index := current_frame_res_index(engine)
@@ -230,8 +250,8 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		particles_out = engine.frame_data[frame_res_index].particle_buffer.ptr,
 	}
 	backend.pipeline_bind(cmd, pipeline)
-	backend.pipeline_push(cmd, pipeline, {.VERTEX, .FRAGMENT}, &particle_pc)
-	backend.cmd_draw(cmd, PARTICLE_COUNT)
+	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &particle_pc)
+	backend.cmd_draw_points(cmd, PARTICLE_COUNT)
 }
 
 CUBE_FACE_DIRS := [6]struct {
@@ -246,7 +266,7 @@ CUBE_FACE_DIRS := [6]struct {
 }
 
 update_transforms_buffer :: proc(engine: ^Engine) {
-	transforms := (^GpuTransform)(current_frame_data(engine).transforms_buffer.alloc_info.mapped_data)
+	transforms := (^GpuTransform)(backend.buffer_mapped_ptr(current_frame_data(engine).transforms_buffer))
 	for &instance, i in engine.scene.instances.values {
 		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
 		model_matrix := transform_to_matrix(instance.transform)
@@ -261,7 +281,7 @@ update_transforms_buffer :: proc(engine: ^Engine) {
 
 draw_shadow :: proc(
 	engine: ^Engine,
-	cmd: backend.CommandBuffer,
+	cmd: backend.RenderEncoder,
 	light_type: ShadowLightType,
 	light_i: u32,
 	view_proj: Mat4x4,
@@ -269,10 +289,13 @@ draw_shadow :: proc(
 	shadow_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow)
 
 	frame_idx := current_frame_res_index(engine)
-	backend.pipeline_bind(cmd, shadow_pipeline, .GRAPHICS, {engine.texture_system.descriptor.sets[frame_idx]})
+	backend.pipeline_bind(cmd, shadow_pipeline, {engine.texture_system.descriptor.sets[frame_idx]})
 	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
 
 	frame := current_frame_data(engine)
+	backend.cmd_use_buffer(cmd, frame.scene_data_buffer)
+	backend.cmd_use_buffer(cmd, frame.transforms_buffer)
+	backend.cmd_use_buffer(cmd, engine.material_system.buffer)
 
 	frustum := frustum_from_view_proj(view_proj)
 
@@ -287,6 +310,7 @@ draw_shadow :: proc(
 		}
 
 		for &mesh in model.meshes {
+			backend.cmd_use_buffer(cmd, mesh.vertex_buffer)
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode == .Blend do continue
 
@@ -301,13 +325,13 @@ draw_shadow :: proc(
 				light_index      = light_i,
 				material_index   = u32(mesh.material.index),
 			}
-			backend.pipeline_push(cmd, shadow_pipeline, {.VERTEX, .FRAGMENT}, &pc)
+			backend.pipeline_push(cmd, shadow_pipeline, {.Vertex, .Fragment}, &pc, index = 1)
 			backend.cmd_draw_indexed(cmd, mesh.index_buffer.buffer, mesh.index_count)
 		}
 	}
 }
 
-draw_meshes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	engine.drawn_instance_count = 0
 
 	mesh_pipeline := get_pipeline(&engine.pipeline_registry, .Mesh)
@@ -317,8 +341,12 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		engine.texture_system.descriptor.sets[frame_idx],
 		engine.global_descriptor.sets[frame_idx],
 	}
-	backend.pipeline_bind(cmd, mesh_pipeline, .GRAPHICS, sets[:])
-	backend.pipeline_set_depth_write(cmd, true)
+	backend.pipeline_bind(cmd, mesh_pipeline, sets[:])
+	backend.pipeline_set_depth_write(cmd, mesh_pipeline, true)
+	frame := current_frame_data(engine)
+	backend.cmd_use_buffer(cmd, frame.scene_data_buffer)
+	backend.cmd_use_buffer(cmd, frame.transforms_buffer)
+	backend.cmd_use_buffer(cmd, engine.material_system.buffer)
 
 	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	frustum := frustum_create_from_camera(
@@ -326,7 +354,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		f32(engine.swapchain.extent.width) / f32(engine.swapchain.extent.height),
 	)
 
-	draw_instance :: proc(engine: ^Engine, frustum: Frustum, cmd: backend.CommandBuffer, i: int, blend: bool) {
+	draw_instance :: proc(engine: ^Engine, frustum: Frustum, cmd: backend.RenderEncoder, i: int, blend: bool) {
 		instance := &engine.scene.instances.values[i]
 		model := pool_get(&engine.model_system.models, instance.model)
 
@@ -336,7 +364,8 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		engine.drawn_instance_count += 1
 
 		frame := current_frame_data(engine)
-		for &mesh in model.meshes {
+			for &mesh in model.meshes {
+				backend.cmd_use_buffer(cmd, mesh.vertex_buffer)
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if (mat.alpha_mode == .Blend) != blend do continue
 
@@ -348,7 +377,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 				material_index   = u32(mesh.material.index),
 				instance_index   = u32(i),
 			}
-			backend.pipeline_push(cmd, get_pipeline(&engine.pipeline_registry, .Mesh), {.VERTEX, .FRAGMENT}, &pc)
+			backend.pipeline_push(cmd, get_pipeline(&engine.pipeline_registry, .Mesh), {.Vertex, .Fragment}, &pc, index = 1)
 			backend.cmd_draw_indexed(cmd, mesh.index_buffer.buffer, mesh.index_count)
 		}
 	}
@@ -386,7 +415,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	}
 
 	slice.sort_by(transparent[:], proc(a, b: TransparentEntry) -> bool {return a.dist > b.dist})
-	backend.pipeline_set_depth_write(cmd, false)
+	backend.pipeline_set_depth_write(cmd, mesh_pipeline, false)
 	for entry in transparent {
 		draw_instance(engine, frustum, cmd, entry.index, true)
 	}
@@ -394,43 +423,46 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 
 set_skybox_texture :: proc(engine: ^Engine, handle: TextureHandle) {
 	t := pool_get(&engine.texture_system.textures, handle)
-	backend.descriptor_write_image_view(&engine.vk_ctx, &engine.global_descriptor, 2, t.image_view, t.sampler)
+	backend.descriptor_write_image_view(&engine.vk_ctx, &engine.global_descriptor, 2, &t.gpu, t.sampler)
 }
 
-draw_skybox :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	pipeline := get_pipeline(&engine.pipeline_registry, .Skybox)
 	skybox_frame_idx := current_frame_res_index(engine)
-	backend.pipeline_bind(cmd, pipeline, .GRAPHICS, {engine.global_descriptor.sets[skybox_frame_idx]})
+	backend.pipeline_bind(cmd, pipeline, {engine.global_descriptor.sets[skybox_frame_idx]})
+	backend.descriptor_bind_image(cmd, engine.global_descriptor.sets[skybox_frame_idx], 2, 0)
+	backend.cmd_use_buffer(cmd, current_frame_data(engine).scene_data_buffer)
 	pc := SkyboxPushConstants {
 		scene_data = current_frame_data(engine).scene_data_buffer.ptr,
 	}
-	backend.pipeline_push(cmd, pipeline, {.VERTEX, .FRAGMENT}, &pc)
+	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc)
 	backend.cmd_draw(cmd)
 }
 
 // Draws a single texture, shadow-cube face, or directional shadow slice into a screen-space
 // rect. Reusable for shadow-atlas debugging as well as inspecting any bindless model texture.
-draw_debug_view :: proc(engine: ^Engine, cmd: backend.CommandBuffer, pc: DebugViewPushConstants, rect: Rect2D) {
+draw_debug_view :: proc(engine: ^Engine, cmd: backend.RenderEncoder, pc: DebugViewPushConstants, rect: Rect2D) {
 	pipeline := get_pipeline(&engine.pipeline_registry, .Debug_View)
 	frame_idx := current_frame_res_index(engine)
 	sets := [2]backend.DescriptorSetHandle {
 		engine.texture_system.descriptor.sets[frame_idx],
 		engine.global_descriptor.sets[frame_idx],
 	}
-	backend.pipeline_bind(cmd, pipeline, .GRAPHICS, sets[:])
+	backend.pipeline_bind(cmd, pipeline, sets[:])
 
 	backend.pipeline_set_viewport(cmd, f32(rect.extent.x), f32(rect.extent.y), f32(rect.offset.x), f32(rect.offset.y))
 	backend.pipeline_set_scissor(cmd, rect.extent.x, rect.extent.y, rect.offset.x, rect.offset.y)
 
 	pc := pc
-	backend.pipeline_push(cmd, pipeline, {.FRAGMENT}, &pc)
+	backend.pipeline_push(cmd, pipeline, {.Fragment}, &pc, index = 1)
 	backend.cmd_draw(cmd)
 }
 
 draw_debug_shadow_map :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	DEBUG_SIZE :: 128
 
-	backend.begin_render_pass(
+	encoder := backend.begin_render_pass(
+		&engine.vk_ctx,
 		cmd,
 		backend.PassConfig{color = {image = &engine.swapchain.render_targets.draw}, load_op = .Load},
 	)
@@ -438,9 +470,11 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	// 6 point-light cube faces, then the first directional light's cascades, then the first spot light.
 	tile_count := 6 + SHADOW_MAP_CASCADE_COUNT + 1
 	for i in 0 ..< tile_count {
+		offset_x := u32(i) * DEBUG_SIZE
+		if offset_x >= u32(engine.swapchain.extent.width) do break
 		rect := Rect2D {
-			offset = {i32(i) * DEBUG_SIZE, 0},
-			extent = {DEBUG_SIZE, DEBUG_SIZE},
+			offset = {i32(offset_x), 0},
+			extent = {min(DEBUG_SIZE, u32(engine.swapchain.extent.width) - offset_x), DEBUG_SIZE},
 		}
 		pc: DebugViewPushConstants
 		if i < 6 {
@@ -463,20 +497,20 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 				index = MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT,
 			}
 		}
-		draw_debug_view(engine, cmd, pc, rect)
+		draw_debug_view(engine, encoder, pc, rect)
 	}
 
-	backend.end_render_pass(cmd)
+	backend.end_render_pass(encoder)
 }
 
-draw_ui :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	frame_idx := current_frame_res_index(engine)
 	sets := [2]backend.DescriptorSetHandle {
 		engine.texture_system.descriptor.sets[frame_idx],
 		engine.global_descriptor.sets[frame_idx],
 	}
 	pipeline := get_pipeline(&engine.pipeline_registry, .UI)
-	backend.pipeline_bind(cmd, pipeline, .GRAPHICS, sets[:])
+	backend.pipeline_bind(cmd, pipeline, sets[:])
 	ui_renderer_flush(engine, cmd)
 }
 
@@ -492,14 +526,15 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		cmd,
 		&engine.shadow_2d_atlas.gpu,
 		.Depth_Write,
-		backend.ImageAspectFlags{.DEPTH},
+		backend.ImageAspectFlags{.Depth},
 		layer_count = MAX_SHADOW_2D_SLOTS,
 	)
 
 	for i in 0 ..< dir_shadow_light_count {
 		for cascade in 0 ..< SHADOW_MAP_CASCADE_COUNT {
 			slot := u32(i * SHADOW_MAP_CASCADE_COUNT + cascade)
-			backend.begin_render_pass(
+			encoder := backend.begin_render_pass(
+				&engine.vk_ctx,
 				cmd,
 				backend.PassConfig {
 					depth = {image = &engine.shadow_2d_atlas.gpu, layer = slot},
@@ -508,13 +543,14 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 					skip_depth_transition = true,
 				},
 			)
-			scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
-			draw_shadow(engine, cmd, .Directional, slot, scene_data.shadow_2d_view_proj[slot])
-			backend.end_render_pass(cmd)
+			scene_data := (^SceneData)(backend.buffer_mapped_ptr(current_frame_data(engine).scene_data_buffer))
+			draw_shadow(engine, encoder, .Directional, slot, scene_data.shadow_2d_view_proj[slot])
+			backend.end_render_pass(encoder)
 		}
 	}
 	for i in 0 ..< spot_shadow_light_count {
-		backend.begin_render_pass(
+		encoder := backend.begin_render_pass(
+			&engine.vk_ctx,
 			cmd,
 			backend.PassConfig {
 				depth = {
@@ -526,17 +562,17 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 				skip_depth_transition = true,
 			},
 		)
-		scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
+		scene_data := (^SceneData)(backend.buffer_mapped_ptr(current_frame_data(engine).scene_data_buffer))
 		slot := u32((MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + i)
-		draw_shadow(engine, cmd, .Spot, u32(i), scene_data.shadow_2d_view_proj[slot])
-		backend.end_render_pass(cmd)
+		draw_shadow(engine, encoder, .Spot, u32(i), scene_data.shadow_2d_view_proj[slot])
+		backend.end_render_pass(encoder)
 	}
 	// Transition 2D shadow atlas to read-only for the mesh pass
 	backend.image_barrier(
 		cmd,
 		&engine.shadow_2d_atlas.gpu,
 		.Depth_Read,
-		backend.ImageAspectFlags{.DEPTH},
+		backend.ImageAspectFlags{.Depth},
 		layer_count = MAX_SHADOW_2D_SLOTS,
 	)
 
@@ -546,13 +582,14 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		cmd,
 		&engine.shadow_atlas.gpu,
 		.Depth_Write,
-		backend.ImageAspectFlags{.DEPTH},
+		backend.ImageAspectFlags{.Depth},
 		layer_count = MAX_POINT_LIGHTS * 6,
 	)
 	for light_i in 0 ..< shadow_light_count {
 		for face_i in 0 ..< 6 {
 			view_i := light_i * 6 + face_i
-			backend.begin_render_pass(
+			encoder := backend.begin_render_pass(
+				&engine.vk_ctx,
 				cmd,
 				backend.PassConfig {
 					depth = {image = &engine.shadow_atlas.gpu, layer = u32(view_i)},
@@ -561,9 +598,9 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 					skip_depth_transition = true,
 				},
 			)
-			scene_data := (^SceneData)(current_frame_data(engine).scene_data_buffer.alloc_info.mapped_data)
-			draw_shadow(engine, cmd, .Point, u32(light_i), scene_data.point_light_view_proj[light_i][face_i])
-			backend.end_render_pass(cmd)
+			scene_data := (^SceneData)(backend.buffer_mapped_ptr(current_frame_data(engine).scene_data_buffer))
+			draw_shadow(engine, encoder, .Point, u32(light_i), scene_data.point_light_view_proj[light_i][face_i])
+			backend.end_render_pass(encoder)
 		}
 	}
 
@@ -571,66 +608,52 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		cmd,
 		&engine.shadow_atlas.gpu,
 		.Depth_Read,
-		backend.ImageAspectFlags{.DEPTH},
+		backend.ImageAspectFlags{.Depth},
 		layer_count = MAX_POINT_LIGHTS * 6,
 	)
 
-	backend.begin_render_pass(
-		cmd,
-		backend.PassConfig {
-			color = {image = &engine.swapchain.render_targets.color},
-			resolve = {image = &engine.swapchain.render_targets.draw},
-			depth = {image = &engine.swapchain.render_targets.depth},
-			clear_color = {0.1, 0.1, 0.1, 1},
-			load_op = .Clear,
-		},
-	)
-	draw_meshes(engine, cmd)
-	draw_skybox(engine, cmd)
-	// draw_particles(engine, cmd)
-	line_renderer_flush(engine, cmd)
-	backend.end_render_pass(cmd)
+	{
+		encoder := backend.begin_render_pass(
+			&engine.vk_ctx,
+			cmd,
+			backend.PassConfig {
+				color = {image = &engine.swapchain.render_targets.color},
+				resolve = {image = &engine.swapchain.render_targets.draw},
+				depth = {image = &engine.swapchain.render_targets.depth},
+				clear_color = {0.1, 0.1, 0.1, 1},
+				load_op = .Clear,
+			},
+		)
+		draw_meshes(engine, encoder)
+		draw_skybox(engine, encoder)
+		// draw_particles(engine, encoder)
+		line_renderer_flush(engine, encoder)
+		backend.end_render_pass(encoder)
+	}
 
 	draw_debug_shadow_map(engine, cmd)
 
-	backend.begin_render_pass(
-		cmd,
-		backend.PassConfig{color = {image = &engine.swapchain.render_targets.draw}, load_op = .Load},
-	)
-	draw_ui(engine, cmd)
-	backend.end_render_pass(cmd)
+	{
+		encoder := backend.begin_render_pass(
+			&engine.vk_ctx,
+			cmd,
+			backend.PassConfig{color = {image = &engine.swapchain.render_targets.draw}, load_op = .Load},
+		)
+		draw_ui(engine, encoder)
+		backend.end_render_pass(encoder)
+	}
 }
 
-record_command_buffer :: proc(engine: ^Engine) {
+record_command_buffer :: proc(engine: ^Engine) -> backend.CommandBuffer {
 	current_frame_sync := backend.current_frame_sync(&engine.vk_ctx, engine.frame_index)
-	cmd := current_frame_sync.command_buffer
+	cmd := backend.frame_command_buffer_begin(&engine.vk_ctx, current_frame_sync)
 
 	backend.cmd_begin_recording(&engine.vk_ctx, cmd, engine.frame_index)
 
 	draw_scene(engine, cmd)
 
-	backend.image_barrier(cmd, &engine.swapchain.render_targets.draw, .Transfer_Src, backend.ImageAspectFlags{.COLOR})
-	backend.image_barrier_raw(
-		cmd,
-		engine.swapchain.images[engine.current_image_index],
-		.Undefined,
-		.Transfer_Dst,
-		backend.ImageAspectFlags{.COLOR},
-	)
-	backend.copy_image_to_image(
-		cmd,
-		engine.swapchain.render_targets.draw.image,
-		engine.swapchain.images[engine.current_image_index],
-		engine.swapchain.extent,
-		engine.swapchain.extent,
-	)
-	backend.image_barrier_raw(
-		cmd,
-		engine.swapchain.images[engine.current_image_index],
-		.Transfer_Dst,
-		.Present,
-		backend.ImageAspectFlags{.COLOR},
-	)
+	backend.present_blit(&engine.vk_ctx, cmd, &engine.swapchain)
 
 	backend.cmd_end_recording(cmd)
+	return cmd
 }

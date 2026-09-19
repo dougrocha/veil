@@ -1,3 +1,4 @@
+#include "platform.slang"
 import types;
 
 struct PushConstants {
@@ -8,8 +9,6 @@ struct PushConstants {
     uint material_index;
     uint instance_index;
 };
-[[vk_push_constant]] PushConstants pc;
-
 struct VSInput {
     uint vertex_index : SV_VertexID;
 };
@@ -29,16 +28,32 @@ VSOutput vertex_main(VSInput input) {
     let transform = pc.transform_buffer[pc.instance_index];
 
     VSOutput output;
-    float4 world_pos = mul(transform.model, float4(v.pos, 1.0));
+    float4 world_pos = mul(transform.model, float4(v.pos.xyz, 1.0));
     output.frag_pos = world_pos.xyz;
 
     output.pos = mul(pc.scene_data.proj, mul(pc.scene_data.view, world_pos));
 
     float3x3 normal_mat = (float3x3)transform.normal_matrix;
-    float3 N            = normalize(mul(normal_mat, v.normal));
-    float3 T            = normalize(mul(normal_mat, v.tangent.xyz));
-    T                   = normalize(T - dot(T, N) * N); // Gram-Schmidt re-orthogonalize
-    float3 B            = cross(N, T) * v.tangent.w;
+    float3 N            = normalize(mul(normal_mat, v.normal.xyz));
+
+    // Meshes without tangents (primitives, glTF without a TANGENT attribute)
+    // store a zero tangent. Normalizing that yields NaN, and a NaN basis makes
+    // the fragment's `length(frag_tangent) > 0` test pick the TBN path anyway,
+    // which poisons the shaded normal and kills every light. Emit a zero basis
+    // instead so the fragment falls back to the geometric normal.
+    float3 T = float3(0.0);
+    float3 B = float3(0.0);
+    float3 tangent_ws = mul(normal_mat, v.tangent.xyz);
+    if (dot(tangent_ws, tangent_ws) > 1e-12) {
+        T = normalize(tangent_ws);
+        T = T - dot(T, N) * N; // Gram-Schmidt re-orthogonalize
+        if (dot(T, T) > 1e-12) {
+            T = normalize(T);
+            B = cross(N, T) * v.tangent.w;
+        } else {
+            T = float3(0.0);
+        }
+    }
     output.frag_normal    = N;
     output.frag_tangent   = T;
     output.frag_bitangent = B;
@@ -77,37 +92,62 @@ float calc_range_attenuation(float distance, float range) {
 }
 
 float3 calc_dir_light(DirectionalLight light, float3 normal, float3 view_dir, float shininess, float smoothness) {
-    float3 to_light = normalize(-light.direction);
-    return calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color, shininess, smoothness);
+    float3 to_light = normalize(-light.direction_diffuse.xyz);
+    return calc_base_lighting(normal, view_dir, to_light, light.direction_diffuse.w, light.color_specular.w, light.color_specular.xyz, shininess, smoothness);
 }
 
 float3 calc_point_light(PointLight light, float3 normal, float3 view_dir, float3 frag_pos, float shininess, float smoothness) {
-    float3 to_light = normalize(light.pos - frag_pos);
-    float distance = length(light.pos - frag_pos);
-    float attenuation = calc_attenuation(distance, light.constant, light.linear, light.quadratic) * calc_range_attenuation(distance, light.range);
-    float3 base_color = calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color, shininess, smoothness);
+    float3 to_light = normalize(light.position_range.xyz - frag_pos);
+    float distance = length(light.position_range.xyz - frag_pos);
+    float attenuation = calc_attenuation(distance, light.attenuation_diffuse.x, light.attenuation_diffuse.y, light.attenuation_diffuse.z) * calc_range_attenuation(distance, light.position_range.w);
+    float3 base_color = calc_base_lighting(normal, view_dir, to_light, light.attenuation_diffuse.w, light.specular_reserved.x, light.color_shadow_near.xyz, shininess, smoothness);
     return base_color * attenuation;
 }
 
 float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 frag_pos, float shininess, float smoothness) {
-    float3 to_light = normalize(light.pos - frag_pos);
-    float theta = dot(to_light, normalize(-light.direction));
-    float epsilon = light.inner_cutoff - light.outer_cutoff;
-    float intensity = clamp((theta - light.outer_cutoff) / epsilon, 0.0, 1.0);
-    float distance = length(light.pos - frag_pos);
-    float attenuation = calc_attenuation(distance, light.constant, light.linear, light.quadratic) * calc_range_attenuation(distance, light.range);
-    float3 base_color = calc_base_lighting(normal, view_dir, to_light, light.diffuse_intensity, light.specular_intensity, light.color, shininess, smoothness);
+    float3 to_light = normalize(light.position_range.xyz - frag_pos);
+    float theta = dot(to_light, normalize(-light.direction_inner.xyz));
+    float epsilon = light.direction_inner.w - light.color_outer.w;
+    float intensity = clamp((theta - light.color_outer.w) / epsilon, 0.0, 1.0);
+    float distance = length(light.position_range.xyz - frag_pos);
+    float attenuation = calc_attenuation(distance, light.attenuation.y, light.attenuation.z, light.attenuation.w) * calc_range_attenuation(distance, light.position_range.w);
+    float3 base_color = calc_base_lighting(normal, view_dir, to_light, light.intensity.x, light.intensity.y, light.color_outer.xyz, shininess, smoothness);
     return base_color * intensity * attenuation;
 }
 
-[[vk_binding(0, 0)]] Sampler2D textures[];
+struct BindlessTextures {
+    Texture2D<float4> textures[BINDLESS_TEXTURE_COUNT];
+    SamplerState samplers[BINDLESS_TEXTURE_COUNT];
+}
+[[vk_binding(0, 0)]] ParameterBlock<BindlessTextures> bindless;
+[[vk_push_constant]] PushConstants pc;
 [[vk_binding(0, 1)]] SamplerCubeArrayShadow shadow_cubes;
 [[vk_binding(1, 1)]] Sampler2DArrayShadow shadow_2d_maps;
 
+float4 sample_bindless(uint index, float2 uv) {
+    return bindless.textures[index].Sample(bindless.samplers[index], uv);
+}
+
+float4 sample_base_color(uint index, float2 uv) {
+    return sample_bindless(index, uv);
+}
+
+float4 sample_normal_map(uint index, float2 uv) {
+    return sample_bindless(index, uv);
+}
+
+float4 sample_metallic_roughness(uint index, float2 uv) {
+    return sample_bindless(index, uv);
+}
+
+float4 sample_occlusion(uint index, float2 uv) {
+    return sample_bindless(index, uv);
+}
+
 float calc_point_shadow_factor(PointLight light, uint light_index, float3 frag_pos, float3 normal) {
-    float3 light_pos = light.pos;
+    float3 light_pos = light.position_range.xyz;
     float3 light_to_frag = frag_pos - light_pos;
-    float current_depth = length(light_to_frag) / light.range;
+    float current_depth = length(light_to_frag) / light.position_range.w;
 
     float3 light_dir = normalize(light_to_frag);
     float bias = max(0.005 * (1.0 - dot(normal, -light_dir)), 0.0005);
@@ -123,17 +163,35 @@ float select_component(float4 v, uint idx) {
     return v.w;
 }
 
+// Metal textures use a top-left origin, while projected NDC coordinates are
+// bottom-up. Vulkan's projection matrix already performs this flip on the CPU.
+float2 shadow_uv_from_ndc(float2 ndc) {
+    float2 uv = ndc * 0.5 + 0.5;
+#if VEIL_METAL
+    uv.y = 1.0 - uv.y;
+#endif
+    return uv;
+}
+
+bool outside_shadow_map(float2 uv, float depth) {
+    return any(uv < 0.0) || any(uv > 1.0) || depth < 0.0 || depth > 1.0;
+}
+
 float sample_cascade(float3 frag_pos, float3 normal, float3 to_light, uint light_index, uint cascade) {
     uint slot = light_index * SHADOW_MAP_CASCADE_COUNT + cascade;
 
     float4 light_space_pos = mul(pc.scene_data.shadow_2d_view_proj[slot], float4(frag_pos, 1.0));
     float3 proj_coords = light_space_pos.xyz / light_space_pos.w;
-    proj_coords.xy = proj_coords.xy * 0.5 + 0.5;
+    proj_coords.xy = shadow_uv_from_ndc(proj_coords.xy);
+
+    // Clamp-to-edge is useful for filtering, but must not turn geometry outside
+    // a cascade into a repeated edge shadow.
+    if (outside_shadow_map(proj_coords.xy, proj_coords.z)) return 1.0;
 
     float cascade_bias = select_component(pc.scene_data.shadow_cascade_data[light_index].bias, cascade);
     float bias = max(cascade_bias * (1.0 - dot(normal, to_light)), cascade_bias * 0.1);
 
-    float texel_size = 1.0 / pc.scene_data.shadow_map_size;
+    float texel_size = 1.0 / pc.scene_data.cam_pos_shadow_map_size.w;
     float shadow = 0.0;
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
@@ -169,9 +227,12 @@ uint spot_shadow_slot(uint light_index) {
 
 float calc_spot_shadow_factor(SpotLight light, uint slot, float3 frag_pos, float3 normal, float3 to_light) {
     float4 light_space_pos = mul(pc.scene_data.shadow_2d_view_proj[slot], float4(frag_pos, 1.0));
-    float2 uv = (light_space_pos.xy / light_space_pos.w) * 0.5 + 0.5;
+    float3 proj_coords = light_space_pos.xyz / light_space_pos.w;
+    float2 uv = shadow_uv_from_ndc(proj_coords.xy);
 
-    float current_depth = length(frag_pos - light.pos) / light.range;
+    float current_depth = length(frag_pos - light.position_range.xyz) / light.position_range.w;
+
+    if (light_space_pos.w <= 0.0 || outside_shadow_map(uv, current_depth)) return 1.0;
 
     float bias = max(0.005 * (1.0 - dot(normal, to_light)), 0.0005);
     return shadow_2d_maps.SampleCmp(float3(uv, float(slot)), current_depth - bias);
@@ -181,28 +242,28 @@ float calc_spot_shadow_factor(SpotLight light, uint slot, float3 frag_pos, float
 float4 fragment_main(VSOutput vert) : SV_TARGET {
     let mat = pc.material_buffer[pc.material_index];
 
-    float4 tex_color = textures[mat.base_color_texture].Sample(vert.frag_uv) * mat.base_color;
+    float4 tex_color = sample_base_color(mat.base_color_texture, vert.frag_uv) * mat.base_color;
 
     float3 normal;
     if (length(vert.frag_tangent) > 0.001) {
         float3x3 TBN = float3x3(vert.frag_tangent, vert.frag_bitangent, vert.frag_normal);
-        float3 normal_sample = textures[mat.normal_map_texture].Sample(vert.frag_uv).rgb;
+        float3 normal_sample = sample_normal_map(mat.normal_map_texture, vert.frag_uv).rgb;
         normal_sample.g = 1.0 - normal_sample.g; // convert OpenGL (nor_gl) to Vulkan/DX convention
         normal = normalize(mul(normal_sample * 2.0 - 1.0, TBN));
     } else {
         normal = normalize(vert.frag_normal);
     }
 
-    float4 arm = textures[mat.metallic_roughness_texture].Sample(vert.frag_uv);
+    float4 arm = sample_metallic_roughness(mat.metallic_roughness_texture, vert.frag_uv);
     float roughness = clamp(arm.g * mat.perceptual_roughness, 0.089, 1.0);
     float metallic  = arm.b * mat.metallic;
     float smoothness = 1.0 - roughness;
     float shininess = max(MAX_SHININESS * smoothness * smoothness, 1.0);
 
-    float3 view_dir = normalize(pc.scene_data.cam_pos - vert.frag_pos);
+    float3 view_dir = normalize(pc.scene_data.cam_pos_shadow_map_size.xyz - vert.frag_pos);
 
-    float ao = textures[mat.occlusion_texture].Sample(vert.frag_uv).r;
-    float3 total_light = pc.scene_data.ambient_light.color.rgb * pc.scene_data.ambient_light.brightness * ao;
+    float ao = sample_occlusion(mat.occlusion_texture, vert.frag_uv).r;
+    float3 total_light = pc.scene_data.ambient_light.color_brightness.rgb * pc.scene_data.ambient_light.color_brightness.w * ao;
 
     static const float3 CASCADE_DEBUG_COLORS[5] = {
         float3(1.0, 0.0, 0.0), // cascade 0
@@ -212,25 +273,27 @@ float4 fragment_main(VSOutput vert) : SV_TARGET {
         float3(1.0, 1.0, 1.0), // past last split, unshadowed
     };
     float3 cascade_tint = float3(1.0, 1.0, 1.0);
+    bool shadows_disabled = pc.scene_data.debug_settings.disable_shadows != 0;
+    uint light_mask = pc.scene_data.debug_settings.light_mask;
 
-    for (uint i = 0; i < pc.scene_data.directional_light_count; i++) {
-        float3 to_light = normalize(-pc.scene_data.directional_lights[i].direction);
-        uint cascade;
-        float shadow = calc_dir_shadow_factor(vert.frag_pos, normal, to_light, i, cascade);
+    for (uint i = 0; i < ((light_mask & LIGHT_MASK_DIRECTIONAL) != 0 ? pc.scene_data.directional_light_count : 0); i++) {
+        float3 to_light = normalize(-pc.scene_data.directional_lights[i].direction_diffuse.xyz);
+        uint cascade = SHADOW_MAP_CASCADE_COUNT; // 'past last split' tint when shadows are bypassed
+        float shadow = shadows_disabled ? 1.0 : calc_dir_shadow_factor(vert.frag_pos, normal, to_light, i, cascade);
         total_light += calc_dir_light(pc.scene_data.directional_lights[i], normal, view_dir, shininess, smoothness) * shadow;
         if (i == 0) cascade_tint = CASCADE_DEBUG_COLORS[cascade];
     }
 
     if (pc.scene_data.debug_settings.show_cascades != 0) total_light *= cascade_tint;
 
-    for (uint i = 0; i < pc.scene_data.point_light_count; i++) {
-        float shadow = calc_point_shadow_factor(pc.scene_data.point_lights[i], i, vert.frag_pos, normalize(vert.frag_normal));
+    for (uint i = 0; i < ((light_mask & LIGHT_MASK_POINT) != 0 ? pc.scene_data.point_light_count : 0); i++) {
+        float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[i], i, vert.frag_pos, normalize(vert.frag_normal));
         total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
     }
 
-    for (uint i = 0; i < pc.scene_data.spot_light_count; i++) {
-        float3 to_light = normalize(pc.scene_data.spot_lights[i].pos - vert.frag_pos);
-        float shadow = calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, to_light);
+    for (uint i = 0; i < ((light_mask & LIGHT_MASK_SPOT) != 0 ? pc.scene_data.spot_light_count : 0); i++) {
+        float3 to_light = normalize(pc.scene_data.spot_lights[i].position_range.xyz - vert.frag_pos);
+        float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, to_light);
         total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
     }
 

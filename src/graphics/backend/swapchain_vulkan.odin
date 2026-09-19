@@ -1,3 +1,5 @@
+#+build linux
+
 package backend
 
 import vk "vendor:vulkan"
@@ -10,14 +12,15 @@ RenderTargets :: struct {
 }
 
 Swapchain :: struct {
-	handle:           vk.SwapchainKHR,
-	images:           []vk.Image,
-	require_recreate: bool,
-	extent:           vk.Extent2D,
-	render_targets:   RenderTargets,
+	handle:              vk.SwapchainKHR,
+	images:              []vk.Image,
+	require_recreate:    bool,
+	extent:              vk.Extent2D,
+	render_targets:      RenderTargets,
+	current_image_index: u32,
 }
 
-swapchain_create :: proc(ctx: ^VulkanContext, width, height: u32) -> Swapchain {
+swapchain_create :: proc(ctx: ^Context, width, height: u32) -> Swapchain {
 	swapchain: Swapchain
 	swapchain.extent = {width, height}
 
@@ -54,17 +57,17 @@ swapchain_create :: proc(ctx: ^VulkanContext, width, height: u32) -> Swapchain {
 	return swapchain
 }
 
-swapchain_destroy :: proc(ctx: ^VulkanContext, swapchain: ^Swapchain) {
+swapchain_destroy :: proc(ctx: ^Context, swapchain: ^Swapchain) {
 	render_targets_destroy(ctx, &swapchain.render_targets)
 	delete(swapchain.images)
 	vk.DestroySwapchainKHR(ctx.device, swapchain.handle, nil)
 }
 
 render_target_create :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Context,
 	extent: vk.Extent3D,
 	format: vk.Format,
-	usage: vk.ImageUsageFlags,
+	usage: ImageUsageFlags,
 	samples: vk.SampleCountFlags = {._1},
 ) -> GpuImage {
 	desc := image_desc_default(extent, format, usage)
@@ -76,71 +79,88 @@ render_target_create :: proc(
 	return img
 }
 
-render_targets_create :: proc(ctx: ^VulkanContext, extent: vk.Extent2D, msaa: vk.SampleCountFlags) -> RenderTargets {
+render_targets_create :: proc(ctx: ^Context, extent: vk.Extent2D, msaa: vk.SampleCountFlags) -> RenderTargets {
 	extent_3d := vk.Extent3D{extent.width, extent.height, 1}
 	return RenderTargets {
-		color = render_target_create(
-			ctx,
-			extent_3d,
-			DRAW_FORMAT,
-			{.TRANSIENT_ATTACHMENT, .COLOR_ATTACHMENT},
-			samples = msaa,
-		),
-		depth = render_target_create(ctx, extent_3d, DEPTH_FORMAT, {.DEPTH_STENCIL_ATTACHMENT}, samples = msaa),
+		color = render_target_create(ctx, extent_3d, DRAW_FORMAT, {.Transient, .ColorAttachment}, samples = msaa),
+		depth = render_target_create(ctx, extent_3d, DEPTH_FORMAT, {.DepthStencilAttachment}, samples = msaa),
 		draw = render_target_create(
 			ctx,
 			extent_3d,
 			DRAW_FORMAT,
-			{.COLOR_ATTACHMENT, .TRANSFER_SRC, .TRANSFER_DST, .STORAGE},
+			{.ColorAttachment, .TransferSrc, .TransferDst, .Storage},
 		),
 	}
 }
 
-render_targets_destroy :: proc(ctx: ^VulkanContext, targets: ^RenderTargets) {
+render_targets_destroy :: proc(ctx: ^Context, targets: ^RenderTargets) {
 	image_destroy(ctx, targets.color)
 	image_destroy(ctx, targets.depth)
 	image_destroy(ctx, targets.draw)
 }
 
 swapchain_acquire_next_image :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Context,
 	swapchain: ^Swapchain,
-	acquire_semaphore: vk.Semaphore,
-) -> (
-	AcquireImageResult,
-	u32,
-) {
+	frame_sync: ^FrameSync,
+) -> AcquireImageResult {
 	image_index: u32
 	acquire_result := vk.AcquireNextImageKHR(
 		ctx.device,
 		swapchain.handle,
 		max(u64),
-		acquire_semaphore,
+		frame_sync.image_acquired_semaphore,
 		0,
 		&image_index,
 	)
+	swapchain.current_image_index = image_index
 
 	#partial switch acquire_result {
 	case .SUCCESS:
-		return .Success, image_index
+		return .Success
 	case .ERROR_OUT_OF_DATE_KHR:
-		return .OutOfDate, image_index
+		return .OutOfDate
 	case .SUBOPTIMAL_KHR:
-		return .Suboptimal, image_index
+		return .Suboptimal
 	case:
-		return .OutOfDate, image_index
+		return .OutOfDate
 	}
 }
 
+present_blit :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain) {
+	image_barrier(cmd, &swapchain.render_targets.draw, .Transfer_Src, ImageAspectFlags{.Color})
+	image_barrier_raw(
+		cmd,
+		swapchain.images[swapchain.current_image_index],
+		.Undefined,
+		.Transfer_Dst,
+		image_aspect_to_vk({.Color}),
+	)
+	copy_image_to_image(
+		cmd,
+		swapchain.render_targets.draw.image,
+		swapchain.images[swapchain.current_image_index],
+		swapchain.extent,
+		swapchain.extent,
+	)
+	image_barrier_raw(
+		cmd,
+		swapchain.images[swapchain.current_image_index],
+		.Transfer_Dst,
+		.Present,
+		image_aspect_to_vk({.Color}),
+	)
+}
+
 queue_present_frame :: proc(
-	ctx: ^VulkanContext,
-	swapchain_handle: vk.SwapchainKHR,
-	render_complete_semaphore: vk.Semaphore,
-	image_index: u32,
+	ctx: ^Context,
+	cmd: CommandBuffer,
+	swapchain: ^Swapchain,
+	frame_sync: ^FrameSync,
 ) -> PresentFrameResult {
-	sem := render_complete_semaphore
-	handle := swapchain_handle
-	idx := image_index
+	sem := frame_sync.render_complete_semaphore
+	handle := swapchain.handle
+	idx := swapchain.current_image_index
 
 	present_info := vk.PresentInfoKHR {
 		sType              = .PRESENT_INFO_KHR,

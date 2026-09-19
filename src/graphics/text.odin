@@ -49,6 +49,17 @@ font_destroy :: proc(engine: ^Engine, font: ^Baked_Font) {
 // that doesn't need a specific bundled typeface. Returns ok = false if none
 // of DEFAULT_SYSTEM_FONT_CANDIDATES exist on this machine.
 font_load_default_system :: proc(engine: ^Engine, pixel_height: f32) -> (font: Baked_Font, ok: bool) {
+	// Prefer whatever the OS reports as its UI font; the candidate list is only
+	// a fallback for platforms with no query wired up (or if it fails).
+	if sys_path, sys_ok := system_ui_font_path(context.temp_allocator); sys_ok {
+		if os.exists(sys_path) {
+			if font, ok = font_load_from_file(engine, sys_path, pixel_height); ok {
+				return font, true
+			}
+			log.warnf("system UI font '%s' could not be baked, falling back", sys_path)
+		}
+	}
+
 	for path in DEFAULT_SYSTEM_FONT_CANDIDATES {
 		if os.exists(path) {
 			return font_load_from_file(engine, path, pixel_height)
@@ -93,7 +104,7 @@ font_load_from_file :: proc(engine: ^Engine, path: string, pixel_height: f32) ->
 	}
 
 	texture := Texture {
-		gpu           = {extent = {u32(font.atlas_w), u32(font.atlas_h), 1}},
+		gpu           = {extent = backend.extent3d(u32(font.atlas_w), u32(font.atlas_h), 1)},
 		channel_count = 1,
 	}
 	texture_upload(&engine.vk_ctx, raw_data(atlas_pixels), &texture, .R8_Unorm)
@@ -101,7 +112,7 @@ font_load_from_file :: proc(engine: ^Engine, path: string, pixel_height: f32) ->
 	ts := &engine.texture_system
 	font.texture = texture_register(engine, &ts.linear_texture_map, path, texture)
 
-	log.debugf("Loaded font: %s (%dx%d atlas, %d glyphs baked)", path, font.atlas_w, font.atlas_h, font.num_chars)
+	log.debugf("Loaded font: %s (%dx%d atlas, %d glyphs baked) -> bindless slot %d", path, font.atlas_w, font.atlas_h, font.num_chars, font.texture.index)
 
 	return font, true
 }

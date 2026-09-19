@@ -1,3 +1,5 @@
+#+build linux
+
 package backend
 
 import vk "vendor:vulkan"
@@ -21,7 +23,7 @@ DescriptorSet :: struct {
 
 // Create a descriptor layout
 descriptor_layout_create :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Context,
 	bindings: []vk.DescriptorSetLayoutBinding,
 	binding_flags: []vk.DescriptorBindingFlags = nil,
 	flags: vk.DescriptorSetLayoutCreateFlags = {},
@@ -48,12 +50,12 @@ descriptor_layout_create :: proc(
 	return layout
 }
 
-descriptor_layout_destroy :: proc(ctx: ^VulkanContext, layout: vk.DescriptorSetLayout) {
+descriptor_layout_destroy :: proc(ctx: ^Context, layout: vk.DescriptorSetLayout) {
 	vk.DestroyDescriptorSetLayout(ctx.device, layout, nil)
 }
 
 descriptor_pool_create :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Context,
 	bindings: []vk.DescriptorSetLayoutBinding,
 	max_sets: u32,
 	flags: vk.DescriptorPoolCreateFlags = {},
@@ -79,12 +81,12 @@ descriptor_pool_create :: proc(
 	return pool
 }
 
-descriptor_pool_destroy :: proc(ctx: ^VulkanContext, pool: vk.DescriptorPool) {
+descriptor_pool_destroy :: proc(ctx: ^Context, pool: vk.DescriptorPool) {
 	vk.DestroyDescriptorPool(ctx.device, pool, nil)
 }
 
 descriptor_sets_allocate :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Context,
 	pool: vk.DescriptorPool,
 	layout: vk.DescriptorSetLayout,
 	count: u32,
@@ -106,7 +108,7 @@ descriptor_sets_allocate :: proc(
 }
 
 descriptor_set_create :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Context,
 	bindings: []vk.DescriptorSetLayoutBinding,
 	count: u32 = 1,
 	binding_flags: []vk.DescriptorBindingFlags = nil,
@@ -120,14 +122,64 @@ descriptor_set_create :: proc(
 	return DescriptorSet{layout = layout, pool = pool, sets = sets, count = count}
 }
 
-descriptor_set_destroy :: proc(ctx: ^VulkanContext, desc: ^DescriptorSet) {
+descriptor_set_destroy :: proc(ctx: ^Context, desc: ^DescriptorSet) {
 	descriptor_pool_destroy(ctx, desc.pool)
 	descriptor_layout_destroy(ctx, desc.layout)
 }
 
+// Fixed-size array of sampler-backed slots, all COMBINED_IMAGE_SAMPLER/FRAGMENT -
+// the shape needed for e.g. the shadow atlas bindings.
+descriptor_set_create_sampler_array :: proc(
+	ctx: ^Context,
+	slot_count: u32,
+	count: u32 = MAX_FRAMES_IN_FLIGHT,
+) -> DescriptorSet {
+	bindings := make([]vk.DescriptorSetLayoutBinding, slot_count, context.temp_allocator)
+	for i in 0 ..< slot_count {
+		bindings[i] = {
+			binding         = i,
+			descriptorType  = .COMBINED_IMAGE_SAMPLER,
+			descriptorCount = 1,
+			stageFlags      = {.FRAGMENT},
+		}
+	}
+	return descriptor_set_create(ctx, bindings, count)
+}
+
+// Same shape as descriptor_set_create_sampler_array, but with update-after-bind
+// flags so a large slot count can be sparsely written to while in flight -
+// the shape needed for the bindless texture system.
+//
+// Two bindings, not one: the Slang BindlessTextures parameter block declares a
+// separate Texture2D array and SamplerState array (needed for the Metal port,
+// which can't combine them), so Slang lays it out as binding 0 (sampled images)
+// + binding 1 (samplers) rather than a single combined-image-sampler binding.
+descriptor_set_create_bindless_array :: proc(
+	ctx: ^Context,
+	slot_count: u32,
+	count: u32 = MAX_FRAMES_IN_FLIGHT,
+) -> DescriptorSet {
+	bindings := []vk.DescriptorSetLayoutBinding {
+		{binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = slot_count, stageFlags = {.FRAGMENT}},
+		{binding = 1, descriptorType = .SAMPLER, descriptorCount = slot_count, stageFlags = {.FRAGMENT}},
+	}
+	binding_flags := []vk.DescriptorBindingFlags {
+		DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND},
+		DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND},
+	}
+	return descriptor_set_create(
+		ctx,
+		bindings,
+		count,
+		binding_flags = binding_flags,
+		layout_flags = {.UPDATE_AFTER_BIND_POOL},
+		pool_flags = {.UPDATE_AFTER_BIND},
+	)
+}
+
 // Writes the same image/sampler into the given binding across every frame's set.
 descriptor_write_image_info :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Context,
 	desc: ^DescriptorSet,
 	binding: u32,
 	image_info: ^vk.DescriptorImageInfo,
@@ -150,18 +202,61 @@ descriptor_write_image_info :: proc(
 // state names the layout the image will be in when sampled (.Shader_Read for
 // color textures, .Depth_Read for shadow maps).
 descriptor_write_image_view :: proc(
-	ctx: ^VulkanContext,
+	ctx: ^Context,
 	set: ^DescriptorSet,
 	binding: u32,
-	view: vk.ImageView,
+	img: ^GpuImage,
 	sampler: Sampler,
 	state: ImageStateKind = .Shader_Read,
 	array_element: u32 = 0,
 ) {
 	image_info := vk.DescriptorImageInfo {
 		sampler     = vk.Sampler(sampler),
-		imageView   = view,
+		imageView   = img.image_view,
 		imageLayout = IMAGE_STATES[state].layout,
 	}
 	descriptor_write_image_info(ctx, set, binding, &image_info, array_element)
+}
+
+// Writes one slot of the bindless texture set (see descriptor_set_create_bindless_array):
+// the image goes to binding 0 as a SAMPLED_IMAGE, the sampler to binding 1 as a SAMPLER.
+descriptor_write_bindless_texture :: proc(
+	ctx: ^Context,
+	desc: ^DescriptorSet,
+	array_element: u32,
+	img: ^GpuImage,
+	sampler: Sampler,
+	state: ImageStateKind = .Shader_Read,
+) {
+	image_info := vk.DescriptorImageInfo{imageView = img.image_view, imageLayout = IMAGE_STATES[state].layout}
+	sampler_info := vk.DescriptorImageInfo{sampler = vk.Sampler(sampler)}
+
+	for i in 0 ..< desc.count {
+		writes := [2]vk.WriteDescriptorSet {
+			{
+				sType = .WRITE_DESCRIPTOR_SET,
+				dstSet = desc.sets[i],
+				dstBinding = 0,
+				dstArrayElement = array_element,
+				descriptorCount = 1,
+				descriptorType = .SAMPLED_IMAGE,
+				pImageInfo = &image_info,
+			},
+			{
+				sType = .WRITE_DESCRIPTOR_SET,
+				dstSet = desc.sets[i],
+				dstBinding = 1,
+				dstArrayElement = array_element,
+				descriptorCount = 1,
+				descriptorType = .SAMPLER,
+				pImageInfo = &sampler_info,
+			},
+		}
+		vk.UpdateDescriptorSets(ctx.device, 2, &writes[0], 0, nil)
+	}
+}
+
+descriptor_bind_image :: proc(cmd: RenderEncoder, handle: DescriptorSetHandle, binding, target_index: u32) {
+	// Vulkan bindings are fixed by the descriptor-set layout and already bound
+	// by pipeline_bind; target_index is only needed for Metal's compacted slots.
 }

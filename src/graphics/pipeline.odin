@@ -46,7 +46,7 @@ pipeline_register :: proc(
 ) {
 	config := config
 	stages := default_graphics_stages(self, shader)
-	self.pipeline_registry.pipelines[kind] = backend.pipeline_create(self.vk_ctx.device, &config, stages[:])
+	self.pipeline_registry.pipelines[kind] = backend.pipeline_create(&self.vk_ctx, &config, stages[:])
 	self.pipeline_registry.configs[kind] = config
 	self.pipeline_registry.shaders[kind] = shader
 }
@@ -59,7 +59,7 @@ pipeline_register_compute :: proc(
 ) {
 	config := config
 	stage := default_compute_stage(self, shader)
-	self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(self.vk_ctx.device, &config, stage)
+	self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(&self.vk_ctx, &config, stage)
 	self.pipeline_registry.configs[kind] = config
 	self.pipeline_registry.shaders[kind] = shader
 }
@@ -84,10 +84,10 @@ pipeline_rebuild :: proc(self: ^Engine, kind: PipelineKind) {
 	switch &cfg in config {
 	case backend.GraphicsPipelineConfig:
 		stages := default_graphics_stages(self, shader)
-		self.pipeline_registry.pipelines[kind] = backend.pipeline_create(self.vk_ctx.device, &cfg, stages[:])
+		self.pipeline_registry.pipelines[kind] = backend.pipeline_create(&self.vk_ctx, &cfg, stages[:])
 	case backend.ComputePipelineConfig:
 		self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(
-			self.vk_ctx.device,
+			&self.vk_ctx,
 			&cfg,
 			default_compute_stage(self, shader),
 		)
@@ -96,7 +96,7 @@ pipeline_rebuild :: proc(self: ^Engine, kind: PipelineKind) {
 	log.infof("Rebuilt pipeline: %v", kind)
 }
 
-destroy_pipeline_registry :: proc(ctx: ^backend.VulkanContext, reg: ^PipelineRegistry) {
+destroy_pipeline_registry :: proc(ctx: ^backend.Context, reg: ^PipelineRegistry) {
 	for pipeline in reg.pipelines {
 		backend.pipeline_destroy(ctx, pipeline)
 	}
@@ -104,19 +104,12 @@ destroy_pipeline_registry :: proc(ctx: ^backend.VulkanContext, reg: ^PipelineReg
 
 make_shadow_config :: proc(engine: ^Engine) -> backend.GraphicsPipelineConfig {
 	config := backend.pipeline_default_config()
-	backend.pipeline_config_set_descriptor_layouts(&config, {engine.texture_system.descriptor.layout})
-	config.rasterization.cullMode = {}
-	config.rasterization.depthBiasEnable = true
-	config.depth_stencil.depthCompareOp = .LESS_OR_EQUAL
-	config.rendering_info = {
-		sType                 = .PIPELINE_RENDERING_CREATE_INFO,
-		colorAttachmentCount  = 0,
-		depthAttachmentFormat = backend.DEPTH_FORMAT,
-	}
-	config.push_constant_range = {
-		stageFlags = {.VERTEX, .FRAGMENT},
-		size       = size_of(ShadowPushConstants),
-	}
+	backend.pipeline_config_set_descriptor_layouts(&config, engine.texture_system.descriptor)
+	backend.pipeline_config_set_no_cull(&config)
+	backend.pipeline_config_enable_depth_bias(&config)
+	backend.pipeline_config_set_depth_compare(&config, .LessOrEqual)
+	backend.pipeline_config_disable_color_attachment(&config)
+	backend.pipeline_config_set_push_constant(&config, size_of(ShadowPushConstants), {.Vertex, .Fragment})
 	return config
 }
 
@@ -126,85 +119,70 @@ register_shadow_pipelines :: proc(engine: ^Engine, shadow_handle: ShaderHandle) 
 
 register_ui_pipeline :: proc(engine: ^Engine, ui_handle: ShaderHandle) {
 	config := backend.pipeline_default_config()
-	config.rasterization.cullMode = {}
+	backend.pipeline_config_set_no_cull(&config)
 	backend.pipeline_config_disable_depth(&config)
+	backend.pipeline_config_set_no_depth_attachment(&config)
 	backend.pipeline_config_set_blend(&config, .Alpha)
 	backend.pipeline_config_set_descriptor_layouts(
 		&config,
-		{engine.texture_system.descriptor.layout, engine.global_descriptor.layout},
+		engine.texture_system.descriptor,
+		engine.global_descriptor,
 	)
-	config.push_constant_range = {
-		stageFlags = {.VERTEX, .FRAGMENT},
-		size       = size_of(UIPushConstants),
-	}
+	backend.pipeline_config_set_push_constant(&config, size_of(UIPushConstants), {.Vertex, .Fragment})
 	pipeline_register(engine, .UI, ui_handle, config)
 }
 
 register_mesh_pipeline :: proc(engine: ^Engine, mesh_handle: ShaderHandle) {
 	config := backend.pipeline_default_config()
-	config.multi_sample.rasterizationSamples = engine.vk_ctx.msaa_samples
-	config.dynamic_states[3] = .DEPTH_WRITE_ENABLE
-	config.dynamic_state_count = 4
+	backend.pipeline_config_set_msaa(&config, &engine.vk_ctx)
+	backend.pipeline_config_set_depth_dynamic(&config)
 	backend.pipeline_config_set_blend(&config, .Alpha)
 	backend.pipeline_config_set_descriptor_layouts(
 		&config,
-		{engine.texture_system.descriptor.layout, engine.global_descriptor.layout},
+		engine.texture_system.descriptor,
+		engine.global_descriptor,
 	)
-	config.push_constant_range = {
-		stageFlags = {.VERTEX, .FRAGMENT},
-		size       = size_of(PushConstants),
-	}
+	backend.pipeline_config_set_push_constant(&config, size_of(PushConstants), {.Vertex, .Fragment})
 	pipeline_register(engine, .Mesh, mesh_handle, config)
 }
 
 register_particle_pipelines :: proc(engine: ^Engine, particle_handle: ShaderHandle) {
 	draw_config := backend.pipeline_default_config()
-	draw_config.input_assembly.topology = .POINT_LIST
-	draw_config.rasterization.cullMode = {}
-	draw_config.multi_sample.rasterizationSamples = engine.vk_ctx.msaa_samples
+	backend.pipeline_config_set_topology_points(&draw_config)
+	backend.pipeline_config_set_no_cull(&draw_config)
+	backend.pipeline_config_set_msaa(&draw_config, &engine.vk_ctx)
 	backend.pipeline_config_disable_depth(&draw_config)
 	backend.pipeline_config_set_blend(&draw_config, .Alpha)
-	draw_config.push_constant_range = {
-		stageFlags = {.VERTEX, .FRAGMENT},
-		size       = size_of(ParticlePushConstants),
-	}
+	backend.pipeline_config_set_push_constant(&draw_config, size_of(ParticlePushConstants), {.Vertex, .Fragment})
 	pipeline_register(engine, .Particle_Draw, particle_handle, draw_config)
 
 	compute_config: backend.ComputePipelineConfig
-	compute_config.push_constant_range = {
-		stageFlags = {.COMPUTE},
-		size       = size_of(ParticlePushConstants),
-	}
+	backend.pipeline_config_set_push_constant_compute(&compute_config, size_of(ParticlePushConstants), {.Compute})
 	pipeline_register_compute(engine, .Particle_Compute, particle_handle, compute_config)
 }
 
 register_skybox_pipeline :: proc(engine: ^Engine, skybox_handle: ShaderHandle) {
 	config := backend.pipeline_default_config()
-	config.rasterization.cullMode = {}
-	config.depth_stencil.depthWriteEnable = false
-	config.depth_stencil.depthCompareOp = .LESS_OR_EQUAL
-	config.multi_sample.rasterizationSamples = engine.vk_ctx.msaa_samples
-	backend.pipeline_config_set_descriptor_layouts(&config, {engine.global_descriptor.layout})
-	config.push_constant_range = {
-		stageFlags = {.VERTEX, .FRAGMENT},
-		size       = size_of(SkyboxPushConstants),
-	}
+	backend.pipeline_config_set_no_cull(&config)
+	backend.pipeline_config_set_depth_write_default(&config, false)
+	backend.pipeline_config_set_depth_compare(&config, .LessOrEqual)
+	backend.pipeline_config_set_msaa(&config, &engine.vk_ctx)
+	backend.pipeline_config_set_descriptor_layouts(&config, engine.global_descriptor)
+	backend.pipeline_config_set_push_constant(&config, size_of(SkyboxPushConstants), {.Vertex, .Fragment})
 	pipeline_register(engine, .Skybox, skybox_handle, config)
 }
 
 register_debug_view_pipeline :: proc(engine: ^Engine, debug_view_handle: ShaderHandle) {
 	config := backend.pipeline_default_config()
-	config.rasterization.cullMode = {}
+	backend.pipeline_config_set_no_cull(&config)
 	backend.pipeline_config_disable_depth(&config)
-	config.rendering_info.depthAttachmentFormat = .UNDEFINED
+	backend.pipeline_config_set_no_depth_attachment(&config)
 	backend.pipeline_config_set_descriptor_layouts(
 		&config,
-		{engine.texture_system.descriptor.layout, engine.global_descriptor.layout},
+		engine.texture_system.descriptor,
+		engine.global_descriptor,
 	)
-	config.push_constant_range = {
-		stageFlags = {.FRAGMENT},
-		size       = size_of(DebugViewPushConstants),
-	}
+	backend.pipeline_config_set_push_constant(&config, size_of(DebugViewPushConstants), {.Fragment})
 	pipeline_register(engine, .Debug_View, debug_view_handle, config)
 }
 

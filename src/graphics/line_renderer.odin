@@ -10,6 +10,7 @@ LINE_THICKNESS_PX :: 3.0
 
 LineVertex :: struct {
 	position: Vec3,
+	_pad0:    f32,
 	color:    Vec4,
 }
 
@@ -35,13 +36,9 @@ line_renderer_create :: proc(engine: ^Engine) -> (ok: bool) {
 	lr := &engine.line_renderer
 
 	config := backend.pipeline_default_config()
-	config.rasterization.cullMode = {}
-	config.input_assembly.topology = .TRIANGLE_LIST
-	config.multi_sample.rasterizationSamples = engine.vk_ctx.msaa_samples
-	config.push_constant_range = {
-		stageFlags = {.VERTEX, .FRAGMENT},
-		size       = size_of(LinePushConstants),
-	}
+	backend.pipeline_config_set_no_cull(&config)
+	backend.pipeline_config_set_msaa(&config, &engine.vk_ctx)
+	backend.pipeline_config_set_push_constant(&config, size_of(LinePushConstants), {.Vertex, .Fragment})
 
 	shader_handle := shader_load(engine, "line", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	pipeline_register(engine, .Debug_Line, shader_handle, config)
@@ -100,7 +97,7 @@ line_renderer_clear :: proc(engine: ^Engine) {
 	clear(&lr.overlay.vertices)
 }
 
-line_renderer_flush :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+line_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	lr := &engine.line_renderer
 	flush_batch(engine, cmd, &lr.tested, .Debug_Line)
 	flush_batch(engine, cmd, &lr.sector, .Debug_Sector, 1)
@@ -124,13 +121,13 @@ batch_destroy :: proc(engine: ^Engine, batch: ^LineBatch) {
 }
 
 @(private = "file")
-flush_batch :: proc(engine: ^Engine, cmd: backend.CommandBuffer, batch: ^LineBatch, kind: PipelineKind, vertex_multiplier: u32 = 3) {
+flush_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: ^LineBatch, kind: PipelineKind, vertex_multiplier: u32 = 3) {
 	if len(batch.vertices) == 0 do return
 	assert(len(batch.vertices) <= MAX_LINE_VERTICES)
 
 	frame_res_index := current_frame_res_index(engine)
 	buffer := &batch.buffers[frame_res_index]
-	mem.copy(buffer.alloc_info.mapped_data, raw_data(batch.vertices), len(batch.vertices) * size_of(LineVertex))
+	mem.copy(backend.buffer_mapped_ptr(buffer^), raw_data(batch.vertices), len(batch.vertices) * size_of(LineVertex))
 
 	pipeline := get_pipeline(&engine.pipeline_registry, kind)
 	pc := LinePushConstants {
@@ -140,7 +137,11 @@ flush_batch :: proc(engine: ^Engine, cmd: backend.CommandBuffer, batch: ^LineBat
 		thickness     = LINE_THICKNESS_PX,
 	}
 	backend.pipeline_bind(cmd, pipeline)
-	backend.pipeline_push(cmd, pipeline, {.VERTEX, .FRAGMENT}, &pc)
+	// Both buffers are reached through GPU addresses in the shader, so Metal needs
+	// them made resident explicitly — the encoder can't see them as bound arguments.
+	backend.cmd_use_buffer(cmd, current_frame_data(engine).scene_data_buffer)
+	backend.cmd_use_buffer(cmd, buffer^)
+	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc)
 	// Line segments expand to six vertices; sector triangles use their three stored vertices.
 	backend.cmd_draw(cmd, u32(len(batch.vertices)) * vertex_multiplier)
 

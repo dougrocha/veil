@@ -1,3 +1,5 @@
+#+build linux
+
 package backend
 
 import vk "vendor:vulkan"
@@ -18,13 +20,13 @@ PassConfig :: struct {
 	skip_depth_transition: bool, // caller manages depth layout transitions
 }
 
-begin_render_pass :: proc(cmd: CommandBuffer, config: PassConfig) {
+begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig) -> RenderEncoder {
 	if config.color.image != nil {
 		image_barrier(
 			cmd,
 			config.color.image,
 			.Color_Write,
-			ImageAspectFlags{.COLOR},
+			ImageAspectFlags{.Color},
 			base_array_layer = config.color.layer,
 		)
 	}
@@ -34,7 +36,7 @@ begin_render_pass :: proc(cmd: CommandBuffer, config: PassConfig) {
 			cmd,
 			config.resolve.image,
 			.Color_Write,
-			ImageAspectFlags{.COLOR},
+			ImageAspectFlags{.Color},
 			base_array_layer = config.resolve.layer,
 		)
 	}
@@ -44,7 +46,7 @@ begin_render_pass :: proc(cmd: CommandBuffer, config: PassConfig) {
 			cmd,
 			config.depth.image,
 			.Depth_Write,
-			ImageAspectFlags{.DEPTH},
+			ImageAspectFlags{.Depth},
 			base_array_layer = config.depth.layer,
 		)
 	}
@@ -102,10 +104,12 @@ begin_render_pass :: proc(cmd: CommandBuffer, config: PassConfig) {
 
 	vk.CmdBeginRendering(vk.CommandBuffer(cmd), &rendering_info)
 
-	pipeline_set_viewport(cmd, f32(extent.width), f32(extent.height))
-	pipeline_set_scissor(cmd, extent.width, extent.height)
+	encoder := RenderEncoder(cmd)
+	pipeline_set_viewport(encoder, f32(extent.width), f32(extent.height))
+	pipeline_set_scissor(encoder, extent.width, extent.height)
+	return encoder
 }
 
-end_render_pass :: proc(cmd: CommandBuffer) {
-	vk.CmdEndRendering(vk.CommandBuffer(cmd))
+end_render_pass :: proc(encoder: RenderEncoder) {
+	vk.CmdEndRendering(vk.CommandBuffer(encoder))
 }

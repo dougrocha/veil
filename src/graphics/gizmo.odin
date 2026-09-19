@@ -81,7 +81,7 @@ gizmo_project :: proc(cam: Camera, point: Vec3, viewport: Vec2) -> (Vec2, bool) 
 	clip := camera_get_projection_matrix(cam, viewport.x / viewport.y) *
 		camera_get_view_matrix(cam) * Vec4{point.x, point.y, point.z, 1}
 	if clip.w <= 0 || clip.z < 0 do return {}, false
-	return {(clip.x / clip.w + 1) * viewport.x * 0.5, (clip.y / clip.w + 1) * viewport.y * 0.5}, true
+	return ndc_to_screen(clip.xy / clip.w, viewport), true
 }
 
 gizmo_point_segment_distance_sq :: proc(point, a, b: Vec2) -> f32 {

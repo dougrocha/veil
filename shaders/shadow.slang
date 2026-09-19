@@ -1,3 +1,4 @@
+#include "platform.slang"
 import types;
 
 struct ShadowPushConstants {
@@ -11,8 +12,6 @@ struct ShadowPushConstants {
     uint light_index;
     uint material_index;
 };
-[[vk_push_constant]] ShadowPushConstants pc;
-
 struct VSOutput {
     float4 pos : SV_Position;
     float3 world_pos;
@@ -24,7 +23,7 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     let v = pc.vertex_buffer[vertex_index];
     let transform = pc.transform_buffer[pc.instance_index];
 
-    float4 world_pos = mul(transform.model, float4(v.pos, 1.0));
+    float4 world_pos = mul(transform.model, float4(v.pos.xyz, 1.0));
 
     VSOutput output;
     output.pos = mul(pc.view_proj, world_pos);
@@ -33,21 +32,34 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     return output;
 }
 
-[[vk_binding(0, 0)]] Sampler2D textures[];
+struct BindlessTextures {
+    Texture2D<float4> textures[BINDLESS_TEXTURE_COUNT];
+    SamplerState samplers[BINDLESS_TEXTURE_COUNT];
+}
+[[vk_binding(0, 0)]] ParameterBlock<BindlessTextures> bindless;
+[[vk_push_constant]] ShadowPushConstants pc;
+
+// Slang lowers a bare `: SV_Depth` return to [[color(0)]] on the Metal target,
+// so the value silently went to a nonexistent color attachment and the atlas
+// kept the rasterizer's interpolated z instead. Returning it inside a struct
+// lowers to [[depth(any)]] on Metal and is equally valid for SPIR-V.
+struct PSOutput {
+    float depth : SV_Depth;
+};
 
 [shader("fragment")]
-float fragment_main(VSOutput input) : SV_Depth {
+PSOutput fragment_main(VSOutput input) {
     let mat = pc.material_buffer[pc.material_index];
     if (mat.alpha_mode == 1) {
-        float alpha = textures[mat.base_color_texture].Sample(input.uv).a * mat.base_color.a;
+        float alpha = bindless.textures[mat.base_color_texture].Sample(bindless.samplers[mat.base_color_texture], input.uv).a * mat.base_color.a;
         if (alpha < mat.alpha_cutoff) discard;
     }
 
     if (pc.light_type == 0) { // directional
-        return input.pos.z;
+        return PSOutput(input.pos.z);
     }
 
-    float3 light_pos = pc.light_type == 1 ? pc.scene_data.spot_lights[pc.light_index].pos : pc.scene_data.point_lights[pc.light_index].pos;
-    float range = pc.light_type == 1 ? pc.scene_data.spot_lights[pc.light_index].range : pc.scene_data.point_lights[pc.light_index].range;
-    return length(input.world_pos - light_pos) / range;
+    float3 light_pos = pc.light_type == 1 ? pc.scene_data.spot_lights[pc.light_index].position_range.xyz : pc.scene_data.point_lights[pc.light_index].position_range.xyz;
+    float range = pc.light_type == 1 ? pc.scene_data.spot_lights[pc.light_index].position_range.w : pc.scene_data.point_lights[pc.light_index].position_range.w;
+    return PSOutput(length(input.world_pos - light_pos) / range);
 }

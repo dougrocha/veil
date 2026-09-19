@@ -1,3 +1,5 @@
+#+build linux
+
 package backend
 
 import "core:log"
@@ -10,19 +12,19 @@ vk_check :: #force_inline proc(result: vk.Result, message := "Vulkan Error", loc
 	}
 }
 
-vk_get_physical_device_properties :: proc(ctx: ^VulkanContext) -> vk.PhysicalDeviceProperties {
+vk_get_physical_device_properties :: proc(ctx: ^Context) -> vk.PhysicalDeviceProperties {
 	properties: vk.PhysicalDeviceProperties
 	vk.GetPhysicalDeviceProperties(ctx.physical_device, &properties)
 	return properties
 }
 
-vk_get_physical_device_format_properties :: proc(ctx: ^VulkanContext, format: vk.Format) -> vk.FormatProperties {
+vk_get_physical_device_format_properties :: proc(ctx: ^Context, format: vk.Format) -> vk.FormatProperties {
 	format_props: vk.FormatProperties
 	vk.GetPhysicalDeviceFormatProperties(ctx.physical_device, format, &format_props)
 	return format_props
 }
 
-vk_get_max_bindless_samplers_per_stage :: proc(ctx: ^VulkanContext) -> u32 {
+vk_get_max_bindless_samplers_per_stage :: proc(ctx: ^Context) -> u32 {
 	descriptor_indexing_props := vk.PhysicalDeviceDescriptorIndexingProperties {
 		sType = .PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES,
 	}
@@ -37,7 +39,7 @@ vk_get_max_bindless_samplers_per_stage :: proc(ctx: ^VulkanContext) -> u32 {
 	return descriptor_indexing_props.maxPerStageDescriptorUpdateAfterBindSamplers
 }
 
-vk_get_max_usable_sample_count :: proc(ctx: ^VulkanContext) -> vk.SampleCountFlags {
+vk_get_max_usable_sample_count :: proc(ctx: ^Context) -> vk.SampleCountFlags {
 	properties := vk_get_physical_device_properties(ctx)
 	counts := properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts
 

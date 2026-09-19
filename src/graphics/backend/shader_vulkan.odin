@@ -1,3 +1,5 @@
+#+build linux
+
 package backend
 
 import vk "vendor:vulkan"
@@ -37,7 +39,7 @@ shader_stage_info :: proc(desc: ShaderStageDesc) -> vk.PipelineShaderStageCreate
 	}
 }
 
-shader_module_create :: proc(ctx: ^VulkanContext, spirv: []u32) -> ShaderModule {
+shader_module_create :: proc(ctx: ^Context, spirv: []u32) -> ShaderModule {
 	info := vk.ShaderModuleCreateInfo {
 		sType    = .SHADER_MODULE_CREATE_INFO,
 		codeSize = len(spirv) * size_of(u32),
@@ -48,6 +50,6 @@ shader_module_create :: proc(ctx: ^VulkanContext, spirv: []u32) -> ShaderModule 
 	return ShaderModule(module)
 }
 
-shader_module_destroy :: proc(ctx: ^VulkanContext, module: ShaderModule) {
+shader_module_destroy :: proc(ctx: ^Context, module: ShaderModule) {
 	vk.DestroyShaderModule(ctx.device, vk.ShaderModule(module), nil)
 }

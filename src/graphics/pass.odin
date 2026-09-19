@@ -12,7 +12,7 @@ bloom_downsample_pass :: proc(
 		cmd,
 		img,
 		.Shader_Read,
-		backend.ImageAspectFlags{.COLOR},
+		backend.ImageAspectFlags{.Color},
 		base_mip_level = src_mip,
 		level_count = 1,
 	)

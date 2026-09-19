@@ -1,4 +1,9 @@
-[[vk_binding(0, 0)]] Sampler2D textures[];
+#include "platform.slang"
+struct BindlessTextures {
+    Texture2D<float4> textures[BINDLESS_TEXTURE_COUNT];
+    SamplerState samplers[BINDLESS_TEXTURE_COUNT];
+}
+[[vk_binding(0, 0)]] ParameterBlock<BindlessTextures> bindless;
 [[vk_binding(0, 1)]] SamplerCubeArray shadow_cubes;
 [[vk_binding(1, 1)]] Sampler2DArray shadow_2d_maps;
 
@@ -19,7 +24,11 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     VSOutput output;
     float2 uv = float2((vertex_index << 1) & 2, vertex_index & 2);
     output.uv = uv;
-    output.pos = float4(uv * 2.0 - 1.0, 0.0, 1.0);
+    float2 ndc = uv * 2.0 - 1.0;
+#if VEIL_METAL
+    ndc.y = -ndc.y;
+#endif
+    output.pos = float4(ndc, 0.0, 1.0);
     return output;
 }
 
@@ -49,5 +58,5 @@ float4 fragment_main(VSOutput input) : SV_TARGET {
         return float4(depth, depth, depth, 1.0);
     }
 
-    return textures[pc.index].Sample(input.uv);
+    return bindless.textures[pc.index].Sample(bindless.samplers[pc.index], input.uv);
 }

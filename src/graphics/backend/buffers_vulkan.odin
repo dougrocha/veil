@@ -1,3 +1,5 @@
+#+build linux
+
 package backend
 
 import "core:mem"
@@ -27,6 +29,7 @@ BufferKind :: enum {
 	MappedStorage,
 	Index,
 	Staging,
+	Readback,
 	ParticleSSBO,
 }
 
@@ -36,10 +39,11 @@ BUFFER_FLAGS := [BufferKind]BufferFlags {
 	.MappedStorage = {{.TRANSFER_DST, .STORAGE_BUFFER, .SHADER_DEVICE_ADDRESS}, {.Mapped, .Host_Access_Random}},
 	.Index         = {{.TRANSFER_DST, .INDEX_BUFFER}, {}},
 	.Staging       = {{.TRANSFER_SRC}, {.Mapped, .Host_Access_Sequential_Write}},
+	.Readback      = {{.TRANSFER_DST}, {.Mapped, .Host_Access_Random}},
 	.ParticleSSBO  = {{.TRANSFER_DST, .STORAGE_BUFFER, .VERTEX_BUFFER, .SHADER_DEVICE_ADDRESS}, {}},
 }
 
-buffer_create :: proc($T: typeid, ctx: ^VulkanContext, count: int, kind: BufferKind) -> GpuBuffer(T) {
+buffer_create :: proc($T: typeid, ctx: ^Context, count: int, kind: BufferKind) -> GpuBuffer(T) {
 	buffer_flags := BUFFER_FLAGS[kind]
 	size := vk.DeviceSize(size_of(T) * count)
 
@@ -66,11 +70,15 @@ buffer_create :: proc($T: typeid, ctx: ^VulkanContext, count: int, kind: BufferK
 	return gpu_buf
 }
 
-buffer_destroy :: proc(ctx: ^VulkanContext, buffer: GpuBuffer($T)) {
+buffer_destroy :: proc(ctx: ^Context, buffer: GpuBuffer($T)) {
 	vma.destroy_buffer(ctx.vma_allocator, buffer.buffer, buffer.alloc)
 }
 
-buffer_upload :: proc(ctx: ^VulkanContext, data: []$T, kind: BufferKind) -> GpuBuffer(T) {
+buffer_mapped_ptr :: proc(buffer: GpuBuffer($T)) -> rawptr {
+	return buffer.alloc_info.mapped_data
+}
+
+buffer_upload :: proc(ctx: ^Context, data: []$T, kind: BufferKind) -> GpuBuffer(T) {
 	size := vk.DeviceSize(size_of(T) * len(data))
 
 	staging := buffer_create(T, ctx, len(data), .Staging)
@@ -83,11 +91,10 @@ buffer_upload :: proc(ctx: ^VulkanContext, data: []$T, kind: BufferKind) -> GpuB
 	return dest
 }
 
-buffer_copy :: proc(ctx: ^VulkanContext, src, dst: vk.Buffer, size: vk.DeviceSize) {
+buffer_copy :: proc(ctx: ^Context, src, dst: vk.Buffer, size: vk.DeviceSize) {
 	cmd := immediate_submit(ctx)
 	region := vk.BufferCopy {
 		size = size,
 	}
 	vk.CmdCopyBuffer(vk.CommandBuffer(cmd), src, dst, 1, &region)
 }
-

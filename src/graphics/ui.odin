@@ -10,6 +10,7 @@ UI_Vertex :: struct {
 	position: Vec2,
 	uv:       Vec2,
 	color:    [4]u8,
+	_pad0:    u32,
 }
 
 UI_Batch :: struct {
@@ -54,7 +55,7 @@ ui_renderer_batch_for :: proc(engine: ^Engine, atlas_texture: u32) -> ^UI_Batch 
 	return &ur.batches[atlas_texture]
 }
 
-ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	ur := &engine.ui_renderer
 	pipeline := get_pipeline(&engine.pipeline_registry, .UI)
 	frame_res_index := current_frame_res_index(engine)
@@ -64,15 +65,16 @@ ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		assert(len(batch.vertices) <= MAX_UI_VERTICES)
 
 		buffer := &batch.buffers[frame_res_index]
-		mem.copy(buffer.alloc_info.mapped_data, raw_data(batch.vertices), len(batch.vertices) * size_of(UI_Vertex))
+		mem.copy(backend.buffer_mapped_ptr(buffer^), raw_data(batch.vertices), len(batch.vertices) * size_of(UI_Vertex))
+		backend.cmd_use_buffer(cmd, buffer^)
 
 		pc := UIPushConstants {
 			vertex_buffer = buffer.ptr,
 			screen_size   = {f32(engine.swapchain.extent.width), f32(engine.swapchain.extent.height)},
 			atlas_texture = atlas_texture,
 		}
-		backend.pipeline_bind(cmd, pipeline)
-		backend.pipeline_push(cmd, pipeline, {.VERTEX, .FRAGMENT}, &pc)
+		backend.pipeline_bind(cmd, pipeline, {engine.texture_system.descriptor.sets[frame_res_index]})
+		backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc, index = 1)
 		backend.cmd_draw(cmd, u32(len(batch.vertices)))
 
 		clear(&batch.vertices)

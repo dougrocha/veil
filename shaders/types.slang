@@ -1,107 +1,99 @@
+// Generated from src/graphics/gpu_types.odin. Do not edit.
+
+static const uint MAX_POINT_LIGHTS = 16;
+static const uint MAX_DIRECTIONAL_LIGHTS = 4;
+static const uint MAX_SPOT_LIGHTS = 4;
+static const uint SHADOW_MAP_CASCADE_COUNT = 4;
+static const uint MAX_SHADOW_2D_SLOTS = (((MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT)) + MAX_SPOT_LIGHTS);
+static const uint LIGHT_MASK_POINT = 1;
+static const uint LIGHT_MASK_DIRECTIONAL = 2;
+static const uint LIGHT_MASK_SPOT = 4;
+static const uint LIGHT_MASK_ALL = 7;
+
 struct Vertex {
-    float3 pos;
+    float4 pos;
     float2 uv;
-    float3 normal;
-    float4 tangent; // xyz = tangent direction, w = handedness
+    float2 _pad1;
+    float4 normal;
+    float4 tangent;
 };
 
 struct AmbientLight {
-    float4 color;
-    float brightness;
+    float4 color_brightness;
 };
 
 struct PointLight {
-    float3 pos;
-    float range;
-    float shadow_near;
-    float constant;
-    float3 color;
-    float linear;
-    float quadratic;
-    float diffuse_intensity;
-    float specular_intensity;
+    float4 position_range;
+    float4 color_shadow_near;
+    float4 attenuation_diffuse;
+    float4 specular_reserved;
 };
 
 struct DirectionalLight {
-    float3 direction;
-    float3 color;
-    float diffuse_intensity;
-    float specular_intensity;
+    float4 direction_diffuse;
+    float4 color_specular;
+    float4 shadow_maximum_reserved;
 };
 
 struct SpotLight {
-    float3 pos;
-    float range;
-    float shadow_near;
-    float inner_cutoff;
-    float3 direction;
-    float outer_cutoff;
-    float3 color;
-    float constant;
-    float linear;
-    float quadratic;
-    float diffuse_intensity;
-    float specular_intensity;
+    float4 position_range;
+    float4 direction_inner;
+    float4 color_outer;
+    float4 attenuation;
+    float4 intensity;
 };
 
 struct TimeInfo {
     float time;
     float delta_time;
     uint frame_count;
+    uint _reserved;
 };
-
-static const uint MAX_POINT_LIGHTS = 16;
-static const uint MAX_DIRECTIONAL_LIGHTS = 4;
-static const uint MAX_SPOT_LIGHTS = 4;
-static const uint SHADOW_MAP_CASCADE_COUNT = 4;
-// 2D shadow atlas holds directional lights first (cascaded), then spot lights.
-static const uint MAX_SHADOW_2D_SLOTS = (MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + MAX_SPOT_LIGHTS;
 
 struct DebugSettings {
     uint show_cascades;
-};
-
-struct SceneData {
-    float4x4 view;
-    float4x4 proj;
-    float3 cam_pos;
-    TimeInfo time_info;
-
-    // lights and shadows
-    PointLight point_lights[MAX_POINT_LIGHTS];
-    uint point_light_count;
-    DirectionalLight directional_lights[MAX_DIRECTIONAL_LIGHTS];
-    uint directional_light_count;
-    SpotLight spot_lights[MAX_SPOT_LIGHTS];
-    uint spot_light_count;
-    AmbientLight ambient_light;
-    float shadow_map_size;
-    float4x4 point_light_view_proj[MAX_POINT_LIGHTS][6];
-    float4x4 shadow_2d_view_proj[MAX_SHADOW_2D_SLOTS];
-    ShadowCascadeData shadow_cascade_data[MAX_DIRECTIONAL_LIGHTS];
-
-    // debug
-    DebugSettings debug_settings;
+    uint disable_shadows;
+    uint light_mask;
+    uint _reserved;
 };
 
 struct ShadowCascadeData {
-	float4 split;
-	float4 bias;
-}
-
-struct Material {
-    float4 base_color;
-    float  perceptual_roughness;
-    float  metallic;
-    uint   base_color_texture;
-    uint   metallic_roughness_texture;
-    uint   normal_map_texture;
-    uint   occlusion_texture;
-    uint   alpha_mode;
-    float  alpha_cutoff;
+    float4 split;
+    float4 bias;
 };
 
 struct Transform {
     float4x4 model;
     float4x4 normal_matrix;
+};
+
+struct Material {
+    float4 base_color;
+    float perceptual_roughness;
+    float metallic;
+    uint base_color_texture;
+    uint metallic_roughness_texture;
+    uint normal_map_texture;
+    uint occlusion_texture;
+    uint alpha_mode;
+    float alpha_cutoff;
+};
+
+struct SceneData {
+    float4x4 view;
+    float4x4 proj;
+    float4x4 point_light_view_proj[6][MAX_POINT_LIGHTS];
+    float4x4 shadow_2d_view_proj[MAX_SHADOW_2D_SLOTS];
+    ShadowCascadeData shadow_cascade_data[MAX_DIRECTIONAL_LIGHTS];
+    float4 cam_pos_shadow_map_size;
+    TimeInfo time_info;
+    PointLight point_lights[MAX_POINT_LIGHTS];
+    uint point_light_count;
+    uint directional_light_count;
+    uint spot_light_count;
+    uint _reserved_counts;
+    DirectionalLight directional_lights[MAX_DIRECTIONAL_LIGHTS];
+    SpotLight spot_lights[MAX_SPOT_LIGHTS];
+    AmbientLight ambient_light;
+    DebugSettings debug_settings;
 };

@@ -9,18 +9,6 @@ DEFAULT_MATERIAL_NAME :: "default"
 
 MAX_MATERIALS :: 1024
 
-GpuMaterial :: struct {
-	base_color:                 Vec4,
-	perceptual_roughness:       f32,
-	metallic:                   f32,
-	base_color_texture:         u32,
-	metallic_roughness_texture: u32,
-	normal_map_texture:         u32,
-	occlusion_texture:          u32,
-	alpha_mode:                 u32,
-	alpha_cutoff:               f32,
-}
-
 Material :: struct {
 	name:                       string,
 	base_color:                 Vec4,
@@ -87,16 +75,26 @@ material_create :: proc(
 	}
 
 	log.debugf("Creating material: %s", name)
+	resolve :: proc(h, default: TextureHandle) -> TextureHandle {
+		return h if h != INVALID_TEXTURE else default
+	}
+	resolved_base_color := resolve(base_color_texture, texture_load(engine, DefaultTexture.White))
+	resolved_metallic_roughness := resolve(
+		metallic_roughness_texture,
+		texture_load(engine, DefaultTexture.Metallic_Roughness),
+	)
+	resolved_normal := resolve(normal_map_texture, texture_load(engine, DefaultTexture.Flat_Normal))
+	resolved_occlusion := resolve(occlusion_texture, texture_load(engine, DefaultTexture.Occlusion))
 
 	material := Material {
 		name                       = name,
 		base_color                 = base_color,
 		perceptual_roughness       = perceptual_roughness,
 		metallic                   = metallic,
-		base_color_texture         = base_color_texture,
-		metallic_roughness_texture = metallic_roughness_texture,
-		normal_map_texture         = normal_map_texture,
-		occlusion_texture          = occlusion_texture,
+		base_color_texture         = resolved_base_color,
+		metallic_roughness_texture = resolved_metallic_roughness,
+		normal_map_texture         = resolved_normal,
+		occlusion_texture          = resolved_occlusion,
 		alpha_mode                 = alpha_mode,
 		alpha_cutoff               = alpha_cutoff,
 	}
@@ -104,24 +102,16 @@ material_create :: proc(
 	handle := pool_alloc(&engine.material_system.materials, material)
 	engine.material_system.material_map[name] = handle
 
-	ts := &engine.texture_system
-	resolve :: proc(h, default: TextureHandle) -> u32 {
-		return u32(h.index) if h != INVALID_TEXTURE else u32(default.index)
-	}
-
 	offset := uintptr(handle.index) * size_of(GpuMaterial)
-	dst := uintptr(engine.material_system.buffer.alloc_info.mapped_data) + offset
+	dst := uintptr(backend.buffer_mapped_ptr(engine.material_system.buffer)) + offset
 	gpu_mat := GpuMaterial {
 		base_color                 = base_color,
 		perceptual_roughness       = perceptual_roughness,
 		metallic                   = metallic,
-		base_color_texture         = resolve(base_color_texture, texture_load(engine, DefaultTexture.White)),
-		metallic_roughness_texture = resolve(
-			metallic_roughness_texture,
-			texture_load(engine, DefaultTexture.Metallic_Roughness),
-		),
-		normal_map_texture         = resolve(normal_map_texture, texture_load(engine, DefaultTexture.Flat_Normal)),
-		occlusion_texture          = resolve(occlusion_texture, texture_load(engine, DefaultTexture.Occlusion)),
+		base_color_texture         = u32(resolved_base_color.index),
+		metallic_roughness_texture = u32(resolved_metallic_roughness.index),
+		normal_map_texture         = u32(resolved_normal.index),
+		occlusion_texture          = u32(resolved_occlusion.index),
 		alpha_mode                 = u32(alpha_mode),
 		alpha_cutoff               = alpha_cutoff,
 	}

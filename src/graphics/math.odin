@@ -2,15 +2,37 @@ package graphics
 
 import "core:math"
 
+import "backend"
+
 // core:math/linalg's projection procs (matrix4_perspective_f32, matrix_ortho3d)
 // produce NDC z in [-1, 1] (GL convention). Vulkan's depth range is [0, 1].
 // These are the same constructions with the z-range baked in directly.
+
+// Convert between top-left-origin pixel coordinates and the active backend's
+// NDC convention. Vulkan's projection maps screen-top to -1, while Metal maps
+// it to +1. Keeping that distinction here makes projection and unprojection
+// exact inverses everywhere else.
+screen_to_ndc :: proc "contextless" (screen, viewport: Vec2) -> Vec2 {
+	ndc := screen / viewport * 2 - 1
+	when backend.VEIL_METAL {
+		ndc.y = -ndc.y
+	}
+	return ndc
+}
+
+ndc_to_screen :: proc "contextless" (ndc, viewport: Vec2) -> Vec2 {
+	result := ndc
+	when backend.VEIL_METAL {
+		result.y = -result.y
+	}
+	return (result + 1) * viewport * 0.5
+}
 
 @(require_results)
 matrix4_perspective_z0_f32 :: proc "contextless" (
 	fovy, aspect, near, far: f32,
 	flip_z_axis := true,
-	flip_y_axis := true,
+	flip_y_axis := backend.VEIL_VULKAN,
 ) -> (
 	m: Mat4x4,
 ) #no_bounds_check {
@@ -36,7 +58,7 @@ matrix4_perspective_z0_f32 :: proc "contextless" (
 matrix4_ortho3d_z0_f32 :: proc "contextless" (
 	left, right, bottom, top, near, far: f32,
 	flip_z_axis := true,
-	flip_y_axis := true,
+	flip_y_axis := backend.VEIL_VULKAN,
 ) -> (
 	m: Mat4x4,
 ) #no_bounds_check {

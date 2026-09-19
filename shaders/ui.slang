@@ -1,9 +1,15 @@
-[[vk_binding(0, 0)]] Sampler2D textures[];
+#include "platform.slang"
+struct BindlessTextures {
+    Texture2D<float4> textures[BINDLESS_TEXTURE_COUNT];
+    SamplerState samplers[BINDLESS_TEXTURE_COUNT];
+}
+[[vk_binding(0, 0)]] ParameterBlock<BindlessTextures> bindless;
 
 struct UIVertex {
     float2 position; // screen-space pixels, top-left origin, y-down
     float2 uv;
     uint color; // packed RGBA8, matches Odin's [4]u8 layout
+    uint _pad0;
 };
 
 struct PushConstants {
@@ -32,8 +38,12 @@ float4 unpack_color(uint c) {
 VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     let v = pc.vertex_buffer[vertex_index];
 
-    // Vulkan NDC is already y-down, same as our screen-space convention, so no flip needed.
+    // Screen space here is y-down. Vulkan's NDC matches that directly; Metal's
+    // NDC is y-up, so it needs the flip.
     float2 ndc = (v.position / pc.screen_size) * 2.0 - 1.0;
+#if VEIL_METAL
+    ndc.y = -ndc.y;
+#endif
 
     VSOutput output;
     output.pos = float4(ndc, 0.0, 1.0);
@@ -44,6 +54,6 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragment_main(VSOutput input) : SV_TARGET {
-    float coverage = textures[pc.atlas_texture].Sample(input.uv).r;
+    float coverage = bindless.textures[pc.atlas_texture].Sample(bindless.samplers[pc.atlas_texture], input.uv).r;
     return float4(input.color.rgb, input.color.a * coverage);
 }

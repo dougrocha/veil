@@ -1,3 +1,5 @@
+#+build linux
+
 package backend
 
 import "core:log"
@@ -5,7 +7,19 @@ import "core:log"
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
-ImageAspectFlags :: vk.ImageAspectFlags
+Extent3D :: vk.Extent3D
+
+extent3d :: proc(width, height, depth: u32) -> Extent3D {
+	return {width, height, depth}
+}
+
+image_aspect_to_vk :: proc(flags: ImageAspectFlags) -> vk.ImageAspectFlags {
+	vk_flags: vk.ImageAspectFlags
+	if .Color in flags do vk_flags += {.COLOR}
+	if .Depth in flags do vk_flags += {.DEPTH}
+	if .Stencil in flags do vk_flags += {.STENCIL}
+	return vk_flags
+}
 
 GpuImage :: struct {
 	image:        vk.Image,
@@ -19,7 +33,19 @@ GpuImage :: struct {
 	mip_levels:   u32,
 	array_layers: u32,
 	layout:       []vk.ImageLayout, // one per (mip, layer); index with image_layout_index
-	usage:        vk.ImageUsageFlags,
+	usage:        ImageUsageFlags,
+}
+
+image_usage_to_vk :: proc(usage: ImageUsageFlags) -> vk.ImageUsageFlags {
+	flags: vk.ImageUsageFlags
+	if .TransferSrc in usage do flags += {.TRANSFER_SRC}
+	if .TransferDst in usage do flags += {.TRANSFER_DST}
+	if .Sampled in usage do flags += {.SAMPLED}
+	if .Storage in usage do flags += {.STORAGE}
+	if .ColorAttachment in usage do flags += {.COLOR_ATTACHMENT}
+	if .DepthStencilAttachment in usage do flags += {.DEPTH_STENCIL_ATTACHMENT}
+	if .Transient in usage do flags += {.TRANSIENT_ATTACHMENT}
+	return flags
 }
 
 image_layout_index :: proc(img: ^GpuImage, mip, layer: u32) -> u32 {
@@ -29,7 +55,7 @@ image_layout_index :: proc(img: ^GpuImage, mip, layer: u32) -> u32 {
 ImageDesc :: struct {
 	extent:            vk.Extent3D,
 	format:            vk.Format,
-	image_usage_flags: vk.ImageUsageFlags,
+	image_usage_flags: ImageUsageFlags,
 	mip_levels:        u32,
 	array_layers:      u32,
 	samples:           vk.SampleCountFlags,
@@ -39,11 +65,7 @@ ImageDesc :: struct {
 	alloc_flags:       vma.Allocation_Create_Flags,
 }
 
-image_desc_default :: proc(
-	extent: vk.Extent3D,
-	format: vk.Format,
-	image_usage_flags: vk.ImageUsageFlags,
-) -> ImageDesc {
+image_desc_default :: proc(extent: vk.Extent3D, format: vk.Format, image_usage_flags: ImageUsageFlags) -> ImageDesc {
 	return ImageDesc {
 		extent = extent,
 		format = format,
@@ -58,7 +80,7 @@ image_desc_default :: proc(
 	}
 }
 
-image_create :: proc(ctx: ^VulkanContext, desc: ImageDesc) -> GpuImage {
+image_create :: proc(ctx: ^Context, desc: ImageDesc) -> GpuImage {
 	image_info := vk.ImageCreateInfo {
 		sType         = .IMAGE_CREATE_INFO,
 		imageType     = desc.image_type,
@@ -68,7 +90,7 @@ image_create :: proc(ctx: ^VulkanContext, desc: ImageDesc) -> GpuImage {
 		arrayLayers   = desc.array_layers,
 		samples       = desc.samples,
 		tiling        = desc.tiling,
-		usage         = desc.image_usage_flags,
+		usage         = image_usage_to_vk(desc.image_usage_flags),
 		sharingMode   = .EXCLUSIVE,
 		initialLayout = .UNDEFINED,
 		flags         = desc.image_flags,
@@ -98,7 +120,7 @@ image_create :: proc(ctx: ^VulkanContext, desc: ImageDesc) -> GpuImage {
 		),
 	)
 
-	if desc.array_layers > 1 && desc.image_usage_flags & {.COLOR_ATTACHMENT, .DEPTH_STENCIL_ATTACHMENT} != {} {
+	if desc.array_layers > 1 && desc.image_usage_flags & {.ColorAttachment, .DepthStencilAttachment} != {} {
 		gpu_img.layer_views = make([]vk.ImageView, desc.array_layers)
 		for i in 0 ..< desc.array_layers {
 			view_desc := image_view_desc_default(gpu_img)
@@ -109,7 +131,7 @@ image_create :: proc(ctx: ^VulkanContext, desc: ImageDesc) -> GpuImage {
 		}
 	}
 
-	if desc.mip_levels > 1 && desc.image_usage_flags & {.STORAGE} != {} {
+	if desc.mip_levels > 1 && desc.image_usage_flags & {.Storage} != {} {
 		gpu_img.mip_views = make([]vk.ImageView, desc.mip_levels)
 		for i in 0 ..< desc.mip_levels {
 			view_desc := image_view_desc_default(gpu_img)
@@ -123,7 +145,33 @@ image_create :: proc(ctx: ^VulkanContext, desc: ImageDesc) -> GpuImage {
 	return gpu_img
 }
 
-image_destroy :: proc(ctx: ^VulkanContext, img: GpuImage) {
+image_desc_set_cube_array :: proc(desc: ^ImageDesc) {
+	desc.image_flags = {.CUBE_COMPATIBLE}
+}
+
+image_create_default_view :: proc(ctx: ^Context, img: ^GpuImage, cube: bool, layers: u32) {
+	view_desc := image_view_desc_default(img^)
+	view_desc.view_type = .CUBE_ARRAY if cube else .D2_ARRAY
+	view_desc.array_layers = layers
+	img.image_view = image_view_create(ctx, img^, view_desc)
+}
+
+image_view_create_default :: proc(ctx: ^Context, img: ^GpuImage) {
+	img.image_view = image_view_create(ctx, img^, image_view_desc_default(img^))
+}
+
+image_view_create_cubemap :: proc(ctx: ^Context, img: ^GpuImage) {
+	view_desc := image_view_desc_default(img^)
+	view_desc.view_type = .CUBE
+	view_desc.array_layers = 6
+	img.image_view = image_view_create(ctx, img^, view_desc)
+}
+
+device_max_anisotropy :: proc(ctx: ^Context) -> f32 {
+	return vk_get_physical_device_properties(ctx).limits.maxSamplerAnisotropy
+}
+
+image_destroy :: proc(ctx: ^Context, img: GpuImage) {
 	image_view_destroy(ctx, img.image_view)
 	for view in img.mip_views {
 		image_view_destroy(ctx, view)
@@ -160,7 +208,7 @@ image_view_desc_default :: proc(img: GpuImage) -> ImageViewDesc {
 	return ImageViewDesc{view_type = .D2, mip_levels = img.mip_levels, array_layers = img.array_layers}
 }
 
-image_view_create :: proc(ctx: ^VulkanContext, img: GpuImage, desc: ImageViewDesc) -> vk.ImageView {
+image_view_create :: proc(ctx: ^Context, img: GpuImage, desc: ImageViewDesc) -> vk.ImageView {
 	info := vk.ImageViewCreateInfo {
 		sType = .IMAGE_VIEW_CREATE_INFO,
 		image = img.image,
@@ -179,7 +227,7 @@ image_view_create :: proc(ctx: ^VulkanContext, img: GpuImage, desc: ImageViewDes
 	return view
 }
 
-image_view_destroy :: proc(ctx: ^VulkanContext, view: vk.ImageView) {
+image_view_destroy :: proc(ctx: ^Context, view: vk.ImageView) {
 	vk.DestroyImageView(ctx.device, view, nil)
 }
 
@@ -204,18 +252,6 @@ IMAGE_STATES := [ImageStateKind]ImageState {
 	.Shader_Read  = {.SHADER_READ_ONLY_OPTIMAL, {.SHADER_READ}, {.FRAGMENT_SHADER}},
 }
 
-// all cases we have for transitioning image state
-ImageStateKind :: enum {
-	Undefined,
-	Depth_Write,
-	Depth_Read,
-	Color_Write,
-	Transfer_Src,
-	Transfer_Dst,
-	Present,
-	Shader_Read,
-}
-
 layout_to_state_kind :: proc(layout: vk.ImageLayout) -> ImageState {
 	for state in IMAGE_STATES {
 		if state.layout == layout {
@@ -234,7 +270,7 @@ image_barrier_gpu :: proc(
 	cmd: CommandBuffer,
 	img: ^GpuImage,
 	dst: ImageStateKind,
-	aspect_mask: vk.ImageAspectFlags,
+	aspect_mask: ImageAspectFlags,
 	base_mip_level: u32 = 0,
 	level_count: u32 = 1,
 	base_array_layer: u32 = 0,
@@ -254,7 +290,13 @@ image_barrier_gpu :: proc(
 		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		image               = img.image,
-		subresourceRange    = {aspect_mask, base_mip_level, level_count, base_array_layer, layer_count},
+		subresourceRange    = {
+			image_aspect_to_vk(aspect_mask),
+			base_mip_level,
+			level_count,
+			base_array_layer,
+			layer_count,
+		},
 	}
 	dep_info := vk.DependencyInfo {
 		sType                   = .DEPENDENCY_INFO,
@@ -308,26 +350,21 @@ image_barrier_raw :: proc(
 
 // image helpers
 
-generate_mipmaps :: proc(ctx: ^VulkanContext, img: ^GpuImage, format: vk.Format, width, height, mip_levels: u32) {
-	format_props := vk_get_physical_device_format_properties(ctx, format)
+generate_mipmaps :: proc(ctx: ^Context, img: ^GpuImage) {
+	format_props := vk_get_physical_device_format_properties(ctx, img.format)
 
 	if .SAMPLED_IMAGE_FILTER_LINEAR not_in format_props.optimalTilingFeatures {
 		log.panicf("Texture image format does not support linear blitting")
 	}
 
+	mip_levels := img.mip_levels
+
 	{
 		cmd := immediate_submit(ctx)
 
-		mip_width, mip_height := width, height
+		mip_width, mip_height := img.extent.width, img.extent.height
 		for i in 1 ..< mip_levels {
-			image_barrier(
-				cmd,
-				img,
-				.Transfer_Src,
-				vk.ImageAspectFlags{.COLOR},
-				level_count = 1,
-				base_mip_level = i - 1,
-			)
+			image_barrier(cmd, img, .Transfer_Src, ImageAspectFlags{.Color}, level_count = 1, base_mip_level = i - 1)
 
 			blit := vk.ImageBlit2 {
 				sType = .IMAGE_BLIT_2,
@@ -348,7 +385,7 @@ generate_mipmaps :: proc(ctx: ^VulkanContext, img: ^GpuImage, format: vk.Format,
 			}
 			vk.CmdBlitImage2(vk.CommandBuffer(cmd), &blit_info)
 
-			image_barrier(cmd, img, .Shader_Read, vk.ImageAspectFlags{.COLOR}, level_count = 1, base_mip_level = i - 1)
+			image_barrier(cmd, img, .Shader_Read, ImageAspectFlags{.Color}, level_count = 1, base_mip_level = i - 1)
 
 			if mip_width > 1 do mip_width /= 2
 			if mip_height > 1 do mip_height /= 2
@@ -358,7 +395,7 @@ generate_mipmaps :: proc(ctx: ^VulkanContext, img: ^GpuImage, format: vk.Format,
 			cmd,
 			img,
 			.Shader_Read,
-			vk.ImageAspectFlags{.COLOR},
+			ImageAspectFlags{.Color},
 			level_count = 1,
 			base_mip_level = mip_levels - 1,
 		)
@@ -389,7 +426,7 @@ copy_image_to_image :: proc(cmd: CommandBuffer, src, dst: vk.Image, src_extent, 
 	)
 }
 
-copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: vk.Image, width, height: u32) {
+copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: ^GpuImage, width, height: u32) {
 	region := vk.BufferImageCopy2 {
 		sType = .BUFFER_IMAGE_COPY_2,
 		bufferOffset = 0,
@@ -405,8 +442,32 @@ copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: vk.Imag
 		&vk.CopyBufferToImageInfo2 {
 			sType = .COPY_BUFFER_TO_IMAGE_INFO_2,
 			srcBuffer = buffer,
-			dstImage = img,
+			dstImage = img.image,
 			dstImageLayout = .TRANSFER_DST_OPTIMAL,
+			regionCount = 1,
+			pRegions = &region,
+		},
+	)
+}
+
+copy_image_to_buffer :: proc(cmd: CommandBuffer, img: ^GpuImage, buffer: vk.Buffer, width, height: u32) {
+	region := vk.BufferImageCopy2 {
+		sType = .BUFFER_IMAGE_COPY_2,
+		bufferOffset = 0,
+		bufferRowLength = 0,
+		bufferImageHeight = 0,
+		imageSubresource = {aspectMask = {.COLOR}, mipLevel = 0, baseArrayLayer = 0, layerCount = 1},
+		imageOffset = {0, 0, 0},
+		imageExtent = {width, height, 1},
+	}
+
+	vk.CmdCopyImageToBuffer2(
+		vk.CommandBuffer(cmd),
+		&vk.CopyImageToBufferInfo2 {
+			sType = .COPY_IMAGE_TO_BUFFER_INFO_2,
+			srcImage = img.image,
+			srcImageLayout = .TRANSFER_SRC_OPTIMAL,
+			dstBuffer = buffer,
 			regionCount = 1,
 			pRegions = &region,
 		},
@@ -416,7 +477,7 @@ copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: vk.Imag
 copy_buffer_to_cubemap :: proc(
 	cmd: CommandBuffer,
 	buffer: vk.Buffer,
-	img: vk.Image,
+	img: ^GpuImage,
 	face_w, face_h: u32,
 	face_size: u32,
 ) {
@@ -435,7 +496,7 @@ copy_buffer_to_cubemap :: proc(
 		&vk.CopyBufferToImageInfo2 {
 			sType = .COPY_BUFFER_TO_IMAGE_INFO_2,
 			srcBuffer = buffer,
-			dstImage = img,
+			dstImage = img.image,
 			dstImageLayout = .TRANSFER_DST_OPTIMAL,
 			regionCount = 6,
 			pRegions = &regions[0],
@@ -455,10 +516,22 @@ SamplerDesc :: struct {
 	anisotropy_enable:        bool,
 	max_anisotropy:           f32,
 	compare_enable:           bool,
-	compare_op:               vk.CompareOp,
+	compare_op:               CompareOp,
 	min_lod, max_lod:         f32,
-	border_color:             vk.BorderColor,
+	border_color:             BorderColor,
 	unnormalized_coordinates: bool,
+}
+
+border_color_to_vk :: proc(color: BorderColor) -> vk.BorderColor {
+	switch color {
+	case .TransparentBlack:
+		return .FLOAT_TRANSPARENT_BLACK
+	case .OpaqueBlack:
+		return .FLOAT_OPAQUE_BLACK
+	case .OpaqueWhite:
+		return .FLOAT_OPAQUE_WHITE
+	}
+	return .FLOAT_OPAQUE_WHITE
 }
 
 sampler_desc_default :: proc() -> SamplerDesc {
@@ -470,29 +543,29 @@ sampler_desc_default :: proc() -> SamplerDesc {
 		address_mode_v = .Clamp_To_Edge,
 		address_mode_w = .Clamp_To_Edge,
 		max_anisotropy = 1.0,
-		compare_op = .ALWAYS,
+		compare_op = .Always,
 		max_lod = 1.0,
-		border_color = .FLOAT_OPAQUE_WHITE,
+		border_color = .OpaqueWhite,
 	}
 }
 
-sampler_create :: proc(ctx: ^VulkanContext, desc: SamplerDesc) -> Sampler {
+sampler_create :: proc(ctx: ^Context, desc: SamplerDesc) -> Sampler {
 	info := vk.SamplerCreateInfo {
 		sType                   = .SAMPLER_CREATE_INFO,
-		minFilter               = texture_filter_to_vk(desc.min_filter),
-		magFilter               = texture_filter_to_vk(desc.mag_filter),
+		minFilter               = texture_filter_to_backend(desc.min_filter),
+		magFilter               = texture_filter_to_backend(desc.mag_filter),
 		mipmapMode              = desc.mipmap_mode,
-		addressModeU            = texture_repeat_to_vk(desc.address_mode_u),
-		addressModeV            = texture_repeat_to_vk(desc.address_mode_v),
-		addressModeW            = texture_repeat_to_vk(desc.address_mode_w),
+		addressModeU            = texture_repeat_to_backend(desc.address_mode_u),
+		addressModeV            = texture_repeat_to_backend(desc.address_mode_v),
+		addressModeW            = texture_repeat_to_backend(desc.address_mode_w),
 		mipLodBias              = desc.mip_lod_bias,
 		anisotropyEnable        = b32(desc.anisotropy_enable),
 		maxAnisotropy           = desc.max_anisotropy,
 		compareEnable           = b32(desc.compare_enable),
-		compareOp               = desc.compare_op,
+		compareOp               = compare_op_to_vk(desc.compare_op),
 		minLod                  = desc.min_lod,
 		maxLod                  = desc.max_lod,
-		borderColor             = desc.border_color,
+		borderColor             = border_color_to_vk(desc.border_color),
 		unnormalizedCoordinates = b32(desc.unnormalized_coordinates),
 	}
 	sampler: vk.Sampler
@@ -500,6 +573,6 @@ sampler_create :: proc(ctx: ^VulkanContext, desc: SamplerDesc) -> Sampler {
 	return Sampler(sampler)
 }
 
-sampler_destroy :: proc(ctx: ^VulkanContext, sampler: Sampler) {
+sampler_destroy :: proc(ctx: ^Context, sampler: Sampler) {
 	vk.DestroySampler(ctx.device, vk.Sampler(sampler), nil)
 }

@@ -21,7 +21,7 @@ frame_data_create :: proc(engine: ^Engine) {
 		)
 		engine.frame_data[i].particle_buffer = create_particle_buffer(
 			&engine.vk_ctx,
-			Rect2D{extent = {engine.swapchain.extent.width, engine.swapchain.extent.height}},
+			Rect2D{extent = {u32(engine.swapchain.extent.width), u32(engine.swapchain.extent.height)}},
 		)
 	}
 }
@@ -34,7 +34,7 @@ frame_data_destroy :: proc(engine: ^Engine) {
 	}
 }
 
-create_particle_buffer :: proc(ctx: ^backend.VulkanContext, extent: Rect2D) -> backend.GpuBuffer(Particle) {
+create_particle_buffer :: proc(ctx: ^backend.Context, extent: Rect2D) -> backend.GpuBuffer(Particle) {
 	particles := make([]Particle, PARTICLE_COUNT, context.temp_allocator)
 
 	for &p in particles {

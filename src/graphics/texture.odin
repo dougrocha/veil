@@ -69,26 +69,12 @@ texture_system_create :: proc(engine: ^Engine, config: TextureSystemConfig) {
 	ts.linear_texture_map = make(map[string]TextureHandle)
 	ts.cubemap_map = make(map[string]TextureHandle)
 
-	ts.descriptor = backend.descriptor_set_create(
-		&engine.vk_ctx,
-		{
-			{
-				binding = 0,
-				descriptorType = .COMBINED_IMAGE_SAMPLER,
-				descriptorCount = config.max_textures_count,
-				stageFlags = {.FRAGMENT},
-			},
-		},
-		count = backend.MAX_FRAMES_IN_FLIGHT,
-		binding_flags = {backend.DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND}},
-		layout_flags = {.UPDATE_AFTER_BIND_POOL},
-		pool_flags = {.UPDATE_AFTER_BIND},
-	)
+	ts.descriptor = backend.descriptor_set_create_bindless_array(&engine.vk_ctx, config.max_textures_count)
 
 	texture_create_builtin(engine)
 }
 
-texture_destroy :: proc(ctx: ^backend.VulkanContext, t: Texture) {
+texture_destroy :: proc(ctx: ^backend.Context, t: Texture) {
 	backend.sampler_destroy(ctx, t.sampler)
 	backend.image_destroy(ctx, t.gpu)
 }
@@ -129,7 +115,7 @@ texture_register :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key:
 	ts := &engine.texture_system
 	handle := pool_alloc(&ts.textures, t)
 	cache^[key] = handle
-	write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, u32(handle.index))
+	write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
 	return handle
 }
 
@@ -148,23 +134,23 @@ texture_create_builtin :: proc(engine: ^Engine) {
 		t := t
 		texture_upload(&engine.vk_ctx, pixels, &t, format)
 		handle := pool_alloc(&ts.textures, t)
-		write_descriptor_texture(&engine.vk_ctx, ts, 0, handle, u32(handle.index))
+		write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
 		return handle
 	}
 
-	ts.defaults[.White] = upload_builtin(engine, Texture{gpu = {extent = {1, 1, 1}}, channel_count = 4}, &white)
+	ts.defaults[.White] = upload_builtin(engine, Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4}, &white)
 	ts.defaults[.Metallic_Roughness] = upload_builtin(
 		engine,
-		Texture{gpu = {extent = {1, 1, 1}}, channel_count = 4},
+		Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4},
 		&white,
 	)
 	ts.defaults[.Flat_Normal] = upload_builtin(
 		engine,
-		Texture{gpu = {extent = {1, 1, 1}}, channel_count = 4},
+		Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4},
 		&flat_normal,
 		.Rgba8_Unorm,
 	)
-	ts.defaults[.Occlusion] = upload_builtin(engine, Texture{gpu = {extent = {1, 1, 1}}, channel_count = 4}, &white)
+	ts.defaults[.Occlusion] = upload_builtin(engine, Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4}, &white)
 }
 
 texture_load :: proc {
@@ -251,7 +237,7 @@ texture_load_from_pixels :: proc(
 	}
 
 	texture := Texture {
-		gpu = {extent = {u32(width), u32(height), 1}},
+		gpu = {extent = backend.extent3d(u32(width), u32(height), 1)},
 		channel_count = 4,
 		flags = flags,
 	}
@@ -264,37 +250,37 @@ texture_load_from_pixels :: proc(
 
 // Uploads a texture to the GPU buffer
 texture_upload :: proc(
-	ctx: ^backend.VulkanContext,
+	ctx: ^backend.Context,
 	pixels: rawptr,
 	texture: ^Texture,
 	format: TextureFormat = .Rgba8_Unorm_Srgb,
 ) {
-	w := texture.extent.width
-	h := texture.extent.height
+	w := u32(texture.extent.width)
+	h := u32(texture.extent.height)
 	image_size := w * h * u32(texture.channel_count)
 
 	staging := backend.buffer_create(u8, ctx, int(image_size), .Staging)
 	defer backend.buffer_destroy(ctx, staging)
-	mem.copy(staging.alloc_info.mapped_data, pixels, int(image_size))
+	mem.copy(backend.buffer_mapped_ptr(staging), pixels, int(image_size))
 
-	img_format := backend.texture_format_to_vk(format)
+	img_format := backend.texture_format_to_backend(format)
 	mip_levels := u32(math.floor(math.log2(f32(max(w, h)))) + 1)
 
 	desc := backend.image_desc_default(
-		{w, h, 1},
+		backend.extent3d(w, h, 1),
 		img_format,
-		{.TRANSFER_SRC, .TRANSFER_DST, .SAMPLED, .COLOR_ATTACHMENT},
+		{.TransferSrc, .TransferDst, .Sampled, .ColorAttachment},
 	)
 	desc.mip_levels = mip_levels
 	gpu_img := backend.image_create(ctx, desc)
 
 	{
 		cmd := backend.immediate_submit(ctx)
-		backend.image_barrier(cmd, &gpu_img, .Transfer_Dst, backend.ImageAspectFlags{.COLOR}, level_count = mip_levels)
-		backend.copy_buffer_to_image(cmd, staging.buffer, gpu_img.image, w, h)
+		backend.image_barrier(cmd, &gpu_img, .Transfer_Dst, backend.ImageAspectFlags{.Color}, level_count = mip_levels)
+		backend.copy_buffer_to_image(cmd, staging.buffer, &gpu_img, w, h)
 	}
 
-	backend.generate_mipmaps(ctx, &gpu_img, img_format, w, h, mip_levels)
+	backend.generate_mipmaps(ctx, &gpu_img)
 
 	texture.gpu = gpu_img
 	texture_image_view_create(ctx, texture)
@@ -345,7 +331,7 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	defer backend.buffer_destroy(&engine.vk_ctx, staging)
 
 	src := ([^]u8)(pixels)
-	dst := ([^]u8)(staging.alloc_info.mapped_data)
+	dst := ([^]u8)(backend.buffer_mapped_ptr(staging))
 
 	for face, i in face_positions {
 		col := face[0]
@@ -358,43 +344,37 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	}
 
 	desc := backend.image_desc_default(
-		{face_w, face_h, 1},
-		backend.texture_format_to_vk(.Rgba8_Unorm_Srgb),
-		{.TRANSFER_DST, .SAMPLED},
+		backend.extent3d(face_w, face_h, 1),
+		backend.texture_format_to_backend(.Rgba8_Unorm_Srgb),
+		{.TransferDst, .Sampled},
 	)
 	desc.array_layers = 6
-	desc.image_flags = {.CUBE_COMPATIBLE}
+	backend.image_desc_set_cube_array(&desc)
 	gpu_img := backend.image_create(&engine.vk_ctx, desc)
 
 	{
 		cmd := backend.immediate_submit(&engine.vk_ctx)
 
-		backend.image_barrier(cmd, &gpu_img, .Transfer_Dst, backend.ImageAspectFlags{.COLOR}, layer_count = 6)
-		backend.copy_buffer_to_cubemap(cmd, staging.buffer, gpu_img.image, face_w, face_h, face_size)
-		backend.image_barrier(cmd, &gpu_img, .Shader_Read, backend.ImageAspectFlags{.COLOR}, layer_count = 6)
+		backend.image_barrier(cmd, &gpu_img, .Transfer_Dst, backend.ImageAspectFlags{.Color}, layer_count = 6)
+		backend.copy_buffer_to_cubemap(cmd, staging.buffer, &gpu_img, face_w, face_h, face_size)
+		backend.image_barrier(cmd, &gpu_img, .Shader_Read, backend.ImageAspectFlags{.Color}, layer_count = 6)
 	}
 
 	t := Texture {
 		gpu           = gpu_img,
 		channel_count = 4,
 	}
-	view_desc := backend.image_view_desc_default(t.gpu)
-	view_desc.view_type = .CUBE
-	view_desc.array_layers = 6
-	t.image_view = backend.image_view_create(&engine.vk_ctx, t.gpu, view_desc)
+	backend.image_view_create_cubemap(&engine.vk_ctx, &t.gpu)
 	texture_sampler_create(&engine.vk_ctx, &t)
 
 	return texture_register(engine, &ts.cubemap_map, path, t)
 }
 
-texture_image_view_create :: proc(ctx: ^backend.VulkanContext, t: ^Texture) {
-	view_desc := backend.image_view_desc_default(t.gpu)
-	view_desc.mip_levels = t.mip_levels
-	t.image_view = backend.image_view_create(ctx, t.gpu, view_desc)
+texture_image_view_create :: proc(ctx: ^backend.Context, t: ^Texture) {
+	backend.image_view_create_default(ctx, &t.gpu)
 }
 
-texture_sampler_create :: proc(ctx: ^backend.VulkanContext, t: ^Texture) {
-	properties := backend.vk_get_physical_device_properties(ctx)
+texture_sampler_create :: proc(ctx: ^backend.Context, t: ^Texture) {
 	desc := backend.sampler_desc_default()
 	desc.min_filter = t.filter_min
 	desc.mag_filter = t.filter_mag
@@ -402,9 +382,9 @@ texture_sampler_create :: proc(ctx: ^backend.VulkanContext, t: ^Texture) {
 	desc.address_mode_v = t.repeat_v
 	desc.address_mode_w = t.repeat_w
 	desc.anisotropy_enable = true
-	desc.max_anisotropy = properties.limits.maxSamplerAnisotropy
+	desc.max_anisotropy = backend.device_max_anisotropy(ctx)
 	desc.max_lod = backend.LOD_CLAMP_NONE
-	desc.border_color = .INT_OPAQUE_BLACK
+	desc.border_color = .OpaqueBlack
 	t.sampler = backend.sampler_create(ctx, desc)
 }
 
@@ -412,19 +392,11 @@ texture_sampler_create :: proc(ctx: ^backend.VulkanContext, t: ^Texture) {
 // Writes a texture from the texture system into the descriptor set at the given binding.
 // Writes to all sets in the descriptor (all frames).
 write_descriptor_texture :: proc(
-	ctx: ^backend.VulkanContext,
+	ctx: ^backend.Context,
 	ts: ^TextureSystem,
-	binding: u32,
 	handle: TextureHandle,
 	array_element: u32 = 0,
 ) {
 	t := pool_get(&ts.textures, handle)
-	backend.descriptor_write_image_view(
-		ctx,
-		&ts.descriptor,
-		binding,
-		t.image_view,
-		t.sampler,
-		array_element = array_element,
-	)
+	backend.descriptor_write_bindless_texture(ctx, &ts.descriptor, array_element, &t.gpu, t.sampler)
 }

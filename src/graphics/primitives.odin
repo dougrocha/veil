@@ -1,6 +1,7 @@
 package graphics
 
 import "core:math"
+import "core:math/linalg"
 
 primitive_plane :: proc(
 	engine: ^Engine,
@@ -8,6 +9,7 @@ primitive_plane :: proc(
 	material: MaterialHandle = INVALID_MATERIAL,
 	half_size: Vec2 = {0.5, 0.5},
 	subdivisions: u32 = 0,
+	with_tangents := false,
 ) -> ModelHandle {
 	if handle, ok := engine.model_system.model_map[name]; ok {
 		return handle
@@ -49,6 +51,8 @@ primitive_plane :: proc(
 		}
 	}
 
+	if with_tangents do compute_tangents(vertices[:], indices[:])
+
 	return model_register(engine, name, vertices, indices, material)
 }
 
@@ -57,6 +61,7 @@ primitive_cube :: proc(
 	name: string,
 	material: MaterialHandle = INVALID_MATERIAL,
 	half_size: Vec3 = {0.5, 0.5, 0.5},
+	with_tangents := false,
 ) -> ModelHandle {
 	if handle, ok := engine.model_system.model_map[name]; ok {
 		return handle
@@ -136,6 +141,8 @@ primitive_cube :: proc(
 		20, // bottom
 	}
 
+	if with_tangents do compute_tangents(vertices[:], indices[:])
+
 	return model_register(engine, name, vertices, indices, material)
 }
 
@@ -146,6 +153,7 @@ primitive_sphere :: proc(
 	radius: f32 = 0.5,
 	sectors: u32 = 32, // number of longitudinal sectors, horizontal resolution
 	stacks: u32 = 18, // number of latitudinal stacks, vertical resolution
+	with_tangents := false,
 ) -> ModelHandle {
 	// from bevy: https://www.songho.ca/opengl/gl_sphere.html#sphere
 	if handle, ok := engine.model_system.model_map[name]; ok {
@@ -211,5 +219,59 @@ primitive_sphere :: proc(
 		}
 	}
 
+	if with_tangents do compute_tangents(vertices[:], indices[:])
+
 	return model_register(engine, name, vertices[:], indices[:], material)
+}
+
+// Computes per-vertex tangents from positions, UVs and normals, matching the
+// convention mesh.slang expects: xyz is the tangent direction, w is the
+// bitangent handedness. Primitives ship without tangents (a zero tangent makes
+// the shader fall back to the geometric normal), so this is opt-in per mesh,
+// the same way Bevy's with_computed_tangents works.
+//
+// Degenerate UVs (a zero-area triangle in UV space, or a seam) contribute
+// nothing rather than a NaN, and any vertex left without a usable tangent keeps
+// its zero so the fallback still applies.
+compute_tangents :: proc(vertices: []Vertex, indices: []u32) {
+	tangents := make([]Vec3, len(vertices), context.temp_allocator)
+	bitangents := make([]Vec3, len(vertices), context.temp_allocator)
+
+	for tri := 0; tri + 2 < len(indices); tri += 3 {
+		i0, i1, i2 := indices[tri], indices[tri + 1], indices[tri + 2]
+		v0, v1, v2 := vertices[i0], vertices[i1], vertices[i2]
+
+		edge1 := v1.pos - v0.pos
+		edge2 := v2.pos - v0.pos
+		duv1 := v1.uv - v0.uv
+		duv2 := v2.uv - v0.uv
+
+		det := duv1.x * duv2.y - duv2.x * duv1.y
+		if abs(det) < 1e-12 do continue // degenerate in UV space
+		inv_det := 1 / det
+
+		tangent := (edge1 * duv2.y - edge2 * duv1.y) * inv_det
+		bitangent := (edge2 * duv1.x - edge1 * duv2.x) * inv_det
+
+		for index in ([3]u32{i0, i1, i2}) {
+			tangents[index] += tangent
+			bitangents[index] += bitangent
+		}
+	}
+
+	for &vertex, i in vertices {
+		n := vertex.normal
+		t := tangents[i]
+
+		// Gram-Schmidt against the normal, then reject anything that collapsed.
+		t -= n * linalg.dot(n, t)
+		if linalg.dot(t, t) < 1e-12 {
+			vertex.tangent = {}
+			continue
+		}
+		t = linalg.normalize(t)
+
+		handedness: f32 = linalg.dot(linalg.cross(n, t), bitangents[i]) < 0 ? -1 : 1
+		vertex.tangent = {t.x, t.y, t.z, handedness}
+	}
 }

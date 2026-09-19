@@ -43,7 +43,7 @@ App :: struct {
 }
 
 Engine :: struct {
-	vk_ctx:               backend.VulkanContext,
+	vk_ctx:               backend.Context,
 
 	// swapchain
 	swapchain:            backend.Swapchain,
@@ -81,14 +81,28 @@ Engine :: struct {
 	// stats
 	drawn_instance_count: u32,
 
+	// debug capture
+	frame_dump:           FrameDump,
+
 	// other stuff
 	line_renderer:        LineRenderer,
 	ui_renderer:          UIRenderer,
 	debug_settings:       DebugSettings,
 }
 
+LightMask :: enum u32 {
+	Point       = 1,
+	Directional = 2,
+	Spot        = 4,
+}
+
 DebugSettings :: struct {
-	show_cascades: u32,
+	show_cascades, disable_shadows, light_mask: u32
+}
+
+TimeInfo :: struct {
+	time, delta_time: f32,
+	frame_count: u32,
 }
 
 Scene :: struct {
@@ -108,42 +122,6 @@ AlphaMode :: enum {
 	Opaque,
 	Mask,
 	Blend,
-}
-
-TimeInfo :: struct {
-	time:        f32,
-	delta_time:  f32,
-	frame_count: u32,
-}
-
-SceneData :: struct #packed {
-	view:                    Mat4x4,
-	proj:                    Mat4x4,
-	cam_pos:                 Vec3,
-	time_info:               TimeInfo,
-
-	// lights and shadows
-	point_lights:            [MAX_POINT_LIGHTS]PointLight,
-	point_light_count:       u32,
-	directional_lights:      [MAX_DIRECTIONAL_LIGHTS]DirectionalLight,
-	directional_light_count: u32,
-	spot_lights:             [MAX_SPOT_LIGHTS]SpotLight,
-	spot_light_count:        u32,
-	ambient_light:           AmbientLight,
-	shadow_map_size:         f32,
-	point_light_view_proj:   [MAX_POINT_LIGHTS][6]Mat4x4,
-	shadow_2d_view_proj:     [MAX_SHADOW_2D_SLOTS]Mat4x4,
-	shadow_cascade_data:     [MAX_DIRECTIONAL_LIGHTS]ShadowCascadeData,
-
-	// debug
-	debug_settings:          DebugSettings,
-}
-
-Vertex :: struct {
-	pos:     Vec3,
-	uv:      Vec2,
-	normal:  Vec3,
-	tangent: Vec4, // xyz = tangent direction, w = handedness
 }
 
 ShadowLightType :: enum u32 {
@@ -208,11 +186,6 @@ Transform :: struct {
 	scale:       Vec3,
 }
 
-GpuTransform :: struct {
-	model:         Mat4x4,
-	normal_matrix: Mat4x4,
-}
-
 transform_create :: proc(
 	translation: Vec3 = {0.0, 0.0, 0.0},
 	rotation: Quat = linalg.QUATERNIONF32_IDENTITY,
@@ -252,3 +225,7 @@ Particle :: struct {
 	velocity: Vec4,
 	color:    Vec4,
 }
+
+#assert(size_of(LineVertex) == 32)
+#assert(size_of(UI_Vertex) == 24)
+#assert(size_of(Particle) == 48)

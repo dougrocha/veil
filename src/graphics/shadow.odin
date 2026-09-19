@@ -3,6 +3,8 @@ package graphics
 import "core:math"
 import "core:math/linalg"
 
+import "backend"
+
 ShadowParams :: struct {
 	aspect: f32,
 }
@@ -15,17 +17,16 @@ DirectionalShadowData :: struct {
 
 ShadowCascadeData :: struct {
 	split: Vec4,
-	bias:  Vec4,
+	bias: Vec4,
 }
 
-// cube face orientation follows the cube-map sampling convention (CUBE_FACE_DIRS), not screen y
 compute_point_light_view_proj :: proc(light: PointLight) -> [6]Mat4x4 {
 	light_proj := matrix4_perspective_z0_f32(
 		linalg.to_radians(f32(90.0)),
 		1.0,
 		light.shadow_near,
 		light.range,
-		flip_y_axis = false,
+		flip_y_axis = backend.VEIL_METAL,
 	)
 
 	view_proj: [6]Mat4x4
@@ -46,8 +47,15 @@ compute_directional_shadow_data :: proc(
 
 	cascade_lambda: f32 = 0.5
 
+	// Cascades are distributed over the shadow range, not the whole view range:
+	// a far plane much larger than the scene would otherwise spend most of the
+	// cascade budget on depth that holds no geometry.
 	near := camera.near
 	far := camera.far
+	if light.shadow_maximum_distance > 0 {
+		far = min(light.shadow_maximum_distance, camera.far)
+	}
+	far = max(far, near + 1e-4)
 	range := far - near
 	ratio := far / near
 

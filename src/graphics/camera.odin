@@ -242,10 +242,8 @@ camera_get_projection_matrix :: proc(c: Camera, aspect: f32) -> Mat4x4 {
 // Unprojects a screen-space mouse position into a world-space ray.
 // mouse_pos and viewport_size are both in pixels (mouse_pos: top-left origin).
 screen_to_world_ray :: proc(camera: Camera, mouse_pos: Vec2, viewport_size: Vec2) -> (origin: Vec3, dir: Vec3) {
-	ndc := Vec3{mouse_pos.x / viewport_size.x, mouse_pos.y / viewport_size.y, 1}
-	ndc *= 2
-	ndc -= 1
-	ndc.z = 1 // far plane, in Vulkan's [0,1] depth range
+	ndc_xy := screen_to_ndc(mouse_pos, viewport_size)
+	ndc := Vec3{ndc_xy.x, ndc_xy.y, 1} // far plane; both backends use a [0,1] depth range
 
 	aspect := viewport_size.x / viewport_size.y
 	inverse_proj := linalg.inverse(camera_get_projection_matrix(camera, aspect))
@@ -364,4 +362,3 @@ camera_process_mouse_scroll :: proc(c: ^Camera, y_offset: f32) {
 		p.fov_y = clamp(p.fov_y - linalg.to_radians(y_offset), linalg.to_radians(f32(1)), linalg.to_radians(f32(90)))
 	}
 }
-

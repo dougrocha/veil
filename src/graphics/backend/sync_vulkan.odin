@@ -1,3 +1,5 @@
+#+build linux
+
 package backend
 
 import vk "vendor:vulkan"
@@ -6,6 +8,9 @@ AcquireImageResult :: enum {
 	Success,
 	OutOfDate,
 	Suboptimal,
+	// No image this frame, but nothing is stale: skip the frame and try again.
+	// Not a reason to rebuild anything.
+	NotReady,
 }
 
 PresentFrameResult :: enum {
@@ -22,7 +27,7 @@ FrameSync :: struct {
 	render_complete_semaphore: vk.Semaphore,
 }
 
-frame_sync_create :: proc(ctx: ^VulkanContext) {
+frame_sync_create :: proc(ctx: ^Context) {
 	ctx.timeline_semaphore = timeline_semaphore_create(ctx)
 
 	for &sync in ctx.frame_sync {
@@ -33,7 +38,7 @@ frame_sync_create :: proc(ctx: ^VulkanContext) {
 	}
 }
 
-frame_sync_destroy :: proc(ctx: ^VulkanContext) {
+frame_sync_destroy :: proc(ctx: ^Context) {
 	for &sync in ctx.frame_sync {
 		vk.DestroySemaphore(ctx.device, sync.image_acquired_semaphore, nil)
 		vk.DestroySemaphore(ctx.device, sync.render_complete_semaphore, nil)
@@ -43,11 +48,15 @@ frame_sync_destroy :: proc(ctx: ^VulkanContext) {
 	vk.DestroySemaphore(ctx.device, ctx.timeline_semaphore, nil)
 }
 
-current_frame_sync :: proc(ctx: ^VulkanContext, frame_index: u64) -> ^FrameSync {
+current_frame_sync :: proc(ctx: ^Context, frame_index: u64) -> ^FrameSync {
 	return &ctx.frame_sync[frame_index % MAX_FRAMES_IN_FLIGHT]
 }
 
-upload_pool_create :: proc(ctx: ^VulkanContext) {
+frame_command_buffer_begin :: proc(ctx: ^Context, frame_sync: ^FrameSync) -> CommandBuffer {
+	return frame_sync.command_buffer
+}
+
+upload_pool_create :: proc(ctx: ^Context) {
 	pool_info := vk.CommandPoolCreateInfo {
 		sType            = .COMMAND_POOL_CREATE_INFO,
 		flags            = {.RESET_COMMAND_BUFFER},
@@ -56,7 +65,7 @@ upload_pool_create :: proc(ctx: ^VulkanContext) {
 	vk_check(vk.CreateCommandPool(ctx.device, &pool_info, nil, &ctx.upload_pool))
 }
 
-command_pool_create :: proc(ctx: ^VulkanContext, flags: vk.CommandPoolCreateFlags = {}) -> vk.CommandPool {
+command_pool_create :: proc(ctx: ^Context, flags: vk.CommandPoolCreateFlags = {}) -> vk.CommandPool {
 	pool_info := vk.CommandPoolCreateInfo {
 		sType            = .COMMAND_POOL_CREATE_INFO,
 		queueFamilyIndex = ctx.gfx_queue_fam_idx,
@@ -68,7 +77,7 @@ command_pool_create :: proc(ctx: ^VulkanContext, flags: vk.CommandPoolCreateFlag
 	return command_pool
 }
 
-command_buffer_allocate :: proc(ctx: ^VulkanContext, pool: vk.CommandPool) -> CommandBuffer {
+command_buffer_allocate :: proc(ctx: ^Context, pool: vk.CommandPool) -> CommandBuffer {
 	cmd_alloc_info := vk.CommandBufferAllocateInfo {
 		sType              = .COMMAND_BUFFER_ALLOCATE_INFO,
 		commandPool        = pool,
@@ -81,7 +90,7 @@ command_buffer_allocate :: proc(ctx: ^VulkanContext, pool: vk.CommandPool) -> Co
 	return CommandBuffer(command_buffer)
 }
 
-timeline_semaphore_create :: proc(ctx: ^VulkanContext, initial_value: u64 = 0) -> vk.Semaphore {
+timeline_semaphore_create :: proc(ctx: ^Context, initial_value: u64 = 0) -> vk.Semaphore {
 	type_info := vk.SemaphoreTypeCreateInfo {
 		sType         = .SEMAPHORE_TYPE_CREATE_INFO,
 		semaphoreType = .TIMELINE,
@@ -96,7 +105,7 @@ timeline_semaphore_create :: proc(ctx: ^VulkanContext, initial_value: u64 = 0) -
 	return sem
 }
 
-binary_semaphore_create :: proc(ctx: ^VulkanContext) -> vk.Semaphore {
+binary_semaphore_create :: proc(ctx: ^Context) -> vk.Semaphore {
 	info := vk.SemaphoreCreateInfo {
 		sType = .SEMAPHORE_CREATE_INFO,
 	}
@@ -105,7 +114,7 @@ binary_semaphore_create :: proc(ctx: ^VulkanContext) -> vk.Semaphore {
 	return sem
 }
 
-frame_wait_before_render :: proc(ctx: ^VulkanContext, next_signal_value: u64) {
+frame_wait_before_render :: proc(ctx: ^Context, next_signal_value: u64) {
 	if next_signal_value >= MAX_FRAMES_IN_FLIGHT {
 		wait_value := next_signal_value - MAX_FRAMES_IN_FLIGHT + 1
 		wait_info := vk.SemaphoreWaitInfo {
@@ -118,7 +127,7 @@ frame_wait_before_render :: proc(ctx: ^VulkanContext, next_signal_value: u64) {
 	}
 }
 
-queue_submit_frame :: proc(ctx: ^VulkanContext, cmd: CommandBuffer, frame_sync: ^FrameSync, signal_value: u64) {
+queue_submit_frame :: proc(ctx: ^Context, cmd: CommandBuffer, frame_sync: ^FrameSync, signal_value: u64) {
 	image_acquired_wait_info := vk.SemaphoreSubmitInfo {
 		sType     = .SEMAPHORE_SUBMIT_INFO,
 		semaphore = frame_sync.image_acquired_semaphore,

@@ -27,7 +27,9 @@ main :: proc() {
 		height = 720,
 	}
 
-	app.window = sdl.CreateWindow("odin-vulkan", i32(app.width), i32(app.height), {.RESIZABLE, .VULKAN})
+	window_flags := gfx.window_backend_flags()
+	window_flags += {.RESIZABLE}
+	app.window = sdl.CreateWindow("veil", i32(app.width), i32(app.height), window_flags)
 	if app.window == nil {
 		log.errorf("Failed to create window: %s", sdl.GetError())
 		return
@@ -190,6 +192,8 @@ main :: proc() {
 			color = {1.0, 0.9, 0.8},
 			diffuse_intensity = 0.3,
 			specular_intensity = 0.2,
+			// scene is ~15 units deep; keeps all four cascades over real geometry
+			shadow_maximum_distance = 25.0,
 		},
 	)
 
@@ -255,6 +259,18 @@ main :: proc() {
 					active_cam.far = 5000.0
 				case .C:
 					app.engine.debug_settings.show_cascades = 1 - app.engine.debug_settings.show_cascades
+				case .V:
+					app.engine.debug_settings.disable_shadows = 1 - app.engine.debug_settings.disable_shadows
+					log.infof("shadows disabled: %v", app.engine.debug_settings.disable_shadows != 0)
+				case .P:
+					app.engine.debug_settings.light_mask ~= u32(gfx.LightMask.Point)
+					log.infof("light mask: 0b%b", app.engine.debug_settings.light_mask)
+				case .K:
+					app.engine.debug_settings.light_mask ~= u32(gfx.LightMask.Spot)
+					log.infof("light mask: 0b%b", app.engine.debug_settings.light_mask)
+				case .J:
+					app.engine.debug_settings.light_mask ~= u32(gfx.LightMask.Directional)
+					log.infof("light mask: 0b%b", app.engine.debug_settings.light_mask)
 				case .O:
 					switch _ in active_cam.projection {
 					case gfx.Perspective_Projection:

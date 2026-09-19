@@ -1,3 +1,5 @@
+#+build linux
+
 package backend
 
 import "base:runtime"
@@ -10,7 +12,7 @@ import vk "vendor:vulkan"
 
 VALIDATION_LAYER_NAME :: "VK_LAYER_KHRONOS_validation"
 
-context_init :: proc(ctx: ^VulkanContext, window: ^sdl.Window) -> bool {
+context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 	ctx.logger = context.logger
 
 	instance_create(ctx)
@@ -36,19 +38,18 @@ context_init :: proc(ctx: ^VulkanContext, window: ^sdl.Window) -> bool {
 	vma_init(ctx)
 
 	ctx.msaa_samples = vk_get_max_usable_sample_count(ctx)
-	// MoltenVK on macos supports way less than a normal desktop (discrete) gpu.
-	// so bindless array sizes must be clamped to what the device
-	// actually supports instead of a single hardcoded constant.
+	// bindless array sizes must be clamped to what the device actually
+	// supports instead of a single hardcoded constant.
 	ctx.max_bindless_samplers_per_stage = vk_get_max_bindless_samplers_per_stage(ctx)
 
 	return true
 }
 
-device_wait_idle :: proc(ctx: ^VulkanContext) {
+device_wait_idle :: proc(ctx: ^Context) {
 	vk.DeviceWaitIdle(ctx.device)
 }
 
-context_destroy :: proc(ctx: ^VulkanContext) {
+context_destroy :: proc(ctx: ^Context) {
 	vk.DestroyCommandPool(ctx.device, ctx.upload_pool, nil)
 	vma.destroy_allocator(ctx.vma_allocator)
 	vk.DestroyDevice(ctx.device, nil)
@@ -76,7 +77,7 @@ validation_layer_available :: proc() -> bool {
 	return false
 }
 
-instance_create :: proc(ctx: ^VulkanContext) {
+instance_create :: proc(ctx: ^Context) {
 	vk.load_proc_addresses_global(rawptr(sdl.Vulkan_GetVkGetInstanceProcAddr()))
 	assert(vk.CreateInstance != nil, "vulkan function pointers not loaded")
 
@@ -96,11 +97,6 @@ instance_create :: proc(ctx: ^VulkanContext) {
 	}
 
 	instance_flags: vk.InstanceCreateFlags
-	when ODIN_OS == .Darwin {
-		// MoltenVK is a portability driver, the loader hides it unless we opt in
-		append(&extensions, vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)
-		instance_flags += {.ENUMERATE_PORTABILITY_KHR}
-	}
 
 	has_validation_layer := validation_layer_available()
 	requested_layers := make([dynamic]cstring, context.temp_allocator)
@@ -108,7 +104,7 @@ instance_create :: proc(ctx: ^VulkanContext) {
 		append(&requested_layers, VALIDATION_LAYER_NAME)
 	} else {
 		log.warnf(
-			"%s not found (SDL may be loading MoltenVK directly, bypassing the Vulkan Loader's layer enumeration); running without validation",
+			"%s not found; install the Vulkan SDK or your distro's validation layer package to run with validation",
 			VALIDATION_LAYER_NAME,
 		)
 	}
@@ -150,7 +146,7 @@ surface_create :: proc(instance: vk.Instance, window: ^sdl.Window) -> (vk.Surfac
 
 }
 
-physical_device_find :: proc(ctx: ^VulkanContext) -> (vk.PhysicalDevice, bool) {
+physical_device_find :: proc(ctx: ^Context) -> (vk.PhysicalDevice, bool) {
 	device_count: u32 = 0
 	vk.EnumeratePhysicalDevices(ctx.instance, &device_count, nil)
 	if device_count == 0 {
@@ -193,7 +189,7 @@ physical_device_find :: proc(ctx: ^VulkanContext) -> (vk.PhysicalDevice, bool) {
 }
 
 
-graphics_queue_find :: proc(ctx: ^VulkanContext) -> bool {
+graphics_queue_find :: proc(ctx: ^Context) -> bool {
 	queue_fam_count: u32 = 0
 	vk.GetPhysicalDeviceQueueFamilyProperties2(ctx.physical_device, &queue_fam_count, nil)
 	queue_fam_props := make([]vk.QueueFamilyProperties2, queue_fam_count, context.temp_allocator)
@@ -217,7 +213,7 @@ graphics_queue_find :: proc(ctx: ^VulkanContext) -> bool {
 	return false
 }
 
-logical_device_create :: proc(ctx: ^VulkanContext) -> bool {
+logical_device_create :: proc(ctx: ^Context) -> bool {
 	features_14 := vk.PhysicalDeviceVulkan14Features {
 		sType = .PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
 	}
@@ -305,10 +301,6 @@ logical_device_create :: proc(ctx: ^VulkanContext) -> bool {
 	device_extensions := make([dynamic]cstring, context.temp_allocator)
 	append(&device_extensions, vk.KHR_SWAPCHAIN_EXTENSION_NAME)
 	append(&device_extensions, vk.EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME)
-	when ODIN_OS == .Darwin {
-		// Required by the spec whenever the device advertises it, which MoltenVK does.
-		append(&device_extensions, vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME)
-	}
 
 	dev_create_info := vk.DeviceCreateInfo {
 		sType                   = .DEVICE_CREATE_INFO,
@@ -332,7 +324,7 @@ logical_device_create :: proc(ctx: ^VulkanContext) -> bool {
 	return true
 }
 
-vma_init :: proc(ctx: ^VulkanContext) {
+vma_init :: proc(ctx: ^Context) {
 	vulkan_functions := vma.create_vulkan_functions()
 
 	create_info := vma.Allocator_Create_Info {
@@ -353,7 +345,7 @@ vk_messenger_callback :: proc "system" (
 	pCallbackData: ^vk.DebugUtilsMessengerCallbackDataEXT,
 	pUserData: rawptr,
 ) -> b32 {
-	ctx := cast(^VulkanContext)pUserData
+	ctx := cast(^Context)pUserData
 	context = runtime.default_context()
 	context.logger = ctx.logger
 
@@ -377,4 +369,11 @@ vk_messenger_callback :: proc "system" (
 	}
 
 	return false
+}
+
+autorelease_pool_begin :: proc() -> rawptr {
+	return nil
+}
+
+autorelease_pool_end :: proc(pool: rawptr) {
 }
