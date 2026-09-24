@@ -11,6 +11,7 @@ Pipeline :: struct {
 	depth_stencil_write: ^MTL.DepthStencilState,
 	depth_stencil_read:  ^MTL.DepthStencilState,
 	depth_write_default: bool,
+	depth_clamp:         bool,
 	primitive_type:      MTL.PrimitiveType,
 }
 
@@ -20,6 +21,8 @@ pipeline_bind :: proc(cmd: RenderEncoder, pipeline: Pipeline, desc_sets: []Descr
 	encoder->setDepthStencilState(
 		pipeline.depth_stencil_write if pipeline.depth_write_default else pipeline.depth_stencil_read,
 	)
+	// Encoder state, not pipeline state: set it on every bind so it can't leak between pipelines.
+	encoder->setDepthClipMode(.Clamp if pipeline.depth_clamp else .Clip)
 	for set, i in desc_sets {
 		if set.bindless {
 			encoder->setVertexBuffer(set.buffer, 0, 0)
@@ -94,6 +97,7 @@ GraphicsPipelineConfig :: struct {
 	depth_test_enabled:   bool,
 	depth_write_default:  bool,
 	depth_bias_enabled:   bool,
+	depth_clamp:          bool,
 	has_color_attachment: bool,
 	has_depth_attachment: bool,
 	primitive_type:       MTL.PrimitiveType,
@@ -131,6 +135,12 @@ pipeline_config_set_no_cull :: proc(config: ^GraphicsPipelineConfig) {
 
 pipeline_config_enable_depth_bias :: proc(config: ^GraphicsPipelineConfig) {
 	config.depth_bias_enabled = true
+}
+
+// Rasterizes geometry beyond the near/far planes with its depth clamped to the depth range
+// instead of clipping it (used to "pancake" directional shadow casters onto the near plane).
+pipeline_config_enable_depth_clamp :: proc(config: ^GraphicsPipelineConfig) {
+	config.depth_clamp = true
 }
 
 pipeline_config_set_depth_compare :: proc(config: ^GraphicsPipelineConfig, op: CompareOp) {
@@ -270,6 +280,7 @@ pipeline_create :: proc(ctx: ^Context, config: ^GraphicsPipelineConfig, stages: 
 		depth_stencil_write = depth_stencil_write,
 		depth_stencil_read = depth_stencil_read,
 		depth_write_default = config.depth_write_default,
+		depth_clamp = config.depth_clamp,
 		primitive_type = config.primitive_type,
 	}
 }

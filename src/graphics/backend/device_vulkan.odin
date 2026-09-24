@@ -251,7 +251,8 @@ logical_device_create :: proc(ctx: ^Context) -> bool {
 	   !features_11.shaderDrawParameters ||
 	   !extended_dynamic_state_features.extendedDynamicState ||
 	   !supported_features.features.samplerAnisotropy ||
-	   !supported_features.features.sampleRateShading {
+	   !supported_features.features.sampleRateShading ||
+	   !supported_features.features.depthClamp {
 		log.errorf("Physical Device does not meet feature requirement")
 		return false
 	}
@@ -289,7 +290,7 @@ logical_device_create :: proc(ctx: ^Context) -> bool {
 	enabled_features := vk.PhysicalDeviceFeatures2 {
 		sType = .PHYSICAL_DEVICE_FEATURES_2,
 		pNext = &enabled_extended_dynamic_state_features,
-		features = {samplerAnisotropy = true, sampleRateShading = true, imageCubeArray = true},
+		features = {samplerAnisotropy = true, sampleRateShading = true, imageCubeArray = true, depthClamp = true},
 	}
 
 	queue_priorities := []f32{1.0}

@@ -51,7 +51,9 @@ PSOutput fragment_main(VSOutput input) {
     }
 
     if (pc.light_type == 0) { // directional
-        return PSOutput(input.pos.z);
+        // Depth-clamped (pancaked) casters in front of the near plane arrive with pos.z < 0.
+        // Vulkan clamps shader-written depth too; saturate so Metal doesn't depend on it.
+        return PSOutput(saturate(input.pos.z));
     }
 
     float3 light_pos = pc.light_type == 1 ? pc.scene_data.spot_lights[pc.light_index].position_range.xyz : pc.scene_data.point_lights[pc.light_index].position_range.xyz;

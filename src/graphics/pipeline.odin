@@ -5,7 +5,8 @@ import "core:log"
 import "backend"
 
 PipelineKind :: enum u8 {
-	Shadow,
+	Shadow, // spot + point lights
+	Shadow_Directional, // directional cascades, depth-clamped
 	Mesh,
 	Skybox,
 	UI,
@@ -115,6 +116,12 @@ make_shadow_config :: proc(engine: ^Engine) -> backend.GraphicsPipelineConfig {
 
 register_shadow_pipelines :: proc(engine: ^Engine, shadow_handle: ShaderHandle) {
 	pipeline_register(engine, .Shadow, shadow_handle, make_shadow_config(engine))
+
+	// Cascades only cover a slice of the scene along the light direction, so casters between the
+	// light and a cascade's near plane would be clipped; depth clamp flattens them onto it instead.
+	directional_config := make_shadow_config(engine)
+	backend.pipeline_config_enable_depth_clamp(&directional_config)
+	pipeline_register(engine, .Shadow_Directional, shadow_handle, directional_config)
 }
 
 register_ui_pipeline :: proc(engine: ^Engine, ui_handle: ShaderHandle) {

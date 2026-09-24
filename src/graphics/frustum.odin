@@ -169,18 +169,28 @@ plane_is_on_or_forward :: proc(global_plane: AABB, plane: Plane) -> bool {
 	return -r <= plane_get_signed_distance_to_plane(plane, global_plane.center)
 }
 
-volume_is_on_frustum :: proc(frustum: Frustum, volume: Volume, transform: Transform) -> bool {
+// planes[0] is the near plane for both frustum_from_view_proj and frustum_create_from_camera.
+FRUSTUM_NEAR_PLANE :: 0
+
+// skip_near ignores the near plane, for passes that clamp depth instead of clipping at it
+// (directional shadow cascades), where volumes in front of the near plane still contribute.
+volume_is_on_frustum :: proc(frustum: Frustum, volume: Volume, transform: Transform, skip_near := false) -> bool {
 	switch v in volume {
 	case BoundingSphere:
-		return sphere_is_on_frustum(frustum, v, transform)
+		return sphere_is_on_frustum(frustum, v, transform, skip_near)
 	case AABB:
-		return aabb_is_on_frustum(frustum, v, transform)
+		return aabb_is_on_frustum(frustum, v, transform, skip_near)
 	case:
 		return false
 	}
 }
 
-sphere_is_on_frustum :: proc(frustum: Frustum, volume: BoundingSphere, transform: Transform) -> bool {
+sphere_is_on_frustum :: proc(
+	frustum: Frustum,
+	volume: BoundingSphere,
+	transform: Transform,
+	skip_near := false,
+) -> bool {
 	global_scale := transform_global_scale(transform)
 
 	global_center := transform_to_matrix(transform) * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
@@ -189,7 +199,8 @@ sphere_is_on_frustum :: proc(frustum: Frustum, volume: BoundingSphere, transform
 
 	global_sphere := BoundingSphere{global_center.xyz, volume.radius * max_scale}
 
-	for plane in frustum.planes {
+	for plane, i in frustum.planes {
+		if skip_near && i == FRUSTUM_NEAR_PLANE do continue
 		if !sphere_is_on_or_forward(global_sphere, plane) {
 			return false
 		}
@@ -198,7 +209,7 @@ sphere_is_on_frustum :: proc(frustum: Frustum, volume: BoundingSphere, transform
 	return true
 }
 
-aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, transform: Transform) -> bool {
+aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, transform: Transform, skip_near := false) -> bool {
 	global_center := transform_to_matrix(transform) * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
 
 	right := transform_right(transform) * volume.extents.x
@@ -223,7 +234,8 @@ aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, transform: Transform)
 	// No need to divide by scale — this is already based on the AABB's half-extents.
 	global_aabb := AABB{global_center.xyz, {new_ii, new_ij, new_ik}}
 
-	for plane in frustum.planes {
+	for plane, i in frustum.planes {
+		if skip_near && i == FRUSTUM_NEAR_PLANE do continue
 		if !plane_is_on_or_forward(global_aabb, plane) {
 			return false
 		}

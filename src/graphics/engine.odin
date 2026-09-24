@@ -273,7 +273,8 @@ draw_shadow :: proc(
 	light_i: u32,
 	view_proj: Mat4x4,
 ) {
-	shadow_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow)
+	directional := light_type == .Directional
+	shadow_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow_Directional if directional else .Shadow)
 
 	frame_idx := current_frame_res_index(engine)
 	backend.pipeline_bind(cmd, shadow_pipeline, {engine.texture_system.descriptor.sets[frame_idx]})
@@ -292,7 +293,8 @@ draw_shadow :: proc(
 
 		model := &pool_get(&engine.model_system.models, instance.model)^
 
-		if !volume_is_on_frustum(frustum, model.bounds, instance.transform) {
+		// Directional casters in front of the cascade's near plane are depth-clamped, not clipped.
+		if !volume_is_on_frustum(frustum, model.bounds, instance.transform, skip_near = directional) {
 			continue
 		}
 

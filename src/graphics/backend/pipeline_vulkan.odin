@@ -126,6 +126,12 @@ compare_op_to_vk :: proc(op: CompareOp) -> vk.CompareOp {
 	return .LESS
 }
 
+// Rasterizes geometry beyond the near/far planes with its depth clamped to the depth range
+// instead of clipping it (used to "pancake" directional shadow casters onto the near plane).
+pipeline_config_enable_depth_clamp :: proc(config: ^GraphicsPipelineConfig) {
+	config.rasterization.depthClampEnable = true
+}
+
 pipeline_config_set_depth_compare :: proc(config: ^GraphicsPipelineConfig, op: CompareOp) {
 	config.depth_stencil.depthCompareOp = compare_op_to_vk(op)
 }
