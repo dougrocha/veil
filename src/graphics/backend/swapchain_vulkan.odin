@@ -25,7 +25,21 @@ Swapchain :: struct {
 	current_image_index: u32,
 }
 
+// Creates the swapchain and the render targets sized to it; swapchain_destroy frees both.
 swapchain_create :: proc(ctx: ^Context, width, height: u32) -> Swapchain {
+	return swapchain_build(ctx, width, height, 0)
+}
+
+// Replaces the swapchain, handing the old one to the driver as oldSwapchain so it can reuse
+// resources. The caller must ensure no frame is still using the old swapchain or its targets.
+swapchain_recreate :: proc(ctx: ^Context, swapchain: ^Swapchain, width, height: u32) {
+	new_swapchain := swapchain_build(ctx, width, height, swapchain.handle)
+	swapchain_destroy(ctx, swapchain)
+	swapchain^ = new_swapchain
+}
+
+@(private = "file")
+swapchain_build :: proc(ctx: ^Context, width, height: u32, old_handle: vk.SwapchainKHR) -> Swapchain {
 	swapchain: Swapchain
 
 	surface_caps: vk.SurfaceCapabilitiesKHR
@@ -60,6 +74,7 @@ swapchain_create :: proc(ctx: ^Context, width, height: u32) -> Swapchain {
 		compositeAlpha   = {.OPAQUE},
 		presentMode      = .FIFO,
 		clipped          = true,
+		oldSwapchain     = old_handle,
 	}
 	vk_check(vk.CreateSwapchainKHR(ctx.device, &create_info, nil, &swapchain.handle))
 
@@ -73,6 +88,7 @@ swapchain_create :: proc(ctx: ^Context, width, height: u32) -> Swapchain {
 		sem = binary_semaphore_create(ctx)
 	}
 
+	swapchain.render_targets = render_targets_create(ctx, swapchain.extent, ctx.msaa_samples)
 	return swapchain
 }
 

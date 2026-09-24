@@ -20,11 +20,19 @@ Swapchain :: struct {
 	current_drawable: ^CA.MetalDrawable,
 }
 
+// Creates the swapchain and the render targets sized to it; swapchain_destroy frees both.
 swapchain_create :: proc(ctx: ^Context, width, height: u32) -> Swapchain {
 	swapchain: Swapchain
 	swapchain.extent = {NS.Integer(width), NS.Integer(height), 1}
 	ctx.layer->setDrawableSize(NS.Size{NS.Float(width), NS.Float(height)})
+	swapchain.render_targets = render_targets_create(ctx, swapchain.extent, ctx.msaa_samples)
 	return swapchain
+}
+
+// The caller must ensure no frame is still using the old render targets.
+swapchain_recreate :: proc(ctx: ^Context, swapchain: ^Swapchain, width, height: u32) {
+	swapchain_destroy(ctx, swapchain)
+	swapchain^ = swapchain_create(ctx, width, height)
 }
 
 swapchain_destroy :: proc(ctx: ^Context, swapchain: ^Swapchain) {

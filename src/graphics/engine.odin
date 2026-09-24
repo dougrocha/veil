@@ -29,11 +29,6 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	backend.upload_pool_create(vk_ctx)
 
 	engine.swapchain = backend.swapchain_create(vk_ctx, width, height)
-	engine.swapchain.render_targets = backend.render_targets_create(
-		vk_ctx,
-		engine.swapchain.extent,
-		engine.vk_ctx.msaa_samples,
-	)
 
 	// The 3 global combined image samplers (shadow atlases, skybox) count against the same per-stage limit.
 	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_textures_per_stage - 3)
@@ -128,88 +123,64 @@ engine_destroy :: proc(self: ^Engine) {
 }
 
 engine_render :: proc(app: ^App, delta_time: f32) {
-	// A minimized window has no drawable pixels; keep the old swapchain until it returns.
-	// Still drain per-frame debug batches so producers that keep running (e.g. gizmo
-	// drawing) don't overflow them while no frame is being rendered.
-	if app.width == 0 || app.height == 0 {
-		line_renderer_clear(&app.engine)
-		ui_renderer_clear(&app.engine)
-		return
+	engine := &app.engine
+	// Batches are filled every tick; drain them even when this frame isn't drawn, or they overflow.
+	defer {
+		line_renderer_clear(engine)
+		ui_renderer_clear(engine)
 	}
+
+	engine.time_info.delta_time = delta_time
+	engine.time_info.time += delta_time
+
+	// A minimized window has no drawable pixels; keep the old swapchain until it returns.
+	if app.width == 0 || app.height == 0 do return
 
 	pool := backend.autorelease_pool_begin()
 	defer backend.autorelease_pool_end(pool)
 
-	app.engine.time_info.delta_time = delta_time
-	app.engine.time_info.time += delta_time
-	app.engine.time_info.frame_count += 1
-
-	// recreate swapchain
-	if app.engine.swapchain.require_recreate {
-		backend.device_wait_idle(&app.engine.vk_ctx)
-		backend.swapchain_destroy(&app.engine.vk_ctx, &app.engine.swapchain)
-		app.engine.swapchain = backend.swapchain_create(&app.engine.vk_ctx, app.width, app.height)
-		app.engine.swapchain.render_targets = backend.render_targets_create(
-			&app.engine.vk_ctx,
-			app.engine.swapchain.extent,
-			app.engine.vk_ctx.msaa_samples,
-		)
-		app.engine.swapchain.require_recreate = false
+	if engine.swapchain.require_recreate {
+		backend.device_wait_idle(&engine.vk_ctx)
+		backend.swapchain_recreate(&engine.vk_ctx, &engine.swapchain, app.width, app.height)
 	}
 
-	backend.frame_wait_before_render(&app.engine.vk_ctx, app.engine.frame_index)
+	backend.frame_wait_before_render(&engine.vk_ctx, engine.frame_index)
+	frame_sync := backend.current_frame_sync(&engine.vk_ctx, engine.frame_index)
 
-	current_frame_sync := backend.current_frame_sync(&app.engine.vk_ctx, app.engine.frame_index)
-	current_frame_data := current_frame_data(&app.engine)
-
-	// NOTE: purely chance, but your frame resources and swapchain count can be different
-	// in our case, it was chance they are both two.
-	acquire_result := backend.swapchain_acquire_next_image(
-		&app.engine.vk_ctx,
-		&app.engine.swapchain,
-		current_frame_sync,
-	)
-
-	if acquire_result == .NotReady {
-		// Nothing to draw into yet. Drain the debug batches like the minimized path does,
-		// otherwise producers keep appending while we skip frames.
-		line_renderer_clear(&app.engine)
-		ui_renderer_clear(&app.engine)
+	switch backend.swapchain_acquire_next_image(&engine.vk_ctx, &engine.swapchain, frame_sync) {
+	case .Success:
+	case .Suboptimal:
+		engine.swapchain.require_recreate = true
+	case .OutOfDate:
+		engine.swapchain.require_recreate = true
+		return
+	case .NotReady:
 		return
 	}
 
-	if acquire_result == .OutOfDate {
-		app.engine.swapchain.require_recreate = true
-		line_renderer_clear(&app.engine)
-		ui_renderer_clear(&app.engine)
-		return
-	} else if acquire_result == .Suboptimal {
-		app.engine.swapchain.require_recreate = true
-	}
+	engine.time_info.frame_count += 1
 
-	scene_data_buffer_update(&app.engine)
-	update_transforms_buffer(&app.engine)
-	shader_poll_hotreload(&app.engine)
+	scene_data_buffer_update(engine)
+	update_transforms_buffer(engine)
+	shader_poll_hotreload(engine)
 
-	cmd := record_command_buffer(&app.engine)
+	cmd := record_command_buffer(engine)
 
-	signal_value := app.engine.frame_index + 1
-	backend.queue_submit_frame(&app.engine.vk_ctx, cmd, &app.engine.swapchain, current_frame_sync, signal_value)
+	signal_value := engine.frame_index + 1
+	backend.queue_submit_frame(&engine.vk_ctx, cmd, &engine.swapchain, frame_sync, signal_value)
 
-	present_result := backend.queue_present_frame(&app.engine.vk_ctx, cmd, &app.engine.swapchain, current_frame_sync)
-
-	if present_result == .OutOfDate {
-		app.engine.swapchain.require_recreate = true
-	} else if present_result == .Suboptimal {
-		app.engine.swapchain.require_recreate = true
-	} else if present_result == .Error {
+	switch backend.queue_present_frame(&engine.vk_ctx, cmd, &engine.swapchain, frame_sync) {
+	case .Success:
+	case .OutOfDate, .Suboptimal:
+		engine.swapchain.require_recreate = true
+	case .Error:
 		log.errorf("queue_present_frame failed")
 	}
 
-	if app.engine.frame_dump.enabled {
-		backend.device_wait_idle(&app.engine.vk_ctx)
-		pick_test_run(&app.engine)
-		if frame_dump_capture(&app.engine) {
+	if engine.frame_dump.enabled {
+		backend.device_wait_idle(&engine.vk_ctx)
+		pick_test_run(engine)
+		if frame_dump_capture(engine) {
 			quit := sdl.Event {
 				type = .QUIT,
 			}
@@ -217,7 +188,7 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 		}
 	}
 
-	app.engine.frame_index += 1
+	engine.frame_index += 1
 }
 
 current_frame_res_index :: proc(engine: ^Engine) -> u64 {
