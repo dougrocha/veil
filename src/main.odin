@@ -48,6 +48,8 @@ main :: proc() {
 
 	ui_font, font_ok := gfx.font_load_default_system(&app.engine, 32)
 	assert(font_ok, "no default system font found")
+	// Declared after engine_destroy's defer, so it runs first.
+	defer gfx.font_destroy(&app.engine, &ui_font)
 
 	app.last_frame_time = time.now()
 

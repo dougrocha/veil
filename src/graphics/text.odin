@@ -43,6 +43,8 @@ Baked_Font :: struct {
 
 font_destroy :: proc(engine: ^Engine, font: ^Baked_Font) {
 	texture_unload(engine, &engine.texture_system.linear_texture_map, font.path)
+	delete(font.path)
+	font.path = ""
 }
 
 // Loads the first available well-known system sans-serif font — for UI text
@@ -100,6 +102,7 @@ font_load_from_file :: proc(engine: ^Engine, path: string, pixel_height: f32) ->
 	)
 	if result <= 0 {
 		log.errorf("Failed to bake font atlas for '%s' (fit: %d of %d chars)", path, -result, font.num_chars)
+		delete(font.path)
 		return {}, false
 	}
 

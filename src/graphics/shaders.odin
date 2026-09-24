@@ -182,9 +182,11 @@ shader_load :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	}
 
 	linked: ^sp.IComponentType = nil
+	// Diagnostics blobs can come back on success too (warnings); log_slang_diagnostics releases them.
 	diag: ^sp.IBlob = nil
-	if res := session->createCompositeComponentType(&components[0], len(components), &linked, &diag); sp.FAILED(res) {
-		log_slang_diagnostics(diag, true)
+	link_res := session->createCompositeComponentType(&components[0], len(components), &linked, &diag)
+	log_slang_diagnostics(diag, sp.FAILED(link_res))
+	if sp.FAILED(link_res) {
 		log.errorf("Could not link Slang module: %s", module_name)
 		return INVALID_SHADER_HANDLE, false
 	}
@@ -192,8 +194,9 @@ shader_load :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 
 	target_code: ^sp.IBlob = nil
 	diag2: ^sp.IBlob = nil
-	if res := linked->getTargetCode(0, &target_code, &diag2); sp.FAILED(res) {
-		log_slang_diagnostics(diag2, true)
+	code_res := linked->getTargetCode(0, &target_code, &diag2)
+	log_slang_diagnostics(diag2, sp.FAILED(code_res))
+	if sp.FAILED(code_res) {
 		log.errorf("Could not get SPIR-V from Slang module: %s", module_name)
 		return INVALID_SHADER_HANDLE, false
 	}
