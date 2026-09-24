@@ -137,16 +137,7 @@ main :: proc() {
 	app.engine.scene.point_lights[point_light_index].pos = light_pos
 	gfx.instance_get(&app.engine, light_sphere).transform.translation = light_pos
 
-	active_gizmo_axis: gfx.GizmoAxis = .None
-	gizmo_mode: gfx.GizmoMode = .Translate
-	translation_space: gfx.GizmoSpace = .World
-	gizmo_dragging := false
-	drag_origin: gfx.Vec3
-	drag_direction: gfx.Vec3
-	drag_start_parameter: f32
-	drag_start_radial: gfx.Vec3
-	drag_previous_radial: gfx.Vec3
-	drag_sweep_angle: f32
+	gizmo: gfx.GizmoController
 	main_loop: for {
 		// Game-side temp allocations live for one loop iteration; the engine resets its own
 		// frame arena inside engine_render.
@@ -162,23 +153,15 @@ main :: proc() {
 			case .KEY_DOWN:
 				#partial switch ev.key.scancode {
 				case .ESCAPE:
-					gizmo_dragging = false
+					gfx.gizmo_cancel(&gizmo)
 					mouse_captured = !mouse_captured
 					_ = sdl.SetWindowRelativeMouseMode(app.window, mouse_captured)
 				case .G:
-					gizmo_dragging = false
-					active_gizmo_axis = .None
-					gizmo_mode = .Translate
+					gfx.gizmo_set_mode(&gizmo, .Translate)
 				case .R:
-					gizmo_dragging = false
-					active_gizmo_axis = .None
-					gizmo_mode = .Rotate
+					gfx.gizmo_set_mode(&gizmo, .Rotate)
 				case .L:
-					if gizmo_mode == .Translate {
-						gizmo_dragging = false
-						active_gizmo_axis = .None
-						translation_space = .Local if translation_space == .World else .World
-					}
+					gfx.gizmo_toggle_space(&gizmo)
 				case ._1:
 					active_cam.near = 0.1
 					active_cam.far = 100.0
@@ -234,99 +217,15 @@ main :: proc() {
 			case .MOUSE_MOTION:
 				if mouse_captured {
 					gfx.camera_process_mouse_movement(active_cam, ev.motion.xrel, -ev.motion.yrel)
-				} else if gizmo_dragging {
+				} else if gizmo.dragging {
 					mouse_pos, viewport_size := mouse_to_pixels(app.window, ev.motion.x, ev.motion.y)
-					selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
-					if gizmo_mode == .Translate {
-						parameter, ok := gfx.gizmo_drag_parameter(
-							active_cam^,
-							drag_origin,
-							drag_direction,
-							mouse_pos,
-							viewport_size,
-						)
-						if ok do selected.transform.translation = drag_origin + drag_direction * (parameter - drag_start_parameter)
-					} else {
-						radial, ok := gfx.gizmo_rotation_radial(
-							active_cam^,
-							drag_origin,
-							drag_direction,
-							mouse_pos,
-							viewport_size,
-						)
-						if ok {
-							angle := math.atan2(
-								linalg.dot(drag_direction, linalg.cross(drag_previous_radial, radial)),
-								linalg.dot(drag_previous_radial, radial),
-							)
-							step := linalg.quaternion_angle_axis_f32(angle, drag_direction)
-							selected.transform.rotation = linalg.normalize(step * selected.transform.rotation)
-							drag_sweep_angle += angle
-							if drag_sweep_angle >= 2 * math.PI do drag_sweep_angle -= 2 * math.PI
-							if drag_sweep_angle <= -2 * math.PI do drag_sweep_angle += 2 * math.PI
-							drag_previous_radial = radial
-						}
-					}
+					gfx.gizmo_mouse_move(&gizmo, &app.engine, active_cam^, mouse_pos, viewport_size)
 				}
 			case .MOUSE_BUTTON_DOWN:
 				if !mouse_captured && ev.button.button == sdl.BUTTON_LEFT {
 					mouse_pos, viewport_size := mouse_to_pixels(app.window, ev.button.x, ev.button.y)
 					if viewport_size.x <= 0 || viewport_size.y <= 0 do continue
-					ray_origin, ray_dir := gfx.screen_to_world_ray(active_cam^, mouse_pos, viewport_size)
-					log.infof("mouse_pos: %v, ray_origin: %v, ray_dir: %v", mouse_pos, ray_origin, ray_dir)
-
-					axis: gfx.GizmoAxis = .None
-					if app.engine.scene.selected_instance != gfx.INVALID_INSTANCE {
-						selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
-						if gizmo_mode == .Translate {
-							axis = gfx.gizmo_pick_translation(
-								&app.engine,
-								selected.transform,
-								mouse_pos,
-								viewport_size,
-								translation_space,
-							)
-						} else {
-							model := gfx.pool_get(&app.engine.model_system.models, selected.model)
-							axis = gfx.gizmo_pick_rotation(
-								&app.engine,
-								selected.transform,
-								model.bounds,
-								mouse_pos,
-								viewport_size,
-							)
-						}
-					}
-					if axis != .None {
-						active_gizmo_axis = axis
-						selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
-						drag_origin = selected.transform.translation
-						drag_direction =
-							gfx.gizmo_translation_axis_direction(selected.transform, axis, translation_space) if gizmo_mode == .Translate else gfx.gizmo_axis_direction(selected.transform, axis)
-						if gizmo_mode == .Translate {
-							drag_start_parameter, gizmo_dragging = gfx.gizmo_drag_parameter(
-								active_cam^,
-								drag_origin,
-								drag_direction,
-								mouse_pos,
-								viewport_size,
-							)
-						} else {
-							drag_previous_radial, gizmo_dragging = gfx.gizmo_rotation_radial(
-								active_cam^,
-								drag_origin,
-								drag_direction,
-								mouse_pos,
-								viewport_size,
-							)
-							if gizmo_dragging {
-								drag_start_radial = drag_previous_radial
-								drag_sweep_angle = 0
-							}
-						}
-					} else {
-						gizmo_dragging = false
-						active_gizmo_axis = .None
+					if !gfx.gizmo_mouse_down(&gizmo, &app.engine, active_cam^, mouse_pos, viewport_size) {
 						hit := gfx.pick(&app.engine, mouse_pos)
 						app.engine.scene.selected_instance = hit
 						if hit != gfx.INVALID_INSTANCE {
@@ -337,7 +236,7 @@ main :: proc() {
 					}
 				}
 			case .MOUSE_BUTTON_UP:
-				if ev.button.button == sdl.BUTTON_LEFT do gizmo_dragging = false
+				if ev.button.button == sdl.BUTTON_LEFT do gfx.gizmo_mouse_up(&gizmo)
 			case .MOUSE_WHEEL:
 				gfx.camera_process_mouse_scroll(active_cam, ev.wheel.y)
 			case .WINDOW_PIXEL_SIZE_CHANGED:
@@ -373,29 +272,7 @@ main :: proc() {
 			app.fps_timer = 0
 		}
 
-		if app.engine.scene.selected_instance != gfx.INVALID_INSTANCE {
-			selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
-			if gizmo_mode == .Translate {
-				gfx.gizmo_draw_translation(
-					&app.engine,
-					selected.transform,
-					active_gizmo_axis,
-					gizmo_dragging,
-					translation_space,
-				)
-			} else {
-				model := gfx.pool_get(&app.engine.model_system.models, selected.model)
-				gfx.gizmo_draw_rotation(
-					&app.engine,
-					selected.transform,
-					model.bounds,
-					active_gizmo_axis,
-					gizmo_dragging,
-					drag_start_radial,
-					drag_sweep_angle,
-				)
-			}
-		}
+		gfx.gizmo_draw(&gizmo, &app.engine)
 
 		fps_text := fmt.tprintf("%d Avg FPS", app.avg_fps)
 		gfx.ui_draw_text(&app.engine, &ui_font, fps_text, 10, 30, {0, 0, 0, 255})

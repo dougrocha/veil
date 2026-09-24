@@ -369,3 +369,135 @@ gizmo_draw_translation :: proc(
 		}
 	}
 }
+
+// Editor state for manipulating the selected instance. The zero value is translate mode in
+// world space with no active axis.
+GizmoController :: struct {
+	mode:                                    GizmoMode,
+	space:                                   GizmoSpace, // translate only
+	active_axis:                             GizmoAxis,
+	dragging:                                bool,
+
+	// Drag state, only meaningful while dragging.
+	drag_origin, drag_direction:             Vec3,
+	drag_start_parameter:                    f32, // translate
+	drag_start_radial, drag_previous_radial: Vec3, // rotate
+	drag_sweep_angle:                        f32, // rotate
+}
+
+gizmo_set_mode :: proc(gc: ^GizmoController, mode: GizmoMode) {
+	gc.dragging = false
+	gc.active_axis = .None
+	gc.mode = mode
+}
+
+// Toggles world/local translation. Does nothing in rotate mode.
+gizmo_toggle_space :: proc(gc: ^GizmoController) {
+	if gc.mode != .Translate do return
+	gc.dragging = false
+	gc.active_axis = .None
+	gc.space = .Local if gc.space == .World else .World
+}
+
+// Stops an in-progress drag, leaving the highlighted axis as is.
+gizmo_cancel :: proc(gc: ^GizmoController) {
+	gc.dragging = false
+}
+
+// Picks an axis of the selected instance's gizmo and starts dragging it. Returns false when
+// nothing was hit (or nothing is selected), so the caller can fall back to selecting an object.
+gizmo_mouse_down :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mouse_pos, viewport: Vec2) -> bool {
+	axis: GizmoAxis = .None
+	if engine.scene.selected_instance != INVALID_INSTANCE {
+		selected := instance_get(engine, engine.scene.selected_instance)
+		if gc.mode == .Translate {
+			axis = gizmo_pick_translation(engine, selected.transform, mouse_pos, viewport, gc.space)
+		} else {
+			model := pool_get(&engine.model_system.models, selected.model)
+			axis = gizmo_pick_rotation(engine, selected.transform, model.bounds, mouse_pos, viewport)
+		}
+	}
+
+	if axis == .None {
+		gc.dragging = false
+		gc.active_axis = .None
+		return false
+	}
+
+	gc.active_axis = axis
+	selected := instance_get(engine, engine.scene.selected_instance)
+	gc.drag_origin = selected.transform.translation
+	if gc.mode == .Translate {
+		gc.drag_direction = gizmo_translation_axis_direction(selected.transform, axis, gc.space)
+		gc.drag_start_parameter, gc.dragging = gizmo_drag_parameter(
+			cam,
+			gc.drag_origin,
+			gc.drag_direction,
+			mouse_pos,
+			viewport,
+		)
+	} else {
+		gc.drag_direction = gizmo_axis_direction(selected.transform, axis)
+		gc.drag_previous_radial, gc.dragging = gizmo_rotation_radial(
+			cam,
+			gc.drag_origin,
+			gc.drag_direction,
+			mouse_pos,
+			viewport,
+		)
+		if gc.dragging {
+			gc.drag_start_radial = gc.drag_previous_radial
+			gc.drag_sweep_angle = 0
+		}
+	}
+	return true
+}
+
+// Applies an in-progress drag to the selected instance. Does nothing when not dragging.
+gizmo_mouse_move :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mouse_pos, viewport: Vec2) {
+	if !gc.dragging do return
+	selected := instance_get(engine, engine.scene.selected_instance)
+
+	if gc.mode == .Translate {
+		parameter, ok := gizmo_drag_parameter(cam, gc.drag_origin, gc.drag_direction, mouse_pos, viewport)
+		if ok do selected.transform.translation = gc.drag_origin + gc.drag_direction * (parameter - gc.drag_start_parameter)
+		return
+	}
+
+	radial, ok := gizmo_rotation_radial(cam, gc.drag_origin, gc.drag_direction, mouse_pos, viewport)
+	if !ok do return
+	angle := math.atan2(
+		linalg.dot(gc.drag_direction, linalg.cross(gc.drag_previous_radial, radial)),
+		linalg.dot(gc.drag_previous_radial, radial),
+	)
+	step := linalg.quaternion_angle_axis_f32(angle, gc.drag_direction)
+	selected.transform.rotation = linalg.normalize(step * selected.transform.rotation)
+	gc.drag_sweep_angle += angle
+	if gc.drag_sweep_angle >= 2 * math.PI do gc.drag_sweep_angle -= 2 * math.PI
+	if gc.drag_sweep_angle <= -2 * math.PI do gc.drag_sweep_angle += 2 * math.PI
+	gc.drag_previous_radial = radial
+}
+
+gizmo_mouse_up :: proc(gc: ^GizmoController) {
+	gc.dragging = false
+}
+
+// Queues the gizmo for the selected instance into this frame's debug lines. No-op without a selection.
+gizmo_draw :: proc(gc: ^GizmoController, engine: ^Engine) {
+	if engine.scene.selected_instance == INVALID_INSTANCE do return
+	selected := instance_get(engine, engine.scene.selected_instance)
+	if gc.mode == .Translate {
+		gizmo_draw_translation(engine, selected.transform, gc.active_axis, gc.dragging, gc.space)
+	} else {
+		model := pool_get(&engine.model_system.models, selected.model)
+		gizmo_draw_rotation(
+			engine,
+			selected.transform,
+			model.bounds,
+			gc.active_axis,
+			gc.dragging,
+			gc.drag_start_radial,
+			gc.drag_sweep_angle,
+		)
+	}
+}
