@@ -185,7 +185,6 @@ texture_create_builtin :: proc(engine: ^Engine) {
 }
 
 texture_load :: proc {
-	texture_load_from_pixels,
 	texture_load_from_file,
 	texture_load_from_memory,
 	texture_load_default,
@@ -198,69 +197,89 @@ texture_load_default :: #force_inline proc(engine: ^Engine, which: DefaultTextur
 texture_load_from_file :: proc(engine: ^Engine, path: string, is_srgb: bool = true) -> TextureHandle {
 	ts := &engine.texture_system
 	cache := &ts.srgb_texture_map if is_srgb else &ts.linear_texture_map
-	if handle, ok := cache^[path]; ok {
-		return handle
-	}
+	if handle, done := texture_cache_check(ts, cache, path, ts.defaults[.White]); done do return handle
 
-	if !texture_system_has_capacity(ts) {
-		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
-		return texture_load(engine, DefaultTexture.White)
-	}
+	img, ok := decode_rgba8_file(path)
+	if !ok do return ts.defaults[.White]
+	defer stbi.image_free(img.pixels)
 
-	c_path := strings.clone_to_cstring(path)
-	defer delete(c_path)
-
-	width, height, channels: i32
-	pixels := stbi.load(c_path, &width, &height, &channels, 4)
-	defer stbi.image_free(pixels)
-	if pixels == nil {
-		log.errorf("Failed to read image: %s", stbi.failure_reason())
-		return engine.texture_system.defaults[.White]
-	}
-
-	log.debugf("Loading texture: %s (%dx%d)", path, width, height)
-
-	return texture_load_from_pixels(engine, path, pixels, width, height, channels, is_srgb)
+	log.debugf("Loading texture: %s (%dx%d)", path, img.width, img.height)
+	return texture_register_rgba8(engine, cache, path, img, is_srgb)
 }
 
 texture_load_from_memory :: proc(engine: ^Engine, name: string, data: []byte, is_srgb: bool = true) -> TextureHandle {
 	ts := &engine.texture_system
 	cache := &ts.srgb_texture_map if is_srgb else &ts.linear_texture_map
-	if handle, ok := cache^[name]; ok {
-		return handle
-	}
+	if handle, done := texture_cache_check(ts, cache, name, ts.defaults[.White]); done do return handle
 
+	img, ok := decode_rgba8_memory(name, data)
+	if !ok do return ts.defaults[.White]
+	defer stbi.image_free(img.pixels)
+
+	log.debugf("Loading texture from memory: %s (%dx%d)", name, img.width, img.height)
+	return texture_register_rgba8(engine, cache, name, img, is_srgb)
+}
+
+@(private = "file")
+DecodedImage :: struct {
+	pixels:                  [^]u8, // always RGBA8; free with stbi.image_free
+	width, height, channels: i32, // channels is the source count, before expansion to 4
+}
+
+// Returns (handle, true) when the load is already resolved: key is cached, or the pool is full
+// and fallback is returned instead.
+@(private = "file")
+texture_cache_check :: proc(
+	ts: ^TextureSystem,
+	cache: ^map[string]TextureHandle,
+	key: string,
+	fallback: TextureHandle,
+) -> (
+	TextureHandle,
+	bool,
+) {
+	if handle, ok := cache[key]; ok do return handle, true
 	if !texture_system_has_capacity(ts) {
-		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
-		return texture_load(engine, DefaultTexture.White)
+		log.errorf("Texture system is full (max: %d), can't load '%s'", ts.config.max_textures_count, key)
+		return fallback, true
 	}
+	return {}, false
+}
 
-	width, height, channels: i32
-	pixels := stbi.load_from_memory(raw_data(data), i32(len(data)), &width, &height, &channels, 4)
-	defer stbi.image_free(pixels)
-	if pixels == nil {
+@(private = "file")
+decode_rgba8_file :: proc(path: string) -> (img: DecodedImage, ok: bool) {
+	c_path := strings.clone_to_cstring(path, context.temp_allocator)
+	img.pixels = stbi.load(c_path, &img.width, &img.height, &img.channels, 4)
+	if img.pixels == nil {
+		log.errorf("Failed to read image '%s': %s", path, stbi.failure_reason())
+		return {}, false
+	}
+	return img, true
+}
+
+@(private = "file")
+decode_rgba8_memory :: proc(name: string, data: []byte) -> (img: DecodedImage, ok: bool) {
+	img.pixels = stbi.load_from_memory(raw_data(data), i32(len(data)), &img.width, &img.height, &img.channels, 4)
+	if img.pixels == nil {
 		log.errorf("Failed to decode image '%s' from memory: %s", name, stbi.failure_reason())
-		return texture_load(engine, DefaultTexture.White)
+		return {}, false
 	}
-
-	log.debugf("Loading texture from memory: %s (%dx%d)", name, width, height)
-
-	return texture_load_from_pixels(engine, name, pixels, width, height, channels, is_srgb)
+	return img, true
 }
 
 // Shared tail of texture_load_from_file/_from_memory: transparency scan, upload, and registration.
-texture_load_from_pixels :: proc(
+@(private = "file")
+texture_register_rgba8 :: proc(
 	engine: ^Engine,
+	cache: ^map[string]TextureHandle,
 	key: string,
-	pixels: [^]byte,
-	width, height, channels: i32,
+	img: DecodedImage,
 	is_srgb: bool,
 ) -> TextureHandle {
 	flags: TextureFlags
-	if channels == 4 {
-		pixel_count := int(width * height)
-		for i in 0 ..< pixel_count {
-			if pixels[i * 4 + 3] < 255 {
+	if img.channels == 4 {
+		for i in 0 ..< int(img.width * img.height) {
+			if img.pixels[i * 4 + 3] < 255 {
 				flags += {.Transparent}
 				break
 			}
@@ -268,14 +287,11 @@ texture_load_from_pixels :: proc(
 	}
 
 	texture := Texture {
-		gpu = {extent = backend.extent3d(u32(width), u32(height), 1)},
+		gpu = {extent = backend.extent3d(u32(img.width), u32(img.height), 1)},
 		channel_count = 4,
 		flags = flags,
 	}
-	texture_upload(&engine.vk_ctx, pixels, &texture, is_srgb ? .Rgba8_Unorm_Srgb : .Rgba8_Unorm)
-
-	ts := &engine.texture_system
-	cache := &ts.srgb_texture_map if is_srgb else &ts.linear_texture_map
+	texture_upload(&engine.vk_ctx, img.pixels, &texture, is_srgb ? .Rgba8_Unorm_Srgb : .Rgba8_Unorm)
 	return texture_register(engine, cache, key, texture)
 }
 
@@ -319,26 +335,13 @@ texture_upload :: proc(
 
 
 texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
-	if handle, ok := engine.texture_system.cubemap_map[path]; ok {
-		return handle
-	}
-
 	ts := &engine.texture_system
-	if !texture_system_has_capacity(ts) {
-		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
-		return ts.defaults[.Black_Cube]
-	}
+	if handle, done := texture_cache_check(ts, &ts.cubemap_map, path, ts.defaults[.Black_Cube]); done do return handle
 
-	c_path := strings.clone_to_cstring(path)
-	defer delete(c_path)
-
-	width, height, channels: i32
-	pixels := stbi.load(c_path, &width, &height, &channels, 4)
-	defer stbi.image_free(pixels)
-	if pixels == nil {
-		log.errorf("Failed to read cubemap image '%s': %s", path, stbi.failure_reason())
-		return ts.defaults[.Black_Cube]
-	}
+	img, ok := decode_rgba8_file(path)
+	if !ok do return ts.defaults[.Black_Cube]
+	defer stbi.image_free(img.pixels)
+	width, height, pixels := img.width, img.height, img.pixels
 
 	// Horizontal cross: 4x3 grid of square faces.
 	if width <= 0 || width % 4 != 0 || height % 3 != 0 || width / 4 != height / 3 {
