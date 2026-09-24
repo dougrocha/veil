@@ -1,6 +1,7 @@
 package graphics
 
 import "core:math/linalg"
+import "core:mem/virtual"
 import "core:time"
 
 import sdl "vendor:sdl3"
@@ -87,6 +88,10 @@ Engine :: struct {
 	line_renderer:        LineRenderer,
 	ui_renderer:          UIRenderer,
 	debug_settings:       DebugSettings,
+
+	// Temp allocator for engine_render, reset at the end of every frame. Kept apart from the
+	// game loop's context.temp_allocator so each side resets on its own schedule.
+	frame_arena:          virtual.Arena,
 }
 
 LightMask :: enum u32 {

@@ -221,6 +221,10 @@ main :: proc() {
 	drag_previous_radial: gfx.Vec3
 	drag_sweep_angle: f32
 	main_loop: for {
+		// Game-side temp allocations live for one loop iteration; the engine resets its own
+		// frame arena inside engine_render.
+		defer free_all(context.temp_allocator)
+
 		ev: sdl.Event
 		active_cam := gfx.camera_system_get_camera(&app.engine.camera_system, app.engine.scene.active_camera_name)
 

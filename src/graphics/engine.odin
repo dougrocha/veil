@@ -3,6 +3,7 @@ package graphics
 import "core:log"
 import "core:math/linalg"
 import "core:mem"
+import "core:mem/virtual"
 import "core:slice"
 
 import sdl "vendor:sdl3"
@@ -11,6 +12,10 @@ import "backend"
 
 // eventually move this from init vulkan and actually make it like a init engine
 engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) -> (ok: bool) {
+	if err := virtual.arena_init_growing(&engine.frame_arena); err != nil {
+		log.errorf("Failed to create engine frame arena: %v", err)
+		return false
+	}
 	engine.camera_system = camera_system_create({max_camera_count = 10})
 	engine.scene.active_camera_name = DEFAULT_CAMERA_NAME
 	engine.debug_settings.light_mask = LIGHT_MASK_ALL
@@ -120,10 +125,13 @@ engine_destroy :: proc(self: ^Engine) {
 	backend.swapchain_destroy(&self.vk_ctx, &self.swapchain)
 
 	backend.context_destroy(&self.vk_ctx)
+	virtual.arena_destroy(&self.frame_arena)
 }
 
 engine_render :: proc(app: ^App, delta_time: f32) {
 	engine := &app.engine
+	context.temp_allocator = virtual.arena_allocator(&engine.frame_arena)
+	defer free_all(context.temp_allocator)
 	// Batches are filled every tick; drain them even when this frame isn't drawn, or they overflow.
 	defer {
 		line_renderer_clear(engine)
