@@ -98,6 +98,9 @@ global_resources_create :: proc(engine: ^Engine) {
 		engine.shadow_2d_atlas.sampler,
 		.Depth_Read,
 	)
+	// The skybox pass samples binding 2 every frame, so it needs a valid cube before any
+	// set_skybox_texture call; with no skybox configured the sky renders black.
+	set_skybox_texture(engine, engine.texture_system.defaults[.Black_Cube])
 }
 
 engine_destroy :: proc(self: ^Engine) {
