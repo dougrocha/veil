@@ -20,7 +20,6 @@ PresentFrameResult :: enum {
 	Success,
 	OutOfDate,
 	Suboptimal,
-	Error,
 }
 
 FrameSync :: struct {

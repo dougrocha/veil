@@ -181,8 +181,6 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 	case .Success:
 	case .OutOfDate, .Suboptimal:
 		engine.swapchain.require_recreate = true
-	case .Error:
-		log.errorf("queue_present_frame failed")
 	}
 
 	if engine.frame_dump.enabled {

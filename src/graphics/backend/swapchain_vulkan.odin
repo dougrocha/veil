@@ -169,15 +169,37 @@ swapchain_acquire_next_image :: proc(
 	}
 }
 
+// First transition of a just-acquired swapchain image. The source is UNDEFINED (the previous
+// contents are discarded on purpose; the blit overwrites the whole image), but not "no prior
+// access": the presentation engine may still be reading it until the acquire semaphore wait.
+// srcStage = SWAPCHAIN_FIRST_USE_STAGE chains this transition to that wait.
+@(private = "file")
+swapchain_acquire_barrier :: proc(cmd: CommandBuffer, image: vk.Image, dst: ImageStateKind) {
+	dst := IMAGE_STATES[dst]
+	barrier := vk.ImageMemoryBarrier2 {
+		sType               = .IMAGE_MEMORY_BARRIER_2,
+		srcStageMask        = SWAPCHAIN_FIRST_USE_STAGE,
+		srcAccessMask       = {},
+		oldLayout           = .UNDEFINED,
+		dstStageMask        = dst.stage,
+		dstAccessMask       = dst.access,
+		newLayout           = dst.layout,
+		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+		image               = image,
+		subresourceRange    = {{.COLOR}, 0, 1, 0, 1},
+	}
+	dep_info := vk.DependencyInfo {
+		sType                   = .DEPENDENCY_INFO,
+		imageMemoryBarrierCount = 1,
+		pImageMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(vk.CommandBuffer(cmd), &dep_info)
+}
+
 present_blit :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain) {
 	image_barrier(cmd, &swapchain.render_targets.draw, .Transfer_Src, ImageAspectFlags{.Color})
-	image_barrier_raw(
-		cmd,
-		swapchain.images[swapchain.current_image_index],
-		.Undefined,
-		.Transfer_Dst,
-		image_aspect_to_vk({.Color}),
-	)
+	swapchain_acquire_barrier(cmd, swapchain.images[swapchain.current_image_index], .Transfer_Dst)
 	copy_image_to_image(
 		cmd,
 		swapchain.render_targets.draw.image,
@@ -223,6 +245,8 @@ queue_present_frame :: proc(
 	case .SUBOPTIMAL_KHR:
 		return .Suboptimal
 	case:
-		return .Error
+		// The present may not have been queued, leaving the present semaphore's state unknown;
+		// nothing here is safely recoverable.
+		log.panicf("vkQueuePresentKHR failed: %v", present_result)
 	}
 }

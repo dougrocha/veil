@@ -17,7 +17,6 @@ PresentFrameResult :: enum {
 	Success,
 	OutOfDate,
 	Suboptimal,
-	Error,
 }
 
 FrameSync :: struct {
@@ -25,6 +24,12 @@ FrameSync :: struct {
 	command_buffer:           CommandBuffer,
 	image_acquired_semaphore: vk.Semaphore,
 }
+
+// Stage of the first operation on an acquired swapchain image (present_blit's transition + blit).
+// The acquire semaphore is waited at this stage and swapchain_acquire_barrier chains to it, so it
+// must cover that first operation: change it (e.g. to COLOR_ATTACHMENT_OUTPUT) if the swapchain
+// image is ever rendered to directly.
+SWAPCHAIN_FIRST_USE_STAGE :: vk.PipelineStageFlags2{.TRANSFER}
 
 frame_sync_create :: proc(ctx: ^Context) {
 	ctx.timeline_semaphore = timeline_semaphore_create(ctx)
@@ -136,14 +141,17 @@ queue_submit_frame :: proc(
 	image_acquired_wait_info := vk.SemaphoreSubmitInfo {
 		sType     = .SEMAPHORE_SUBMIT_INFO,
 		semaphore = frame_sync.image_acquired_semaphore,
-		stageMask = {.COLOR_ATTACHMENT_OUTPUT},
+		stageMask = SWAPCHAIN_FIRST_USE_STAGE,
 	}
 
 	semaphore_signals := [2]vk.SemaphoreSubmitInfo {
 		{
-			sType = .SEMAPHORE_SUBMIT_INFO,
+			sType     = .SEMAPHORE_SUBMIT_INFO,
 			semaphore = swapchain.present_semaphores[swapchain.current_image_index],
-			stageMask = {.ALL_GRAPHICS},
+			// Must stay ALL_COMMANDS: the final Transfer_Dst -> Present barrier has dstStage NONE, so its
+			// layout transition is only ordered before this signal when the signal covers all stages.
+			// Narrowing to ALL_TRANSFER brings back PRESENT_AFTER_WRITE under sync validation.
+			stageMask = {.ALL_COMMANDS},
 		},
 		{
 			sType = .SEMAPHORE_SUBMIT_INFO,
