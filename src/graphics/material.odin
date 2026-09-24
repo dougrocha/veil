@@ -2,6 +2,7 @@ package graphics
 
 import "core:log"
 import "core:mem"
+import "core:strings"
 
 import "backend"
 
@@ -75,6 +76,8 @@ material_create :: proc(
 	}
 
 	log.debugf("Creating material: %s", name)
+	// Owned copy, shared by Material.name and the map key; glTF passes temp or cgltf-owned names.
+	name := strings.clone(name)
 	resolve :: proc(h, default: TextureHandle) -> TextureHandle {
 		return h if h != INVALID_TEXTURE else default
 	}
@@ -123,6 +126,9 @@ material_create :: proc(
 material_system_destroy :: proc(engine: ^Engine) {
 	ms := &engine.material_system
 	backend.buffer_destroy(&engine.vk_ctx, ms.buffer)
+	for &material, i in ms.materials.values {
+		if pool_is_alive(&ms.materials, Index(i)) do delete(material.name)
+	}
 	pool_destroy(&ms.materials)
 	delete(ms.material_map)
 }

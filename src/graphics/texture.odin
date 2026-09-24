@@ -90,9 +90,12 @@ texture_system_destroy :: proc(engine: ^Engine) {
 	for sampler in ts.samplers {
 		backend.sampler_destroy(&engine.vk_ctx, sampler)
 	}
-	delete(ts.srgb_texture_map)
-	delete(ts.linear_texture_map)
-	delete(ts.cubemap_map)
+	for cache in ([]^map[string]TextureHandle{&ts.srgb_texture_map, &ts.linear_texture_map, &ts.cubemap_map}) {
+		for key in cache {
+			delete(key)
+		}
+		delete(cache^)
+	}
 	backend.descriptor_set_destroy(&engine.vk_ctx, &ts.descriptor)
 }
 
@@ -113,13 +116,15 @@ texture_unload :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: s
 	backend.device_wait_idle(&engine.vk_ctx)
 	texture_destroy(&engine.vk_ctx, pool_get(&ts.textures, handle)^)
 	pool_free(&ts.textures, handle)
-	delete_key(cache, key)
+	stored_key, _ := delete_key(cache, key)
+	delete(stored_key)
 }
 
+// The cache owns a copy of key, so callers may pass temp-allocated strings.
 texture_register :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: string, t: Texture) -> TextureHandle {
 	ts := &engine.texture_system
 	handle := pool_alloc(&ts.textures, t)
-	cache^[key] = handle
+	cache^[strings.clone(key)] = handle
 	write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
 	return handle
 }

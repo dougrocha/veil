@@ -3,6 +3,7 @@ package graphics
 import "core:log"
 import "core:math/linalg"
 import "core:path/filepath"
+import "core:strings"
 
 import "shared:tinyobj"
 
@@ -61,6 +62,7 @@ destroy_model_system :: proc(engine: ^Engine) {
 				delete(mesh.indices)
 			}
 			delete(model.meshes)
+			delete(model.name)
 		}
 	}
 	pool_destroy(&ms.models)
@@ -166,6 +168,8 @@ model_register :: proc(
 
 	bounds := BoundingSphere{center, radius}
 
+	// Owned copy, shared by Model.name and the map key.
+	name := strings.clone(name)
 	model := Model {
 		name   = name,
 		bounds = bounds,

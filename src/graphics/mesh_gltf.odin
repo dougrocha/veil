@@ -27,8 +27,9 @@ model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 		return INVALID_MODEL
 	}
 
+	// Owned copy, shared by Model.name and the map key.
 	model := Model {
-		name = path,
+		name = strings.clone(path),
 	}
 
 	bounds_min := Vec3{max(f32), max(f32), max(f32)}
@@ -131,6 +132,8 @@ model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 
 	if len(model.meshes) == 0 {
 		log.warnf("cgltf: no meshes found in {}", path)
+		delete(model.meshes)
+		delete(model.name)
 		return INVALID_MODEL
 	}
 
@@ -142,7 +145,7 @@ model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 	model.bounds = BoundingSphere{center, radius}
 
 	handle := pool_alloc(&engine.model_system.models, model)
-	engine.model_system.model_map[path] = handle
+	engine.model_system.model_map[model.name] = handle
 	return handle
 }
 
