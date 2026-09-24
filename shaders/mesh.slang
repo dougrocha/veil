@@ -115,33 +115,24 @@ float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 f
     return base_color * intensity * attenuation;
 }
 
-struct BindlessTextures {
-    Texture2D<float4> textures[BINDLESS_TEXTURE_COUNT];
-    SamplerState samplers[BINDLESS_TEXTURE_COUNT];
-}
-[[vk_binding(0, 0)]] ParameterBlock<BindlessTextures> bindless;
 [[vk_push_constant]] PushConstants pc;
 [[vk_binding(0, 1)]] SamplerCubeArrayShadow shadow_cubes;
 [[vk_binding(1, 1)]] Sampler2DArrayShadow shadow_2d_maps;
 
-float4 sample_bindless(uint index, float2 uv) {
-    return bindless.textures[index].Sample(bindless.samplers[index], uv);
-}
-
 float4 sample_base_color(uint index, float2 uv) {
-    return sample_bindless(index, uv);
+    return gpu_texture(index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
 }
 
 float4 sample_normal_map(uint index, float2 uv) {
-    return sample_bindless(index, uv);
+    return gpu_texture(index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
 }
 
 float4 sample_metallic_roughness(uint index, float2 uv) {
-    return sample_bindless(index, uv);
+    return gpu_texture(index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
 }
 
 float4 sample_occlusion(uint index, float2 uv) {
-    return sample_bindless(index, uv);
+    return gpu_texture(index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
 }
 
 float calc_point_shadow_factor(PointLight light, uint light_index, float3 frag_pos, float3 normal) {

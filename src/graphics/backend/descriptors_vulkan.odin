@@ -146,22 +146,19 @@ descriptor_set_create_sampler_array :: proc(
 	return descriptor_set_create(ctx, bindings, count)
 }
 
-// Same shape as descriptor_set_create_sampler_array, but with update-after-bind
-// flags so a large slot count can be sparsely written to while in flight -
-// the shape needed for the bindless texture system.
-//
-// Two bindings, not one: the Slang BindlessTextures parameter block declares a
-// separate Texture2D array and SamplerState array (needed for the Metal port,
-// which can't combine them), so Slang lays it out as binding 0 (sampled images)
-// + binding 1 (samplers) rather than a single combined-image-sampler binding.
+// The bindless set, with update-after-bind flags so slots can be sparsely written
+// while in flight. Matches the Slang BindlessTextures parameter block: binding 0
+// is the Texture2D array, binding 1 the SamplerState array. Textures and samplers
+// are indexed independently, so the sampler array only holds a few fixed samplers.
 descriptor_set_create_bindless_array :: proc(
 	ctx: ^Context,
-	slot_count: u32,
+	texture_count: u32,
+	sampler_count: u32,
 	count: u32 = MAX_FRAMES_IN_FLIGHT,
 ) -> DescriptorSet {
 	bindings := []vk.DescriptorSetLayoutBinding {
-		{binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = slot_count, stageFlags = {.FRAGMENT}},
-		{binding = 1, descriptorType = .SAMPLER, descriptorCount = slot_count, stageFlags = {.FRAGMENT}},
+		{binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = texture_count, stageFlags = {.FRAGMENT}},
+		{binding = 1, descriptorType = .SAMPLER, descriptorCount = sampler_count, stageFlags = {.FRAGMENT}},
 	}
 	// UPDATE_UNUSED_WHILE_PENDING: texture registration writes a new slot into every frame's
 	// set, including ones a submitted frame is still executing.
@@ -220,46 +217,48 @@ descriptor_write_image_view :: proc(
 	descriptor_write_image_info(ctx, set, binding, &image_info, array_element)
 }
 
-// Writes one slot of the bindless texture set (see descriptor_set_create_bindless_array):
-// the image goes to binding 0 as a SAMPLED_IMAGE, the sampler to binding 1 as a SAMPLER.
+// Writes one texture slot of the bindless set (binding 0) in every frame's set.
 descriptor_write_bindless_texture :: proc(
 	ctx: ^Context,
 	desc: ^DescriptorSet,
 	array_element: u32,
 	img: ^GpuImage,
-	sampler: Sampler,
 	state: ImageStateKind = .Shader_Read,
 ) {
 	image_info := vk.DescriptorImageInfo {
 		imageView   = img.image_view,
 		imageLayout = IMAGE_STATES[state].layout,
 	}
+	for i in 0 ..< desc.count {
+		write := vk.WriteDescriptorSet {
+			sType           = .WRITE_DESCRIPTOR_SET,
+			dstSet          = desc.sets[i],
+			dstBinding      = 0,
+			dstArrayElement = array_element,
+			descriptorCount = 1,
+			descriptorType  = .SAMPLED_IMAGE,
+			pImageInfo      = &image_info,
+		}
+		vk.UpdateDescriptorSets(ctx.device, 1, &write, 0, nil)
+	}
+}
+
+// Writes one sampler slot of the bindless set (binding 1) in every frame's set.
+descriptor_write_bindless_sampler :: proc(ctx: ^Context, desc: ^DescriptorSet, array_element: u32, sampler: Sampler) {
 	sampler_info := vk.DescriptorImageInfo {
 		sampler = vk.Sampler(sampler),
 	}
-
 	for i in 0 ..< desc.count {
-		writes := [2]vk.WriteDescriptorSet {
-			{
-				sType = .WRITE_DESCRIPTOR_SET,
-				dstSet = desc.sets[i],
-				dstBinding = 0,
-				dstArrayElement = array_element,
-				descriptorCount = 1,
-				descriptorType = .SAMPLED_IMAGE,
-				pImageInfo = &image_info,
-			},
-			{
-				sType = .WRITE_DESCRIPTOR_SET,
-				dstSet = desc.sets[i],
-				dstBinding = 1,
-				dstArrayElement = array_element,
-				descriptorCount = 1,
-				descriptorType = .SAMPLER,
-				pImageInfo = &sampler_info,
-			},
+		write := vk.WriteDescriptorSet {
+			sType           = .WRITE_DESCRIPTOR_SET,
+			dstSet          = desc.sets[i],
+			dstBinding      = 1,
+			dstArrayElement = array_element,
+			descriptorCount = 1,
+			descriptorType  = .SAMPLER,
+			pImageInfo      = &sampler_info,
 		}
-		vk.UpdateDescriptorSets(ctx.device, 2, &writes[0], 0, nil)
+		vk.UpdateDescriptorSets(ctx.device, 1, &write, 0, nil)
 	}
 }
 

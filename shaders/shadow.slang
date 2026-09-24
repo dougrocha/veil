@@ -32,11 +32,6 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     return output;
 }
 
-struct BindlessTextures {
-    Texture2D<float4> textures[BINDLESS_TEXTURE_COUNT];
-    SamplerState samplers[BINDLESS_TEXTURE_COUNT];
-}
-[[vk_binding(0, 0)]] ParameterBlock<BindlessTextures> bindless;
 [[vk_push_constant]] ShadowPushConstants pc;
 
 // Slang lowers a bare `: SV_Depth` return to [[color(0)]] on the Metal target,
@@ -51,7 +46,7 @@ struct PSOutput {
 PSOutput fragment_main(VSOutput input) {
     let mat = pc.material_buffer[pc.material_index];
     if (mat.alpha_mode == 1) {
-        float alpha = bindless.textures[mat.base_color_texture].Sample(bindless.samplers[mat.base_color_texture], input.uv).a * mat.base_color.a;
+        float alpha = gpu_texture(mat.base_color_texture).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), input.uv).a * mat.base_color.a;
         if (alpha < mat.alpha_cutoff) discard;
     }
 

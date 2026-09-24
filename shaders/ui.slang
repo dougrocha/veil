@@ -1,9 +1,4 @@
 #include "platform.slang"
-struct BindlessTextures {
-    Texture2D<float4> textures[BINDLESS_TEXTURE_COUNT];
-    SamplerState samplers[BINDLESS_TEXTURE_COUNT];
-}
-[[vk_binding(0, 0)]] ParameterBlock<BindlessTextures> bindless;
 
 struct UIVertex {
     float2 position; // screen-space pixels, top-left origin, y-down
@@ -54,6 +49,6 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragment_main(VSOutput input) : SV_TARGET {
-    float coverage = bindless.textures[pc.atlas_texture].Sample(bindless.samplers[pc.atlas_texture], input.uv).r;
+    float coverage = gpu_texture(pc.atlas_texture).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), input.uv).r;
     return float4(input.color.rgb, input.color.a * coverage);
 }

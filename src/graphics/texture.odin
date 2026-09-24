@@ -26,16 +26,10 @@ TextureFlag :: enum u8 {
 
 Texture :: struct {
 	using gpu:     backend.GpuImage,
-	sampler:       backend.Sampler,
 
 	// Texture metadata
 	channel_count: u8,
 	flags:         TextureFlags,
-	filter_min:    TextureFilter,
-	filter_mag:    TextureFilter,
-	repeat_u:      TextureRepeat,
-	repeat_v:      TextureRepeat,
-	repeat_w:      TextureRepeat,
 }
 
 DefaultTexture :: enum u8 {
@@ -48,6 +42,8 @@ DefaultTexture :: enum u8 {
 TextureSystem :: struct {
 	config:             TextureSystemConfig,
 	descriptor:         backend.DescriptorSet,
+	// Fixed samplers shared by every bindless texture, indexed by the SAMPLER_* constants.
+	samplers:           [BINDLESS_SAMPLER_COUNT]backend.Sampler,
 
 	// storage pool
 	textures:           Pool(Texture),
@@ -69,13 +65,17 @@ texture_system_create :: proc(engine: ^Engine, config: TextureSystemConfig) {
 	ts.linear_texture_map = make(map[string]TextureHandle)
 	ts.cubemap_map = make(map[string]TextureHandle)
 
-	ts.descriptor = backend.descriptor_set_create_bindless_array(&engine.vk_ctx, config.max_textures_count)
+	ts.descriptor = backend.descriptor_set_create_bindless_array(
+		&engine.vk_ctx,
+		config.max_textures_count,
+		BINDLESS_SAMPLER_COUNT,
+	)
+	texture_samplers_create(engine)
 
 	texture_create_builtin(engine)
 }
 
 texture_destroy :: proc(ctx: ^backend.Context, t: Texture) {
-	backend.sampler_destroy(ctx, t.sampler)
 	backend.image_destroy(ctx, t.gpu)
 }
 
@@ -87,6 +87,9 @@ texture_system_destroy :: proc(engine: ^Engine) {
 		}
 	}
 	pool_destroy(&ts.textures)
+	for sampler in ts.samplers {
+		backend.sampler_destroy(&engine.vk_ctx, sampler)
+	}
 	delete(ts.srgb_texture_map)
 	delete(ts.linear_texture_map)
 	delete(ts.cubemap_map)
@@ -294,7 +297,6 @@ texture_upload :: proc(
 
 	texture.gpu = gpu_img
 	texture_image_view_create(ctx, texture)
-	texture_sampler_create(ctx, texture)
 }
 
 
@@ -375,7 +377,6 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 		channel_count = 4,
 	}
 	backend.image_view_create_cubemap(&engine.vk_ctx, &t.gpu)
-	texture_sampler_create(&engine.vk_ctx, &t)
 
 	return texture_register(engine, &ts.cubemap_map, path, t)
 }
@@ -384,18 +385,30 @@ texture_image_view_create :: proc(ctx: ^backend.Context, t: ^Texture) {
 	backend.image_view_create_default(ctx, &t.gpu)
 }
 
-texture_sampler_create :: proc(ctx: ^backend.Context, t: ^Texture) {
-	desc := backend.sampler_desc_default()
-	desc.min_filter = t.filter_min
-	desc.mag_filter = t.filter_mag
-	desc.address_mode_u = t.repeat_u
-	desc.address_mode_v = t.repeat_v
-	desc.address_mode_w = t.repeat_w
-	desc.anisotropy_enable = true
-	desc.max_anisotropy = backend.device_max_anisotropy(ctx)
-	desc.max_lod = backend.LOD_CLAMP_NONE
-	desc.border_color = .OpaqueBlack
-	t.sampler = backend.sampler_create(ctx, desc)
+texture_samplers_create :: proc(engine: ^Engine) {
+	ts := &engine.texture_system
+	ctx := &engine.vk_ctx
+
+	make_sampler :: proc(ctx: ^backend.Context, filter: TextureFilter, repeat: TextureRepeat) -> backend.Sampler {
+		desc := backend.sampler_desc_default()
+		desc.min_filter = filter
+		desc.mag_filter = filter
+		desc.address_mode_u = repeat
+		desc.address_mode_v = repeat
+		desc.address_mode_w = repeat
+		desc.anisotropy_enable = filter == .Linear
+		desc.max_anisotropy = backend.device_max_anisotropy(ctx)
+		desc.max_lod = backend.LOD_CLAMP_NONE
+		desc.border_color = .OpaqueBlack
+		return backend.sampler_create(ctx, desc)
+	}
+
+	ts.samplers[SAMPLER_LINEAR_REPEAT] = make_sampler(ctx, .Linear, .Repeat)
+	ts.samplers[SAMPLER_LINEAR_CLAMP] = make_sampler(ctx, .Linear, .Clamp_To_Edge)
+	ts.samplers[SAMPLER_NEAREST_CLAMP] = make_sampler(ctx, .Nearest, .Clamp_To_Edge)
+	for sampler, i in ts.samplers {
+		backend.descriptor_write_bindless_sampler(ctx, &ts.descriptor, u32(i), sampler)
+	}
 }
 
 
@@ -408,5 +421,5 @@ write_descriptor_texture :: proc(
 	array_element: u32 = 0,
 ) {
 	t := pool_get(&ts.textures, handle)
-	backend.descriptor_write_bindless_texture(ctx, &ts.descriptor, array_element, &t.gpu, t.sampler)
+	backend.descriptor_write_bindless_texture(ctx, &ts.descriptor, array_element, &t.gpu)
 }

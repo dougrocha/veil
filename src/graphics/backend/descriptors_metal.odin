@@ -34,23 +34,29 @@ descriptor_set_create_sampler_array :: proc(
 
 descriptor_set_create_bindless_array :: proc(
 	ctx: ^Context,
-	slot_count: u32,
+	texture_count: u32,
+	sampler_count: u32,
 	count: u32 = MAX_FRAMES_IN_FLIGHT,
 ) -> DescriptorSet {
-	set := descriptor_set_create_sampler_array(ctx, slot_count, count)
+	set: DescriptorSet
+	set.count = count
+	for i in 0 ..< count {
+		set.sets[i].textures = make([]^MTL.Texture, texture_count)
+		set.sets[i].samplers = make([]^MTL.SamplerState, sampler_count)
+	}
 	texture_arg := MTL.ArgumentDescriptor.alloc()->init()
 	defer texture_arg->release()
 	texture_arg->setDataType(.Texture)
 	texture_arg->setIndex(0)
-	texture_arg->setArrayLength(NS.UInteger(slot_count))
+	texture_arg->setArrayLength(NS.UInteger(texture_count))
 	texture_arg->setAccess(.ReadOnly)
 	texture_arg->setTextureType(.Type2D)
 
 	sampler_arg := MTL.ArgumentDescriptor.alloc()->init()
 	defer sampler_arg->release()
 	sampler_arg->setDataType(.Sampler)
-	sampler_arg->setIndex(NS.UInteger(slot_count))
-	sampler_arg->setArrayLength(NS.UInteger(slot_count))
+	sampler_arg->setIndex(NS.UInteger(texture_count))
+	sampler_arg->setArrayLength(NS.UInteger(sampler_count))
 
 	objects := [2]^NS.Object{(^NS.Object)(texture_arg), (^NS.Object)(sampler_arg)}
 	arguments := NS.Array.alloc()->initWithObjects(&objects[0], NS.UInteger(len(objects)))
@@ -88,26 +94,34 @@ descriptor_write_image_view :: proc(
 		set.sets[i].textures[slot] = img.texture
 		set.sets[i].samplers[slot] = mtl_sampler
 	}
-	if set.sets[0].bindless {
-		for i in 0 ..< set.count {
-			encoder := set.sets[i].argument_encoder
-			encoder->setArgumentBufferWithOffset(set.sets[i].buffer, 0)
-			encoder->setTexture(img.texture, NS.UInteger(slot))
-			encoder->setSamplerState(mtl_sampler, NS.UInteger(len(set.sets[i].textures)) + NS.UInteger(slot))
-		}
-	}
 }
 
-// Writes one slot of the bindless texture set (see descriptor_set_create_bindless_array).
+// Writes one texture slot of the bindless set (see descriptor_set_create_bindless_array).
 descriptor_write_bindless_texture :: proc(
 	ctx: ^Context,
 	desc: ^DescriptorSet,
 	array_element: u32,
 	img: ^GpuImage,
-	sampler: Sampler,
 	state: ImageStateKind = .Shader_Read,
 ) {
-	descriptor_write_image_view(ctx, desc, 0, img, sampler, state, array_element)
+	for i in 0 ..< desc.count {
+		set := &desc.sets[i]
+		set.textures[array_element] = img.texture
+		set.argument_encoder->setArgumentBufferWithOffset(set.buffer, 0)
+		set.argument_encoder->setTexture(img.texture, NS.UInteger(array_element))
+	}
+}
+
+// Writes one sampler slot of the bindless set. Samplers follow the texture array
+// in the argument buffer, so their ids start at len(textures).
+descriptor_write_bindless_sampler :: proc(ctx: ^Context, desc: ^DescriptorSet, array_element: u32, sampler: Sampler) {
+	mtl_sampler := (^MTL.SamplerState)(sampler)
+	for i in 0 ..< desc.count {
+		set := &desc.sets[i]
+		set.samplers[array_element] = mtl_sampler
+		set.argument_encoder->setArgumentBufferWithOffset(set.buffer, 0)
+		set.argument_encoder->setSamplerState(mtl_sampler, NS.UInteger(len(set.textures)) + NS.UInteger(array_element))
+	}
 }
 
 descriptor_bind_image :: proc(cmd: RenderEncoder, handle: DescriptorSetHandle, binding, target_index: u32) {

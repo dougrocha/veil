@@ -8,3 +8,24 @@
 #ifndef VEIL_METAL
 #define VEIL_METAL 0
 #endif
+
+// Bindless resource access. Shaders go through gpu_texture / gpu_sampler
+// instead of touching the binding directly, so each backend can change how an
+// index resolves to a descriptor (argument buffer, descriptor heap, ...) here.
+// Texture indices come from the texture system; sampler indices are the fixed
+// SAMPLER_* constants from gpu_types.odin.
+import types;
+
+struct BindlessTextures {
+    Texture2D<float4> textures[BINDLESS_TEXTURE_COUNT];
+    SamplerState samplers[BINDLESS_SAMPLER_COUNT];
+}
+[[vk_binding(0, 0)]] ParameterBlock<BindlessTextures> bindless;
+
+Texture2D<float4> gpu_texture(uint index) {
+    return bindless.textures[index];
+}
+
+SamplerState gpu_sampler(uint index) {
+    return bindless.samplers[index];
+}

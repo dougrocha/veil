@@ -1,9 +1,4 @@
 #include "platform.slang"
-struct BindlessTextures {
-    Texture2D<float4> textures[BINDLESS_TEXTURE_COUNT];
-    SamplerState samplers[BINDLESS_TEXTURE_COUNT];
-}
-[[vk_binding(0, 0)]] ParameterBlock<BindlessTextures> bindless;
 [[vk_binding(0, 1)]] SamplerCubeArray shadow_cubes;
 [[vk_binding(1, 1)]] Sampler2DArray shadow_2d_maps;
 
@@ -58,5 +53,5 @@ float4 fragment_main(VSOutput input) : SV_TARGET {
         return float4(depth, depth, depth, 1.0);
     }
 
-    return bindless.textures[pc.index].Sample(bindless.samplers[pc.index], input.uv);
+    return gpu_texture(pc.index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), input.uv);
 }

@@ -9,6 +9,10 @@ static const uint LIGHT_MASK_POINT = 1;
 static const uint LIGHT_MASK_DIRECTIONAL = 2;
 static const uint LIGHT_MASK_SPOT = 4;
 static const uint LIGHT_MASK_ALL = 7;
+static const uint SAMPLER_LINEAR_REPEAT = 0;
+static const uint SAMPLER_LINEAR_CLAMP = 1;
+static const uint SAMPLER_NEAREST_CLAMP = 2;
+static const uint BINDLESS_SAMPLER_COUNT = 3;
 
 struct Vertex {
     float4 pos;

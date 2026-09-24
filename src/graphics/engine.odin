@@ -431,7 +431,8 @@ set_skybox_texture :: proc(engine: ^Engine, handle: TextureHandle) {
 	// in-flight frame may be using it.
 	backend.device_wait_idle(&engine.vk_ctx)
 	t := pool_get(&engine.texture_system.textures, handle)
-	backend.descriptor_write_image_view(&engine.vk_ctx, &engine.global_descriptor, 2, &t.gpu, t.sampler)
+	sampler := engine.texture_system.samplers[SAMPLER_LINEAR_REPEAT]
+	backend.descriptor_write_image_view(&engine.vk_ctx, &engine.global_descriptor, 2, &t.gpu, sampler)
 }
 
 // Renders every active light's shadow maps. Each atlas is transitioned as a whole (all layers,
