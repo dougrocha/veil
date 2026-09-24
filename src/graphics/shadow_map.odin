@@ -4,6 +4,9 @@ import "backend"
 
 SHADOW_MAP_SIZE :: 2048
 
+// First spot-light layer in the 2D shadow atlas; directional cascades occupy the layers before it.
+SPOT_SHADOW_SLOT_BASE :: MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT
+
 ShadowAtlas :: struct {
 	using gpu: backend.GpuImage,
 	sampler:   backend.Sampler,
@@ -35,4 +38,13 @@ shadow_atlas_create :: proc(ctx: ^backend.Context, size: u32, layers: u32, cube:
 shadow_atlas_destroy :: proc(ctx: ^backend.Context, atlas: ^ShadowAtlas) {
 	backend.sampler_destroy(ctx, atlas.sampler)
 	backend.image_destroy(ctx, atlas.gpu)
+}
+
+shadow_atlas_transition :: proc(
+	cmd: backend.CommandBuffer,
+	atlas: ^ShadowAtlas,
+	state: backend.ImageStateKind,
+	layer_count: u32,
+) {
+	backend.image_barrier(cmd, &atlas.gpu, state, backend.ImageAspectFlags{.Depth}, layer_count = layer_count)
 }

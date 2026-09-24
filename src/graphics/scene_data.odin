@@ -92,8 +92,9 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 	// Spot lights live in the second half of the 2D shadow atlas, after the directional slots.
 	spot_count := min(int(engine.scene.spot_light_count), MAX_SPOT_LIGHTS)
 	for light_i in 0 ..< spot_count {
-		scene.shadow_2d_view_proj[MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT + light_i] =
-			compute_spot_light_view_proj(engine.scene.spot_lights[light_i])
+		scene.shadow_2d_view_proj[SPOT_SHADOW_SLOT_BASE + u32(light_i)] = compute_spot_light_view_proj(
+			engine.scene.spot_lights[light_i],
+		)
 	}
 
 	mem.copy(backend.buffer_mapped_ptr(engine.frame_data[frame_index].scene_data_buffer), &scene, size_of(SceneData))

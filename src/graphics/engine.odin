@@ -434,6 +434,66 @@ set_skybox_texture :: proc(engine: ^Engine, handle: TextureHandle) {
 	backend.descriptor_write_image_view(&engine.vk_ctx, &engine.global_descriptor, 2, &t.gpu, t.sampler)
 }
 
+// Renders every active light's shadow maps. Each atlas is transitioned as a whole (all layers,
+// used or not) so the mesh pass always samples it in the layout the descriptor expects.
+draw_shadow_maps :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+	scene_data := (^SceneData)(backend.buffer_mapped_ptr(current_frame_data(engine).scene_data_buffer))
+	dir_count := min(int(engine.scene.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
+	spot_count := min(int(engine.scene.spot_light_count), MAX_SPOT_LIGHTS)
+	point_count := min(int(engine.scene.point_light_count), MAX_POINT_LIGHTS)
+
+	// 2D atlas: directional cascades first, then spot lights from SPOT_SHADOW_SLOT_BASE
+	atlas_2d := &engine.shadow_2d_atlas
+	shadow_atlas_transition(cmd, atlas_2d, .Depth_Write, MAX_SHADOW_2D_SLOTS)
+	for light_i in 0 ..< dir_count {
+		for cascade in 0 ..< SHADOW_MAP_CASCADE_COUNT {
+			slot := u32(light_i * SHADOW_MAP_CASCADE_COUNT + cascade)
+			shadow_pass(engine, cmd, atlas_2d, slot, .Directional, u32(light_i), scene_data.shadow_2d_view_proj[slot])
+		}
+	}
+	for light_i in 0 ..< spot_count {
+		slot := SPOT_SHADOW_SLOT_BASE + u32(light_i)
+		shadow_pass(engine, cmd, atlas_2d, slot, .Spot, u32(light_i), scene_data.shadow_2d_view_proj[slot])
+	}
+	shadow_atlas_transition(cmd, atlas_2d, .Depth_Read, MAX_SHADOW_2D_SLOTS)
+
+	// cube atlas: 6 faces per point light
+	atlas_cube := &engine.shadow_atlas
+	shadow_atlas_transition(cmd, atlas_cube, .Depth_Write, MAX_POINT_LIGHTS * 6)
+	for light_i in 0 ..< point_count {
+		for face_i in 0 ..< 6 {
+			layer := u32(light_i * 6 + face_i)
+			view_proj := scene_data.point_light_view_proj[light_i][face_i]
+			shadow_pass(engine, cmd, atlas_cube, layer, .Point, u32(light_i), view_proj)
+		}
+	}
+	shadow_atlas_transition(cmd, atlas_cube, .Depth_Read, MAX_POINT_LIGHTS * 6)
+}
+
+// Renders one atlas layer. The atlas must already be in .Depth_Write (see shadow_atlas_transition).
+shadow_pass :: proc(
+	engine: ^Engine,
+	cmd: backend.CommandBuffer,
+	atlas: ^ShadowAtlas,
+	layer: u32,
+	light_type: ShadowLightType,
+	light_index: u32,
+	view_proj: Mat4x4,
+) {
+	encoder := backend.begin_render_pass(
+		&engine.vk_ctx,
+		cmd,
+		backend.PassConfig {
+			depth = {image = &atlas.gpu, layer = layer},
+			load_op = .Clear,
+			store_depth = true,
+			skip_depth_transition = true,
+		},
+	)
+	draw_shadow(engine, encoder, light_type, light_index, view_proj)
+	backend.end_render_pass(encoder)
+}
+
 draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	pipeline := get_pipeline(&engine.pipeline_registry, .Skybox)
 	skybox_frame_idx := current_frame_res_index(engine)
@@ -502,7 +562,7 @@ draw_debug_shadow_map :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			// first spot light's slot in the 2D shadow atlas
 			pc = {
 				mode  = .Shadow_2D,
-				index = MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT,
+				index = SPOT_SHADOW_SLOT_BASE,
 			}
 		}
 		draw_debug_view(engine, encoder, pc, rect)
@@ -525,100 +585,7 @@ draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	// dispatch_particles(engine, cmd)
 
-	shadow_light_count := min(int(engine.scene.point_light_count), MAX_POINT_LIGHTS)
-	dir_shadow_light_count := min(int(engine.scene.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
-	spot_shadow_light_count := min(int(engine.scene.spot_light_count), MAX_SPOT_LIGHTS)
-
-	// 2D shadow maps (directional lights first, then spot lights)
-	backend.image_barrier(
-		cmd,
-		&engine.shadow_2d_atlas.gpu,
-		.Depth_Write,
-		backend.ImageAspectFlags{.Depth},
-		layer_count = MAX_SHADOW_2D_SLOTS,
-	)
-
-	for i in 0 ..< dir_shadow_light_count {
-		for cascade in 0 ..< SHADOW_MAP_CASCADE_COUNT {
-			slot := u32(i * SHADOW_MAP_CASCADE_COUNT + cascade)
-			encoder := backend.begin_render_pass(
-				&engine.vk_ctx,
-				cmd,
-				backend.PassConfig {
-					depth = {image = &engine.shadow_2d_atlas.gpu, layer = slot},
-					load_op = .Clear,
-					store_depth = true,
-					skip_depth_transition = true,
-				},
-			)
-			scene_data := (^SceneData)(backend.buffer_mapped_ptr(current_frame_data(engine).scene_data_buffer))
-			draw_shadow(engine, encoder, .Directional, slot, scene_data.shadow_2d_view_proj[slot])
-			backend.end_render_pass(encoder)
-		}
-	}
-	for i in 0 ..< spot_shadow_light_count {
-		encoder := backend.begin_render_pass(
-			&engine.vk_ctx,
-			cmd,
-			backend.PassConfig {
-				depth = {
-					image = &engine.shadow_2d_atlas.gpu,
-					layer = u32((MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + i),
-				},
-				load_op = .Clear,
-				store_depth = true,
-				skip_depth_transition = true,
-			},
-		)
-		scene_data := (^SceneData)(backend.buffer_mapped_ptr(current_frame_data(engine).scene_data_buffer))
-		slot := u32((MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + i)
-		draw_shadow(engine, encoder, .Spot, u32(i), scene_data.shadow_2d_view_proj[slot])
-		backend.end_render_pass(encoder)
-	}
-	// Transition 2D shadow atlas to read-only for the mesh pass
-	backend.image_barrier(
-		cmd,
-		&engine.shadow_2d_atlas.gpu,
-		.Depth_Read,
-		backend.ImageAspectFlags{.Depth},
-		layer_count = MAX_SHADOW_2D_SLOTS,
-	)
-
-	// Always transition all MAX_POINT_LIGHTS*6 layers so unused layers are in the
-	// expected layout when the mesh pass samples the descriptor.
-	backend.image_barrier(
-		cmd,
-		&engine.shadow_atlas.gpu,
-		.Depth_Write,
-		backend.ImageAspectFlags{.Depth},
-		layer_count = MAX_POINT_LIGHTS * 6,
-	)
-	for light_i in 0 ..< shadow_light_count {
-		for face_i in 0 ..< 6 {
-			view_i := light_i * 6 + face_i
-			encoder := backend.begin_render_pass(
-				&engine.vk_ctx,
-				cmd,
-				backend.PassConfig {
-					depth = {image = &engine.shadow_atlas.gpu, layer = u32(view_i)},
-					load_op = .Clear,
-					store_depth = true,
-					skip_depth_transition = true,
-				},
-			)
-			scene_data := (^SceneData)(backend.buffer_mapped_ptr(current_frame_data(engine).scene_data_buffer))
-			draw_shadow(engine, encoder, .Point, u32(light_i), scene_data.point_light_view_proj[light_i][face_i])
-			backend.end_render_pass(encoder)
-		}
-	}
-
-	backend.image_barrier(
-		cmd,
-		&engine.shadow_atlas.gpu,
-		.Depth_Read,
-		backend.ImageAspectFlags{.Depth},
-		layer_count = MAX_POINT_LIGHTS * 6,
-	)
+	draw_shadow_maps(engine, cmd)
 
 	{
 		encoder := backend.begin_render_pass(
