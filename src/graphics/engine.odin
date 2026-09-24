@@ -219,11 +219,15 @@ dispatch_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		delta_time    = engine.time_info.delta_time,
 	}
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
+	backend.cmd_use_compute_buffer(encoder, engine.frame_data[last_frame].particle_buffer, {.Read})
+	backend.cmd_use_compute_buffer(encoder, engine.frame_data[frame_res_index].particle_buffer, {.Write})
 	// particles_in was written by the previous frame's dispatch in an earlier submission.
 	backend.cmd_barrier_compute_write_to_compute_read(encoder)
 	backend.pipeline_bind_compute(encoder, pipeline)
 	backend.pipeline_push_compute(encoder, pipeline, &compute_pc)
-	backend.cmd_dispatch(encoder, PARTICLE_COUNT / 256, 1, 1)
+	// Keep the local size in sync with particle.slang's numthreads declaration.
+	#assert(PARTICLE_COUNT % 256 == 0)
+	backend.cmd_dispatch(encoder, PARTICLE_COUNT / 256, 1, 1, {256, 1, 1})
 	backend.cmd_barrier_compute_write_to_vertex_read(encoder)
 	backend.end_compute_pass(encoder)
 }
@@ -237,6 +241,8 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		particles_out = engine.frame_data[frame_res_index].particle_buffer.ptr,
 	}
 	backend.pipeline_bind(cmd, pipeline)
+	backend.cmd_use_buffer(cmd, engine.frame_data[frame_res_index].scene_data_buffer)
+	backend.cmd_use_buffer(cmd, engine.frame_data[frame_res_index].particle_buffer)
 	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &particle_pc)
 	backend.cmd_draw_points(cmd, PARTICLE_COUNT)
 }

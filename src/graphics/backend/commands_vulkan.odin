@@ -69,6 +69,10 @@ cmd_set_depth_bias :: proc(cmd: CommandBuffer, bias, clamp, slope: f32) {
 cmd_use_buffer :: proc(cmd: RenderEncoder, buffer: GpuBuffer($T)) {
 }
 
+// Vulkan uses explicit barriers; buffer addresses don't require residency declarations.
+cmd_use_compute_buffer :: proc(cmd: ComputeEncoder, buffer: GpuBuffer($T), access: BufferAccessFlags) {
+}
+
 cmd_draw :: proc(
 	cmd: CommandBuffer,
 	vertex_count: u32 = 3,
@@ -88,7 +92,8 @@ cmd_draw_indexed :: proc(cmd: CommandBuffer, index_buffer: vk.Buffer, index_coun
 	vk.CmdDrawIndexed(vk.CommandBuffer(cmd), index_count, 1, 0, 0, 0)
 }
 
-cmd_dispatch :: proc(cmd: CommandBuffer, x, y, z: u32) {
+// Vulkan takes the local workgroup size from the shader.
+cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32, threads_per_group: [3]u32) {
 	vk.CmdDispatch(vk.CommandBuffer(cmd), x, y, z)
 }
 

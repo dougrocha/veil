@@ -52,9 +52,13 @@ cmd_draw_indexed :: proc(cmd: RenderEncoder, index_buffer: ^MTL.Buffer, index_co
 	encoder->drawIndexedPrimitives(.Triangle, NS.UInteger(index_count), .UInt32, index_buffer, 0)
 }
 
-cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32) {
+// threads_per_group must match the shader's numthreads declaration.
+cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32, threads_per_group: [3]u32) {
 	encoder := (^MTL.ComputeCommandEncoder)(cmd)
-	encoder->dispatchThreadgroups(MTL.Size{NS.Integer(x), NS.Integer(y), NS.Integer(z)}, MTL.Size{1, 1, 1})
+	encoder->dispatchThreadgroups(
+		MTL.Size{NS.Integer(x), NS.Integer(y), NS.Integer(z)},
+		MTL.Size{NS.Integer(threads_per_group[0]), NS.Integer(threads_per_group[1]), NS.Integer(threads_per_group[2])},
+	)
 }
 
 cmd_set_depth_bias :: proc(cmd: RenderEncoder, bias, clamp, slope: f32) {
@@ -65,6 +69,14 @@ cmd_set_depth_bias :: proc(cmd: RenderEncoder, bias, clamp, slope: f32) {
 cmd_use_buffer :: proc(cmd: RenderEncoder, buffer: GpuBuffer($T)) {
 	encoder := (^MTL.RenderCommandEncoder)(cmd)
 	encoder->useResourceWithStages((^MTL.Resource)(buffer.buffer), {.Read}, {.Vertex, .Fragment})
+}
+
+cmd_use_compute_buffer :: proc(cmd: ComputeEncoder, buffer: GpuBuffer($T), access: BufferAccessFlags) {
+	encoder := (^MTL.ComputeCommandEncoder)(cmd)
+	usage: MTL.ResourceUsage
+	if .Read in access do usage += {.Read}
+	if .Write in access do usage += {.Write}
+	encoder->useResource((^MTL.Resource)(buffer.buffer), usage)
 }
 
 cmd_barrier_compute_write_to_vertex_read :: proc(cmd: ComputeEncoder) {

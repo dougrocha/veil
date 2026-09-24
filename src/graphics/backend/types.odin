@@ -7,6 +7,13 @@ VEIL_VULKAN :: ODIN_OS == .Linux
 
 MAX_FRAMES_IN_FLIGHT :: 2
 
+BufferAccess :: enum {
+	Read,
+	Write,
+}
+
+BufferAccessFlags :: bit_set[BufferAccess]
+
 ImageUsage :: enum {
 	TransferSrc,
 	TransferDst,

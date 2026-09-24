@@ -21,6 +21,12 @@ FrameDump :: struct {
 
 // Debug switches that a headless dump run needs but has no keyboard for.
 debug_env_init :: proc(engine: ^Engine) {
+	if value, found := os.lookup_env("VEIL_PARTICLES", context.allocator); found {
+		defer delete(value)
+		engine.debug_settings.particles = value != "0"
+		log.infof("particles enabled via VEIL_PARTICLES: %v", engine.debug_settings.particles)
+	}
+
 	if value, found := os.lookup_env("VEIL_NO_SHADOWS", context.allocator); found {
 		defer delete(value)
 		if value != "0" {
