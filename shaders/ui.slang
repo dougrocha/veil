@@ -49,6 +49,6 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragment_main(VSOutput input) : SV_TARGET {
-    float coverage = gpu_texture(pc.atlas_texture).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), input.uv).r;
+    float coverage = gpu_texture(pc.atlas_texture).Sample(gpu_sampler(SAMPLER_LINEAR_CLAMP), input.uv).r;
     return float4(input.color.rgb, input.color.a * coverage);
 }

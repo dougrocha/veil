@@ -31,7 +31,9 @@ context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 	sdl.GetWindowSizeInPixels(window, &width, &height)
 	ctx.layer->setDrawableSize(NS.Size{NS.Float(width), NS.Float(height)})
 
-	ctx.max_bindless_samplers_per_stage = u32(ctx.device->maxArgumentBufferSamplerCount())
+	// Metal has no query for this. 500,000 is the documented Tier 2 argument buffer
+	// texture limit, which every Metal 3 device supports.
+	ctx.max_bindless_textures_per_stage = 500_000
 
 	ctx.msaa_samples = 1
 	candidate_samples := [4]u32{8, 4, 2, 1}

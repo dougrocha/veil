@@ -40,7 +40,7 @@ Context :: struct {
 	graphics_queue:                  vk.Queue,
 	msaa_samples:                    vk.SampleCountFlags,
 	upload_pool:                     vk.CommandPool,
-	max_bindless_samplers_per_stage: u32,
+	max_bindless_textures_per_stage: u32,
 	timeline_semaphore:              vk.Semaphore,
 	frame_sync:                      [MAX_FRAMES_IN_FLIGHT]FrameSync,
 }

@@ -35,7 +35,7 @@ Context :: struct {
 	command_queue:                   ^MTL.CommandQueue,
 	metal_view:                      sdl.MetalView,
 	layer:                           ^CA.MetalLayer,
-	max_bindless_samplers_per_stage: u32,
+	max_bindless_textures_per_stage: u32,
 	msaa_samples:                    u32,
 	frame_sync:                      [MAX_FRAMES_IN_FLIGHT]FrameSync,
 	immediate_pool:                  rawptr,

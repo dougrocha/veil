@@ -40,7 +40,7 @@ context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 	ctx.msaa_samples = vk_get_max_usable_sample_count(ctx)
 	// bindless array sizes must be clamped to what the device actually
 	// supports instead of a single hardcoded constant.
-	ctx.max_bindless_samplers_per_stage = vk_get_max_bindless_samplers_per_stage(ctx)
+	ctx.max_bindless_textures_per_stage = vk_get_max_bindless_textures_per_stage(ctx)
 
 	return true
 }

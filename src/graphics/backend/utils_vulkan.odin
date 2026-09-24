@@ -24,7 +24,7 @@ vk_get_physical_device_format_properties :: proc(ctx: ^Context, format: vk.Forma
 	return format_props
 }
 
-vk_get_max_bindless_samplers_per_stage :: proc(ctx: ^Context) -> u32 {
+vk_get_max_bindless_textures_per_stage :: proc(ctx: ^Context) -> u32 {
 	descriptor_indexing_props := vk.PhysicalDeviceDescriptorIndexingProperties {
 		sType = .PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES,
 	}
@@ -33,10 +33,7 @@ vk_get_max_bindless_samplers_per_stage :: proc(ctx: ^Context) -> u32 {
 		pNext = &descriptor_indexing_props,
 	}
 	vk.GetPhysicalDeviceProperties2(ctx.physical_device, &props2)
-
-	properties := vk_get_physical_device_properties(ctx)
-
-	return descriptor_indexing_props.maxPerStageDescriptorUpdateAfterBindSamplers
+	return descriptor_indexing_props.maxPerStageDescriptorUpdateAfterBindSampledImages
 }
 
 vk_get_max_usable_sample_count :: proc(ctx: ^Context) -> vk.SampleCountFlags {

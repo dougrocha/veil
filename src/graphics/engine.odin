@@ -35,8 +35,8 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 		engine.vk_ctx.msaa_samples,
 	)
 
-	// macos (Moltenvk) wont support what we set for MAX_TEXTURES
-	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_samplers_per_stage - 3)
+	// The 3 global combined image samplers (shadow atlases, skybox) count against the same per-stage limit.
+	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_textures_per_stage - 3)
 
 	shader_system_create(engine, max_bindless_textures) or_return
 	shadow_handle := shader_load(engine, "shadow", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
