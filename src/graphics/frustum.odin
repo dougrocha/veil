@@ -46,7 +46,7 @@ frustum_from_view_proj :: proc(proj: Mat4x4) -> Frustum {
 	row3 := Vec4{proj[3, 0], proj[3, 1], proj[3, 2], proj[3, 3]}
 
 	raw_planes := [6]Vec4 {
-		row2,        // near
+		row2, // near
 		row3 - row2, // far
 		row3 + row0, // left
 		row3 - row0, // right

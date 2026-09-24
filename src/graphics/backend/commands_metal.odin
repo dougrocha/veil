@@ -57,15 +57,15 @@ cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32) {
 	encoder->dispatchThreadgroups(MTL.Size{NS.Integer(x), NS.Integer(y), NS.Integer(z)}, MTL.Size{1, 1, 1})
 }
 
-	cmd_set_depth_bias :: proc(cmd: RenderEncoder, bias, clamp, slope: f32) {
-		encoder := (^MTL.RenderCommandEncoder)(cmd)
-		encoder->setDepthBias(bias, slope, clamp)
-	}
+cmd_set_depth_bias :: proc(cmd: RenderEncoder, bias, clamp, slope: f32) {
+	encoder := (^MTL.RenderCommandEncoder)(cmd)
+	encoder->setDepthBias(bias, slope, clamp)
+}
 
-	cmd_use_buffer :: proc(cmd: RenderEncoder, buffer: GpuBuffer($T)) {
-		encoder := (^MTL.RenderCommandEncoder)(cmd)
-		encoder->useResourceWithStages((^MTL.Resource)(buffer.buffer), {.Read}, {.Vertex, .Fragment})
-	}
+cmd_use_buffer :: proc(cmd: RenderEncoder, buffer: GpuBuffer($T)) {
+	encoder := (^MTL.RenderCommandEncoder)(cmd)
+	encoder->useResourceWithStages((^MTL.Resource)(buffer.buffer), {.Read}, {.Vertex, .Fragment})
+}
 
 cmd_barrier_compute_write_to_vertex_read :: proc(cmd: ComputeEncoder) {
 }

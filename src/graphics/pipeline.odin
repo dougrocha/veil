@@ -123,11 +123,7 @@ register_ui_pipeline :: proc(engine: ^Engine, ui_handle: ShaderHandle) {
 	backend.pipeline_config_disable_depth(&config)
 	backend.pipeline_config_set_no_depth_attachment(&config)
 	backend.pipeline_config_set_blend(&config, .Alpha)
-	backend.pipeline_config_set_descriptor_layouts(
-		&config,
-		engine.texture_system.descriptor,
-		engine.global_descriptor,
-	)
+	backend.pipeline_config_set_descriptor_layouts(&config, engine.texture_system.descriptor, engine.global_descriptor)
 	backend.pipeline_config_set_push_constant(&config, size_of(UIPushConstants), {.Vertex, .Fragment})
 	pipeline_register(engine, .UI, ui_handle, config)
 }
@@ -137,11 +133,7 @@ register_mesh_pipeline :: proc(engine: ^Engine, mesh_handle: ShaderHandle) {
 	backend.pipeline_config_set_msaa(&config, &engine.vk_ctx)
 	backend.pipeline_config_set_depth_dynamic(&config)
 	backend.pipeline_config_set_blend(&config, .Alpha)
-	backend.pipeline_config_set_descriptor_layouts(
-		&config,
-		engine.texture_system.descriptor,
-		engine.global_descriptor,
-	)
+	backend.pipeline_config_set_descriptor_layouts(&config, engine.texture_system.descriptor, engine.global_descriptor)
 	backend.pipeline_config_set_push_constant(&config, size_of(PushConstants), {.Vertex, .Fragment})
 	pipeline_register(engine, .Mesh, mesh_handle, config)
 }
@@ -177,11 +169,7 @@ register_debug_view_pipeline :: proc(engine: ^Engine, debug_view_handle: ShaderH
 	backend.pipeline_config_set_no_cull(&config)
 	backend.pipeline_config_disable_depth(&config)
 	backend.pipeline_config_set_no_depth_attachment(&config)
-	backend.pipeline_config_set_descriptor_layouts(
-		&config,
-		engine.texture_system.descriptor,
-		engine.global_descriptor,
-	)
+	backend.pipeline_config_set_descriptor_layouts(&config, engine.texture_system.descriptor, engine.global_descriptor)
 	backend.pipeline_config_set_push_constant(&config, size_of(DebugViewPushConstants), {.Fragment})
 	pipeline_register(engine, .Debug_View, debug_view_handle, config)
 }

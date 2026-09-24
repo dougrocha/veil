@@ -3,31 +3,31 @@ package graphics
 import "core:log"
 
 AmbientLight :: struct {
-	color: Vec4,
+	color:      Vec4,
 	brightness: f32,
 }
 
 PointLight :: struct {
-	pos: Vec3,
-	range, shadow_near: f32,
-	color: Vec3,
-	constant, linear, quadratic: f32,
+	pos:                                   Vec3,
+	range, shadow_near:                    f32,
+	color:                                 Vec3,
+	constant, linear, quadratic:           f32,
 	diffuse_intensity, specular_intensity: f32,
 }
 
 DirectionalLight :: struct {
-	direction: Vec3,
-	color: Vec3,
+	direction:                                                      Vec3,
+	color:                                                          Vec3,
 	diffuse_intensity, specular_intensity, shadow_maximum_distance: f32,
 }
 
 SpotLight :: struct {
-	pos: Vec3,
-	range, shadow_near, inner_cutoff: f32,
-	direction: Vec3,
+	pos:                                       Vec3,
+	range, shadow_near, inner_cutoff:          f32,
+	direction:                                 Vec3,
 	outer_cutoff, constant, linear, quadratic: f32,
-	color: Vec3,
-	diffuse_intensity, specular_intensity: f32,
+	color:                                     Vec3,
+	diffuse_intensity, specular_intensity:     f32,
 }
 
 light_spawn_point :: proc(engine: ^Engine, light: PointLight) {

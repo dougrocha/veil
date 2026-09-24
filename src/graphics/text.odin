@@ -104,7 +104,7 @@ font_load_from_file :: proc(engine: ^Engine, path: string, pixel_height: f32) ->
 	}
 
 	texture := Texture {
-		gpu           = {extent = backend.extent3d(u32(font.atlas_w), u32(font.atlas_h), 1)},
+		gpu = {extent = backend.extent3d(u32(font.atlas_w), u32(font.atlas_h), 1)},
 		channel_count = 1,
 	}
 	texture_upload(&engine.vk_ctx, raw_data(atlas_pixels), &texture, .R8_Unorm)
@@ -112,7 +112,14 @@ font_load_from_file :: proc(engine: ^Engine, path: string, pixel_height: f32) ->
 	ts := &engine.texture_system
 	font.texture = texture_register(engine, &ts.linear_texture_map, path, texture)
 
-	log.debugf("Loaded font: %s (%dx%d atlas, %d glyphs baked) -> bindless slot %d", path, font.atlas_w, font.atlas_h, font.num_chars, font.texture.index)
+	log.debugf(
+		"Loaded font: %s (%dx%d atlas, %d glyphs baked) -> bindless slot %d",
+		path,
+		font.atlas_w,
+		font.atlas_h,
+		font.num_chars,
+		font.texture.index,
+	)
 
 	return font, true
 }
@@ -131,12 +138,37 @@ ui_draw_text :: proc(engine: ^Engine, font: ^Baked_Font, text: string, x, y: f32
 
 		quad: stbtt.aligned_quad
 		// false selects D3D/Vulkan-style pixel-center convention (vs. OpenGL's), matching this renderer's backend.
-		stbtt.GetBakedQuad(raw_data(font.chardata[:]), font.atlas_w, font.atlas_h, char_index, &xpos, &ypos, &quad, false)
+		stbtt.GetBakedQuad(
+			raw_data(font.chardata[:]),
+			font.atlas_w,
+			font.atlas_h,
+			char_index,
+			&xpos,
+			&ypos,
+			&quad,
+			false,
+		)
 
-		top_left := UI_Vertex{position = {quad.x0, quad.y0}, uv = {quad.s0, quad.t0}, color = color}
-		top_right := UI_Vertex{position = {quad.x1, quad.y0}, uv = {quad.s1, quad.t0}, color = color}
-		bottom_left := UI_Vertex{position = {quad.x0, quad.y1}, uv = {quad.s0, quad.t1}, color = color}
-		bottom_right := UI_Vertex{position = {quad.x1, quad.y1}, uv = {quad.s1, quad.t1}, color = color}
+		top_left := UI_Vertex {
+			position = {quad.x0, quad.y0},
+			uv       = {quad.s0, quad.t0},
+			color    = color,
+		}
+		top_right := UI_Vertex {
+			position = {quad.x1, quad.y0},
+			uv       = {quad.s1, quad.t0},
+			color    = color,
+		}
+		bottom_left := UI_Vertex {
+			position = {quad.x0, quad.y1},
+			uv       = {quad.s0, quad.t1},
+			color    = color,
+		}
+		bottom_right := UI_Vertex {
+			position = {quad.x1, quad.y1},
+			uv       = {quad.s1, quad.t1},
+			color    = color,
+		}
 
 		append(&batch.vertices, top_left, top_right, bottom_right, top_left, bottom_right, bottom_left)
 	}

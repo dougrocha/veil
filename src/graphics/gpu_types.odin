@@ -28,21 +28,21 @@ GpuPointLight :: struct #max_field_align(16) {
 	position_range:      Vec4,
 	color_shadow_near:   Vec4,
 	attenuation_diffuse: Vec4,
-	specular_reserved:    Vec4,
+	specular_reserved:   Vec4,
 }
 
 GpuDirectionalLight :: struct #max_field_align(16) {
-	direction_diffuse: Vec4,
-	color_specular:    Vec4,
+	direction_diffuse:       Vec4,
+	color_specular:          Vec4,
 	shadow_maximum_reserved: Vec4,
 }
 
 GpuSpotLight :: struct #max_field_align(16) {
-	position_range:       Vec4,
-	direction_inner:      Vec4,
-	color_outer:           Vec4,
-	attenuation:           Vec4,
-	intensity:             Vec4,
+	position_range:  Vec4,
+	direction_inner: Vec4,
+	color_outer:     Vec4,
+	attenuation:     Vec4,
+	intensity:       Vec4,
 }
 
 GpuTimeInfo :: struct #max_field_align(16) {

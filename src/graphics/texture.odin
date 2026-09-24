@@ -46,8 +46,8 @@ DefaultTexture :: enum u8 {
 }
 
 TextureSystem :: struct {
-	config:      TextureSystemConfig,
-	descriptor:  backend.DescriptorSet,
+	config:             TextureSystemConfig,
+	descriptor:         backend.DescriptorSet,
 
 	// storage pool
 	textures:           Pool(Texture),
@@ -138,7 +138,11 @@ texture_create_builtin :: proc(engine: ^Engine) {
 		return handle
 	}
 
-	ts.defaults[.White] = upload_builtin(engine, Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4}, &white)
+	ts.defaults[.White] = upload_builtin(
+		engine,
+		Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4},
+		&white,
+	)
 	ts.defaults[.Metallic_Roughness] = upload_builtin(
 		engine,
 		Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4},
@@ -150,7 +154,11 @@ texture_create_builtin :: proc(engine: ^Engine) {
 		&flat_normal,
 		.Rgba8_Unorm,
 	)
-	ts.defaults[.Occlusion] = upload_builtin(engine, Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4}, &white)
+	ts.defaults[.Occlusion] = upload_builtin(
+		engine,
+		Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4},
+		&white,
+	)
 }
 
 texture_load :: proc {

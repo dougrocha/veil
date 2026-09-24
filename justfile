@@ -20,6 +20,11 @@ run: build
 run-debug: debug
     ./{{out_base}}-debug.out
 
+# format odin sources (skips shared/ and generated files)
+format:
+    #!/usr/bin/env bash
+    git ls-files 'src/*.odin' 'tools/*.odin' | grep -v '_generated\.odin$' | xargs -n1 odinfmt -w
+
 gpu-types:
     ./tools/generate-gpu-types.sh
 

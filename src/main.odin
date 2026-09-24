@@ -188,10 +188,10 @@ main :: proc() {
 	gfx.spawn_directional_light(
 		&app.engine,
 		gfx.DirectionalLight {
-			direction = linalg.normalize(gfx.Vec3{-1.0, -1.0, 0.5}),
-			color = {1.0, 0.9, 0.8},
-			diffuse_intensity = 0.3,
-			specular_intensity = 0.2,
+			direction               = linalg.normalize(gfx.Vec3{-1.0, -1.0, 0.5}),
+			color                   = {1.0, 0.9, 0.8},
+			diffuse_intensity       = 0.3,
+			specular_intensity      = 0.2,
 			// scene is ~15 units deep; keeps all four cascades over real geometry
 			shadow_maximum_distance = 25.0,
 		},
@@ -200,7 +200,10 @@ main :: proc() {
 	yellow_mat := gfx.material_create(&app.engine, "yellow_mat", base_color = {1, 1, 0, 1})
 	light_sphere_model := gfx.primitive_sphere(&app.engine, "light_sphere", material = yellow_mat)
 	light_sphere := gfx.instance_spawn(
-		&app.engine, light_sphere_model, gfx.transform_create(scale = {0.2, 0.2, 0.2}), casts_shadow = false,
+		&app.engine,
+		light_sphere_model,
+		gfx.transform_create(scale = {0.2, 0.2, 0.2}),
+		casts_shadow = false,
 	)
 
 	light_pos := gfx.Vec3{-3, 3, 1}
@@ -302,12 +305,20 @@ main :: proc() {
 					selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
 					if gizmo_mode == .Translate {
 						parameter, ok := gfx.gizmo_drag_parameter(
-							active_cam^, drag_origin, drag_direction, mouse_pos, viewport_size,
+							active_cam^,
+							drag_origin,
+							drag_direction,
+							mouse_pos,
+							viewport_size,
 						)
 						if ok do selected.transform.translation = drag_origin + drag_direction * (parameter - drag_start_parameter)
 					} else {
 						radial, ok := gfx.gizmo_rotation_radial(
-							active_cam^, drag_origin, drag_direction, mouse_pos, viewport_size,
+							active_cam^,
+							drag_origin,
+							drag_direction,
+							mouse_pos,
+							viewport_size,
 						)
 						if ok {
 							angle := math.atan2(
@@ -334,24 +345,45 @@ main :: proc() {
 					if app.engine.scene.selected_instance != gfx.INVALID_INSTANCE {
 						selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
 						if gizmo_mode == .Translate {
-							axis = gfx.gizmo_pick_translation(&app.engine, selected.transform, mouse_pos, viewport_size, translation_space)
+							axis = gfx.gizmo_pick_translation(
+								&app.engine,
+								selected.transform,
+								mouse_pos,
+								viewport_size,
+								translation_space,
+							)
 						} else {
 							model := gfx.pool_get(&app.engine.model_system.models, selected.model)
-							axis = gfx.gizmo_pick_rotation(&app.engine, selected.transform, model.bounds, mouse_pos, viewport_size)
+							axis = gfx.gizmo_pick_rotation(
+								&app.engine,
+								selected.transform,
+								model.bounds,
+								mouse_pos,
+								viewport_size,
+							)
 						}
 					}
 					if axis != .None {
 						active_gizmo_axis = axis
 						selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
 						drag_origin = selected.transform.translation
-						drag_direction = gfx.gizmo_translation_axis_direction(selected.transform, axis, translation_space) if gizmo_mode == .Translate else gfx.gizmo_axis_direction(selected.transform, axis)
+						drag_direction =
+							gfx.gizmo_translation_axis_direction(selected.transform, axis, translation_space) if gizmo_mode == .Translate else gfx.gizmo_axis_direction(selected.transform, axis)
 						if gizmo_mode == .Translate {
 							drag_start_parameter, gizmo_dragging = gfx.gizmo_drag_parameter(
-								active_cam^, drag_origin, drag_direction, mouse_pos, viewport_size,
+								active_cam^,
+								drag_origin,
+								drag_direction,
+								mouse_pos,
+								viewport_size,
 							)
 						} else {
 							drag_previous_radial, gizmo_dragging = gfx.gizmo_rotation_radial(
-								active_cam^, drag_origin, drag_direction, mouse_pos, viewport_size,
+								active_cam^,
+								drag_origin,
+								drag_direction,
+								mouse_pos,
+								viewport_size,
 							)
 							if gizmo_dragging {
 								drag_start_radial = drag_previous_radial
@@ -388,14 +420,21 @@ main :: proc() {
 		app.fps_frame_count += 1
 		app.fps_timer += delta_time
 		process_input(active_cam, delta_time)
-		app.engine.scene.point_lights[point_light_index].pos = gfx.instance_get(&app.engine, light_sphere).transform.translation
+		app.engine.scene.point_lights[point_light_index].pos =
+			gfx.instance_get(&app.engine, light_sphere).transform.translation
 		if app.fps_timer >= 1.0 {
 			app.avg_fps = app.fps_frame_count
 			log.infof("FPS: %d, models drawn: %d", app.fps_frame_count, app.engine.drawn_instance_count)
 			log.infof("(%v) Camera position: %v", app.engine.scene.active_camera_name, active_cam.position)
 			log.infof("Point light position: %v", app.engine.scene.point_lights[point_light_index].pos)
-			log.infof("Shiny cube position: %v", gfx.instance_get(&app.engine, shiny_cube_instance).transform.translation)
-			log.infof("Rough cube position: %v", gfx.instance_get(&app.engine, rough_cube_instance).transform.translation)
+			log.infof(
+				"Shiny cube position: %v",
+				gfx.instance_get(&app.engine, shiny_cube_instance).transform.translation,
+			)
+			log.infof(
+				"Rough cube position: %v",
+				gfx.instance_get(&app.engine, rough_cube_instance).transform.translation,
+			)
 			app.fps_frame_count = 0
 			app.fps_timer = 0
 		}
@@ -405,12 +444,23 @@ main :: proc() {
 		if app.engine.scene.selected_instance != gfx.INVALID_INSTANCE {
 			selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
 			if gizmo_mode == .Translate {
-				gfx.gizmo_draw_translation(&app.engine, selected.transform, active_gizmo_axis, gizmo_dragging, translation_space)
+				gfx.gizmo_draw_translation(
+					&app.engine,
+					selected.transform,
+					active_gizmo_axis,
+					gizmo_dragging,
+					translation_space,
+				)
 			} else {
 				model := gfx.pool_get(&app.engine.model_system.models, selected.model)
 				gfx.gizmo_draw_rotation(
-					&app.engine, selected.transform, model.bounds, active_gizmo_axis,
-					gizmo_dragging, drag_start_radial, drag_sweep_angle,
+					&app.engine,
+					selected.transform,
+					model.bounds,
+					active_gizmo_axis,
+					gizmo_dragging,
+					drag_start_radial,
+					drag_sweep_angle,
 				)
 			}
 		}

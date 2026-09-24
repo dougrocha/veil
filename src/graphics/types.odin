@@ -97,12 +97,12 @@ LightMask :: enum u32 {
 }
 
 DebugSettings :: struct {
-	show_cascades, disable_shadows, light_mask: u32
+	show_cascades, disable_shadows, light_mask: u32,
 }
 
 TimeInfo :: struct {
 	time, delta_time: f32,
-	frame_count: u32,
+	frame_count:      u32,
 }
 
 Scene :: struct {

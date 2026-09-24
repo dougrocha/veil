@@ -76,18 +76,14 @@ main :: proc() {
 	}
 	targets := [2]sp.TargetDesc {
 		{
-			structureSize         = size_of(sp.TargetDesc),
-			format                = .SPIRV,
-			flags                 = {.GENERATE_SPIRV_DIRECTLY},
-			profile               = global->findProfile("spirv"),
+			structureSize = size_of(sp.TargetDesc),
+			format = .SPIRV,
+			flags = {.GENERATE_SPIRV_DIRECTLY},
+			profile = global->findProfile("spirv"),
 			compilerOptionEntries = &spirv_options[0],
 			compilerOptionEntryCount = len(spirv_options),
 		},
-		{
-			structureSize = size_of(sp.TargetDesc),
-			format        = .METAL,
-			profile       = global->findProfile("metal"),
-		},
+		{structureSize = size_of(sp.TargetDesc), format = .METAL, profile = global->findProfile("metal")},
 	}
 	search_paths := [1]cstring{"shaders"}
 	session_desc := sp.SessionDesc {
@@ -152,7 +148,15 @@ main :: proc() {
 			vk_offset := sp.ReflectionVariableLayout_GetOffset(vk_field, .Uniform)
 			metal_offset := sp.ReflectionVariableLayout_GetOffset(metal_field, .Uniform)
 			if vk_offset != metal_offset {
-				fail(fmt.tprintf("layout divergence: %s.%s offset is Vulkan=%d Metal=%d", spec.slang_name, field_name, vk_offset, metal_offset))
+				fail(
+					fmt.tprintf(
+						"layout divergence: %s.%s offset is Vulkan=%d Metal=%d",
+						spec.slang_name,
+						field_name,
+						vk_offset,
+						metal_offset,
+					),
+				)
 			}
 			fmt.printf("#assert(offset_of(%s, %s) == %d)\n", spec.odin_name, field_name, vk_offset)
 		}

@@ -65,7 +65,11 @@ ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		assert(len(batch.vertices) <= MAX_UI_VERTICES)
 
 		buffer := &batch.buffers[frame_res_index]
-		mem.copy(backend.buffer_mapped_ptr(buffer^), raw_data(batch.vertices), len(batch.vertices) * size_of(UI_Vertex))
+		mem.copy(
+			backend.buffer_mapped_ptr(buffer^),
+			raw_data(batch.vertices),
+			len(batch.vertices) * size_of(UI_Vertex),
+		)
 		backend.cmd_use_buffer(cmd, buffer^)
 
 		pc := UIPushConstants {

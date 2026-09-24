@@ -16,7 +16,10 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	engine.debug_settings.light_mask = LIGHT_MASK_ALL
 	frame_dump_init(engine)
 	debug_env_init(engine)
-	engine.scene.ambient_light = AmbientLight{color = {1, 1, 1, 1}, brightness = 0.03}
+	engine.scene.ambient_light = AmbientLight {
+		color      = {1, 1, 1, 1},
+		brightness = 0.03,
+	}
 
 	pool := backend.autorelease_pool_begin()
 	defer backend.autorelease_pool_end(pool)
@@ -162,7 +165,11 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 
 	// NOTE: purely chance, but your frame resources and swapchain count can be different
 	// in our case, it was chance they are both two.
-	acquire_result := backend.swapchain_acquire_next_image(&app.engine.vk_ctx, &app.engine.swapchain, current_frame_sync)
+	acquire_result := backend.swapchain_acquire_next_image(
+		&app.engine.vk_ctx,
+		&app.engine.swapchain,
+		current_frame_sync,
+	)
 
 	if acquire_result == .NotReady {
 		// Nothing to draw into yet. Drain the debug batches like the minimized path does,
@@ -364,8 +371,8 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		engine.drawn_instance_count += 1
 
 		frame := current_frame_data(engine)
-			for &mesh in model.meshes {
-				backend.cmd_use_buffer(cmd, mesh.vertex_buffer)
+		for &mesh in model.meshes {
+			backend.cmd_use_buffer(cmd, mesh.vertex_buffer)
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if (mat.alpha_mode == .Blend) != blend do continue
 
@@ -377,7 +384,13 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 				material_index   = u32(mesh.material.index),
 				instance_index   = u32(i),
 			}
-			backend.pipeline_push(cmd, get_pipeline(&engine.pipeline_registry, .Mesh), {.Vertex, .Fragment}, &pc, index = 1)
+			backend.pipeline_push(
+				cmd,
+				get_pipeline(&engine.pipeline_registry, .Mesh),
+				{.Vertex, .Fragment},
+				&pc,
+				index = 1,
+			)
 			backend.cmd_draw_indexed(cmd, mesh.index_buffer.buffer, mesh.index_count)
 		}
 	}

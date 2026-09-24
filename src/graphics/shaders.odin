@@ -46,7 +46,13 @@ ShaderSystem :: struct {
 	fw:                     watcher.Watcher,
 }
 
-shader_create_session :: proc(global_session: ^sp.IGlobalSession, bindless_texture_count: u32) -> (^sp.ISession, bool) {
+shader_create_session :: proc(
+	global_session: ^sp.IGlobalSession,
+	bindless_texture_count: u32,
+) -> (
+	^sp.ISession,
+	bool,
+) {
 	when backend.VEIL_METAL {
 		compiler_option_entries := []sp.CompilerOptionEntry{}
 		target_desc := sp.TargetDesc {

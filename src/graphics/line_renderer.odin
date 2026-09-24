@@ -83,7 +83,8 @@ line_renderer_push :: proc(lr: ^LineRenderer, from, to: Vec3, color: Vec4, overl
 }
 
 line_renderer_push_sector_triangle :: proc(lr: ^LineRenderer, a, b, c: Vec3, color: Vec4) {
-	append(&lr.sector.vertices,
+	append(
+		&lr.sector.vertices,
 		LineVertex{position = a, color = color},
 		LineVertex{position = b, color = color},
 		LineVertex{position = c, color = color},
@@ -121,7 +122,13 @@ batch_destroy :: proc(engine: ^Engine, batch: ^LineBatch) {
 }
 
 @(private = "file")
-flush_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: ^LineBatch, kind: PipelineKind, vertex_multiplier: u32 = 3) {
+flush_batch :: proc(
+	engine: ^Engine,
+	cmd: backend.RenderEncoder,
+	batch: ^LineBatch,
+	kind: PipelineKind,
+	vertex_multiplier: u32 = 3,
+) {
 	if len(batch.vertices) == 0 do return
 	assert(len(batch.vertices) <= MAX_LINE_VERTICES)
 

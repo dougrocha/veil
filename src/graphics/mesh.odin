@@ -180,10 +180,18 @@ instance_get :: proc(engine: ^Engine, handle: InstanceHandle) -> ^Instance {
 	return pool_get(&engine.scene.instances, handle)
 }
 
-instance_spawn :: proc(engine: ^Engine, model: ModelHandle, transform: Transform, casts_shadow := true) -> InstanceHandle {
+instance_spawn :: proc(
+	engine: ^Engine,
+	model: ModelHandle,
+	transform: Transform,
+	casts_shadow := true,
+) -> InstanceHandle {
 	if model == INVALID_MODEL {
 		log.errorf("spawn: refusing to spawn an instance of an invalid model handle")
 		return INVALID_INSTANCE
 	}
-	return pool_alloc(&engine.scene.instances, Instance{model = model, transform = transform, casts_shadow = casts_shadow})
+	return pool_alloc(
+		&engine.scene.instances,
+		Instance{model = model, transform = transform, casts_shadow = casts_shadow},
+	)
 }

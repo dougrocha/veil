@@ -62,12 +62,12 @@ cmd_end_recording :: proc(cmd: CommandBuffer) {
 	vk_check(vk.EndCommandBuffer(vk.CommandBuffer(cmd)))
 }
 
-	cmd_set_depth_bias :: proc(cmd: CommandBuffer, bias, clamp, slope: f32) {
-		vk.CmdSetDepthBias(vk.CommandBuffer(cmd), bias, clamp, slope)
-	}
+cmd_set_depth_bias :: proc(cmd: CommandBuffer, bias, clamp, slope: f32) {
+	vk.CmdSetDepthBias(vk.CommandBuffer(cmd), bias, clamp, slope)
+}
 
-	cmd_use_buffer :: proc(cmd: RenderEncoder, buffer: GpuBuffer($T)) {
-	}
+cmd_use_buffer :: proc(cmd: RenderEncoder, buffer: GpuBuffer($T)) {
+}
 
 cmd_draw :: proc(
 	cmd: CommandBuffer,

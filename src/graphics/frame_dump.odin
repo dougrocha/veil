@@ -88,7 +88,11 @@ pick_test_run :: proc(engine: ^Engine) {
 	model := pool_get(&engine.model_system.models, instance.model)
 	log.infof(
 		"pick test (%v, %v) -> instance %v (%s) at %v",
-		x, y, hit.index, model.name, instance.transform.translation,
+		x,
+		y,
+		hit.index,
+		model.name,
+		instance.transform.translation,
 	)
 }
 

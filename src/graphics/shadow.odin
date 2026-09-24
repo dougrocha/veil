@@ -17,7 +17,7 @@ DirectionalShadowData :: struct {
 
 ShadowCascadeData :: struct {
 	split: Vec4,
-	bias: Vec4,
+	bias:  Vec4,
 }
 
 compute_point_light_view_proj :: proc(light: PointLight) -> [6]Mat4x4 {

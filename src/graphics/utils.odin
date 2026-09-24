@@ -8,4 +8,3 @@ read_file :: proc(filepath: string, allocator := context.allocator) -> string {
 	log.assertf(err == os.ERROR_NONE, "Failed to read file '%s': %v", filepath, err)
 	return string(buf)
 }
-

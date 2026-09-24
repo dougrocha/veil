@@ -32,10 +32,14 @@ GIZMO_AXES :: [3]GizmoAxis{.X, .Y, .Z}
 
 gizmo_axis_direction :: proc(transform: Transform, axis: GizmoAxis) -> Vec3 {
 	switch axis {
-	case .X: return transform_right(transform)
-	case .Y: return transform_up(transform)
-	case .Z: return -transform_forward(transform)
-	case .None: return {}
+	case .X:
+		return transform_right(transform)
+	case .Y:
+		return transform_up(transform)
+	case .Z:
+		return -transform_forward(transform)
+	case .None:
+		return {}
 	}
 	return {}
 }
@@ -43,10 +47,14 @@ gizmo_axis_direction :: proc(transform: Transform, axis: GizmoAxis) -> Vec3 {
 gizmo_translation_axis_direction :: proc(transform: Transform, axis: GizmoAxis, space: GizmoSpace) -> Vec3 {
 	if space == .Local do return gizmo_axis_direction(transform, axis)
 	switch axis {
-	case .X: return {1, 0, 0}
-	case .Y: return {0, 1, 0}
-	case .Z: return {0, 0, 1}
-	case .None: return {}
+	case .X:
+		return {1, 0, 0}
+	case .Y:
+		return {0, 1, 0}
+	case .Z:
+		return {0, 0, 1}
+	case .None:
+		return {}
 	}
 	return {}
 }
@@ -54,10 +62,14 @@ gizmo_translation_axis_direction :: proc(transform: Transform, axis: GizmoAxis, 
 gizmo_axis_color :: proc(axis: GizmoAxis, active: bool) -> Vec4 {
 	if active do return {1, 1, 0.3, 1}
 	switch axis {
-	case .X: return {1, 0.15, 0.15, 1}
-	case .Y: return {0.2, 1, 0.2, 1}
-	case .Z: return {0.2, 0.4, 1, 1}
-	case .None: return {}
+	case .X:
+		return {1, 0.15, 0.15, 1}
+	case .Y:
+		return {0.2, 1, 0.2, 1}
+	case .Z:
+		return {0.2, 0.4, 1, 1}
+	case .None:
+		return {}
 	}
 	return {}
 }
@@ -73,13 +85,17 @@ gizmo_rotation_radius :: proc(cam: Camera, transform: Transform, bounds: Boundin
 	max_scale := max(math.abs(scale.x), math.abs(scale.y), math.abs(scale.z))
 	model_reach := (bounds.radius + linalg.length(bounds.center)) * max_scale
 	// Keep a small screen-space gap while keeping small models' rings close.
-	return min(gizmo_length(cam, transform.translation) * f32(GIZMO_RING_SCALE),
-		max(model_reach + depth * 0.012, depth * 0.035))
+	return min(
+		gizmo_length(cam, transform.translation) * f32(GIZMO_RING_SCALE),
+		max(model_reach + depth * 0.012, depth * 0.035),
+	)
 }
 
 gizmo_project :: proc(cam: Camera, point: Vec3, viewport: Vec2) -> (Vec2, bool) {
-	clip := camera_get_projection_matrix(cam, viewport.x / viewport.y) *
-		camera_get_view_matrix(cam) * Vec4{point.x, point.y, point.z, 1}
+	clip :=
+		camera_get_projection_matrix(cam, viewport.x / viewport.y) *
+		camera_get_view_matrix(cam) *
+		Vec4{point.x, point.y, point.z, 1}
 	if clip.w <= 0 || clip.z < 0 do return {}, false
 	return ndc_to_screen(clip.xy / clip.w, viewport), true
 }
@@ -95,7 +111,14 @@ gizmo_point_segment_distance_sq :: proc(point, a, b: Vec2) -> f32 {
 
 // Parameter of the closest point on an axis line to the mouse ray. Using
 // the same fixed line throughout a drag avoids accumulating mouse deltas.
-gizmo_drag_parameter :: proc(cam: Camera, axis_origin, axis_direction: Vec3, mouse_pos, viewport: Vec2) -> (f32, bool) {
+gizmo_drag_parameter :: proc(
+	cam: Camera,
+	axis_origin, axis_direction: Vec3,
+	mouse_pos, viewport: Vec2,
+) -> (
+	f32,
+	bool,
+) {
 	if viewport.x <= 0 || viewport.y <= 0 do return 0, false
 	ray_origin, ray_dir := screen_to_world_ray(cam, mouse_pos, viewport)
 	axis_ray_dot := linalg.dot(axis_direction, ray_dir)
@@ -111,10 +134,14 @@ gizmo_ring_point :: proc(transform: Transform, axis: GizmoAxis, radius, angle: f
 	normal := gizmo_axis_direction(transform, axis)
 	first: Vec3
 	switch axis {
-	case .X: first = transform_up(transform)
-	case .Y: first = -transform_forward(transform)
-	case .Z: first = transform_right(transform)
-	case .None: return transform.translation
+	case .X:
+		first = transform_up(transform)
+	case .Y:
+		first = -transform_forward(transform)
+	case .Z:
+		first = transform_right(transform)
+	case .None:
+		return transform.translation
 	}
 	second := linalg.cross(normal, first)
 	return transform.translation + radius * (first * math.cos(angle) + second * math.sin(angle))
@@ -122,7 +149,16 @@ gizmo_ring_point :: proc(transform: Transform, axis: GizmoAxis, radius, angle: f
 
 // Clip a ring segment to the camera-facing half. When viewed face-on there
 // is no geometric near side, so use screen up to keep a stable half-ring.
-gizmo_visible_ring_segment :: proc(cam: Camera, transform: Transform, axis: GizmoAxis, from, to: Vec3) -> (Vec3, Vec3, bool) {
+gizmo_visible_ring_segment :: proc(
+	cam: Camera,
+	transform: Transform,
+	axis: GizmoAxis,
+	from, to: Vec3,
+) -> (
+	Vec3,
+	Vec3,
+	bool,
+) {
 	view_dir := linalg.normalize(cam.position - transform.translation)
 	normal := gizmo_axis_direction(transform, axis)
 	front_dir := view_dir - normal * linalg.dot(view_dir, normal)
@@ -144,7 +180,12 @@ gizmo_visible_ring_segment :: proc(cam: Camera, transform: Transform, axis: Gizm
 	return crossing, to, true
 }
 
-gizmo_pick_rotation :: proc(engine: ^Engine, transform: Transform, bounds: BoundingSphere, mouse_pos, viewport: Vec2) -> GizmoAxis {
+gizmo_pick_rotation :: proc(
+	engine: ^Engine,
+	transform: Transform,
+	bounds: BoundingSphere,
+	mouse_pos, viewport: Vec2,
+) -> GizmoAxis {
 	cam := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	if viewport.x <= 0 || viewport.y <= 0 do return .None
 	if linalg.dot(transform.translation - cam.position, cam.front) <= cam.near do return .None
@@ -220,8 +261,13 @@ gizmo_draw_rotation :: proc(
 	radius := gizmo_rotation_radius(cam^, transform, bounds)
 	if dragging && active != .None {
 		gizmo_draw_rotation_sweep(
-			engine, transform.translation, gizmo_axis_direction(transform, active),
-			start_radial, radius, sweep_angle, gizmo_axis_color(active, false),
+			engine,
+			transform.translation,
+			gizmo_axis_direction(transform, active),
+			start_radial,
+			radius,
+			sweep_angle,
+			gizmo_axis_color(active, false),
 		)
 	}
 	for axis in GIZMO_AXES {
@@ -242,7 +288,12 @@ gizmo_draw_rotation :: proc(
 	}
 }
 
-gizmo_pick_translation :: proc(engine: ^Engine, transform: Transform, mouse_pos, viewport: Vec2, space: GizmoSpace = .World) -> GizmoAxis {
+gizmo_pick_translation :: proc(
+	engine: ^Engine,
+	transform: Transform,
+	mouse_pos, viewport: Vec2,
+	space: GizmoSpace = .World,
+) -> GizmoAxis {
 	cam := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	if viewport.x <= 0 || viewport.y <= 0 do return .None
 	if linalg.dot(transform.translation - cam.position, cam.front) <= cam.near do return .None
@@ -265,7 +316,13 @@ gizmo_pick_translation :: proc(engine: ^Engine, transform: Transform, mouse_pos,
 	return result
 }
 
-gizmo_draw_translation :: proc(engine: ^Engine, transform: Transform, active: GizmoAxis = .None, dragging := false, space: GizmoSpace = .World) {
+gizmo_draw_translation :: proc(
+	engine: ^Engine,
+	transform: Transform,
+	active: GizmoAxis = .None,
+	dragging := false,
+	space: GizmoSpace = .World,
+) {
 	cam := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	origin := transform.translation
 	length := gizmo_length(cam^, origin)
@@ -275,7 +332,13 @@ gizmo_draw_translation :: proc(engine: ^Engine, transform: Transform, active: Gi
 		color := gizmo_axis_color(active, false)
 		guide_color := Vec4{color.x * 0.35, color.y * 0.35, color.z * 0.35, 1}
 		extent := max(cam.far, length * 20)
-		line_renderer_push(&engine.line_renderer, origin - direction * extent, origin + direction * extent, guide_color, overlay = true)
+		line_renderer_push(
+			&engine.line_renderer,
+			origin - direction * extent,
+			origin + direction * extent,
+			guide_color,
+			overlay = true,
+		)
 	}
 
 	for axis in GIZMO_AXES {

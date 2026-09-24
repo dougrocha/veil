@@ -6,10 +6,10 @@ import NS "core:sys/darwin/Foundation"
 import MTL "vendor:darwin/Metal"
 
 DescriptorSetHandle :: struct {
-	buffer:   ^MTL.Buffer,
-	textures: []^MTL.Texture,
-	samplers: []^MTL.SamplerState,
-	bindless: bool,
+	buffer:           ^MTL.Buffer,
+	textures:         []^MTL.Texture,
+	samplers:         []^MTL.SamplerState,
+	bindless:         bool,
 	argument_encoder: ^MTL.ArgumentEncoder,
 }
 

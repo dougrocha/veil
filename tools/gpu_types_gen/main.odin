@@ -13,10 +13,13 @@ import gfx "veil:graphics"
 
 Spec :: struct {
 	odin_name: string,
-	expr: ^ast.Struct_Type,
+	expr:      ^ast.Struct_Type,
 }
 
-Const_Spec :: struct { name: string, expr: ^ast.Expr }
+Const_Spec :: struct {
+	name: string,
+	expr: ^ast.Expr,
+}
 
 fail :: proc(message: string) -> ! {
 	fmt.eprintln(message)
@@ -50,15 +53,18 @@ collect_specs :: proc(constants: ^[dynamic]Const_Spec) -> [dynamic]Spec {
 
 write_const_expr :: proc(builder: ^strings.Builder, expr: ^ast.Expr) {
 	#partial switch node in expr.derived {
-	case ^ast.Basic_Lit: strings.write_string(builder, node.tok.text)
-	case ^ast.Ident: strings.write_string(builder, node.name)
+	case ^ast.Basic_Lit:
+		strings.write_string(builder, node.tok.text)
+	case ^ast.Ident:
+		strings.write_string(builder, node.name)
 	case ^ast.Binary_Expr:
 		strings.write_string(builder, "("); write_const_expr(builder, node.left)
 		fmt.sbprintf(builder, " %s ", node.op.text); write_const_expr(builder, node.right)
 		strings.write_string(builder, ")")
 	case ^ast.Paren_Expr:
 		strings.write_string(builder, "("); write_const_expr(builder, node.expr); strings.write_string(builder, ")")
-	case: fail("GPU constants must use literals, names, and arithmetic")
+	case:
+		fail("GPU constants must use literals, names, and arithmetic")
 	}
 }
 
@@ -70,13 +76,20 @@ write_ast_type :: proc(builder: ^strings.Builder, expr: ^ast.Expr) {
 	#partial switch node in expr.derived {
 	case ^ast.Ident:
 		switch node.name {
-		case "Vec2": strings.write_string(builder, "float2")
-		case "Vec3": strings.write_string(builder, "float3")
-		case "Vec4": strings.write_string(builder, "float4")
-		case "Mat4x4": strings.write_string(builder, "float4x4")
-		case "f32": strings.write_string(builder, "float")
-		case "u32": strings.write_string(builder, "uint")
-		case: strings.write_string(builder, slang_name(node.name))
+		case "Vec2":
+			strings.write_string(builder, "float2")
+		case "Vec3":
+			strings.write_string(builder, "float3")
+		case "Vec4":
+			strings.write_string(builder, "float4")
+		case "Mat4x4":
+			strings.write_string(builder, "float4x4")
+		case "f32":
+			strings.write_string(builder, "float")
+		case "u32":
+			strings.write_string(builder, "uint")
+		case:
+			strings.write_string(builder, slang_name(node.name))
 		}
 	case ^ast.Array_Type:
 		write_ast_type(builder, node.elem)
@@ -92,9 +105,12 @@ write_ast_array_suffix :: proc(builder: ^strings.Builder, expr: ^ast.Expr) {
 			write_ast_array_suffix(builder, node.elem)
 		}
 		#partial switch length in node.len.derived_expr {
-		case ^ast.Basic_Lit: fmt.sbprintf(builder, "[%s]", length.tok.text)
-		case ^ast.Ident: fmt.sbprintf(builder, "[%s]", length.name)
-		case: fail("GPU array lengths require constants")
+		case ^ast.Basic_Lit:
+			fmt.sbprintf(builder, "[%s]", length.tok.text)
+		case ^ast.Ident:
+			fmt.sbprintf(builder, "[%s]", length.name)
+		case:
+			fail("GPU array lengths require constants")
 		}
 	}
 }
@@ -124,10 +140,14 @@ write_type :: proc(builder: ^strings.Builder, info: ^runtime.Type_Info) {
 	info := info
 	if named, ok := named_type(info); ok {
 		switch named.name {
-		case "Vec2":   strings.write_string(builder, "float2"); return
-		case "Vec3":   strings.write_string(builder, "float3"); return
-		case "Vec4":   strings.write_string(builder, "float4"); return
-		case "Mat4x4": strings.write_string(builder, "float4x4"); return
+		case "Vec2":
+			strings.write_string(builder, "float2"); return
+		case "Vec3":
+			strings.write_string(builder, "float3"); return
+		case "Vec4":
+			strings.write_string(builder, "float4"); return
+		case "Mat4x4":
+			strings.write_string(builder, "float4x4"); return
 		}
 		if _, ok := base_type(info).variant.(runtime.Type_Info_Struct); ok {
 			strings.write_string(builder, slang_struct_name(named.name))
@@ -204,7 +224,13 @@ write_struct :: proc(builder: ^strings.Builder, spec: Spec) {
 			next_name, next_name_ok := next.names[0].derived_expr.(^ast.Ident)
 			field_ident, field_ident_ok := field.type.derived.(^ast.Ident)
 			next_ident, next_ident_ok := next.type.derived.(^ast.Ident)
-			collapse_vec3 = field_ident_ok && next_ident_ok && next_name_ok && field_ident.name == "Vec3" && next_ident.name == "f32" && strings.has_prefix(next_name.name, "_pad")
+			collapse_vec3 =
+				field_ident_ok &&
+				next_ident_ok &&
+				next_name_ok &&
+				field_ident.name == "Vec3" &&
+				next_ident.name == "f32" &&
+				strings.has_prefix(next_name.name, "_pad")
 		}
 		if collapse_vec3 {
 			strings.write_string(builder, "float4")

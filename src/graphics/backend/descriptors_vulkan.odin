@@ -228,8 +228,13 @@ descriptor_write_bindless_texture :: proc(
 	sampler: Sampler,
 	state: ImageStateKind = .Shader_Read,
 ) {
-	image_info := vk.DescriptorImageInfo{imageView = img.image_view, imageLayout = IMAGE_STATES[state].layout}
-	sampler_info := vk.DescriptorImageInfo{sampler = vk.Sampler(sampler)}
+	image_info := vk.DescriptorImageInfo {
+		imageView   = img.image_view,
+		imageLayout = IMAGE_STATES[state].layout,
+	}
+	sampler_info := vk.DescriptorImageInfo {
+		sampler = vk.Sampler(sampler),
+	}
 
 	for i in 0 ..< desc.count {
 		writes := [2]vk.WriteDescriptorSet {

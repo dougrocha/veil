@@ -19,13 +19,13 @@ context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 	}
 
 	ctx.metal_view = sdl.Metal_CreateView(window)
-		ctx.layer = (^CA.MetalLayer)(sdl.Metal_GetLayer(ctx.metal_view))
-		ctx.layer->setDevice(ctx.device)
-		ctx.layer->setPixelFormat(.BGRA8Unorm)
-		// This renderer resolves into an offscreen target and blits it into the
-		// drawable. SDL's layer defaults to framebuffer-only textures, which cannot
-		// be blit destinations.
-		ctx.layer->setFramebufferOnly(false)
+	ctx.layer = (^CA.MetalLayer)(sdl.Metal_GetLayer(ctx.metal_view))
+	ctx.layer->setDevice(ctx.device)
+	ctx.layer->setPixelFormat(.BGRA8Unorm)
+	// This renderer resolves into an offscreen target and blits it into the
+	// drawable. SDL's layer defaults to framebuffer-only textures, which cannot
+	// be blit destinations.
+	ctx.layer->setFramebufferOnly(false)
 
 	width, height: i32
 	sdl.GetWindowSizeInPixels(window, &width, &height)

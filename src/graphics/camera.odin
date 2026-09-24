@@ -97,10 +97,10 @@ Ortho_Scaling_Mode :: union {
 }
 
 Ortho_Projection :: struct {
-	scaling_mode:              Ortho_Scaling_Mode,
+	scaling_mode:             Ortho_Scaling_Mode,
 	// Derived world-space extents; recomputed from scaling_mode each frame,
 	// not meant to be set directly.
-	left, right, bottom, top:  f32,
+	left, right, bottom, top: f32,
 }
 
 Projection :: union {
@@ -166,16 +166,16 @@ camera_create :: proc(
 	pitch: f32 = 0,
 ) -> Camera {
 	c := Camera {
-		position          = position,
-		world_up          = world_up,
-		yaw               = yaw,
-		pitch             = pitch,
-		movement_speed    = 10,
+		position = position,
+		world_up = world_up,
+		yaw = yaw,
+		pitch = pitch,
+		movement_speed = 10,
 		mouse_sensitivity = 0.1,
-		control_type      = .Free,
-		projection        = Perspective_Projection{fov_y = linalg.to_radians(f32(60))},
-		near              = 0.1,
-		far               = 100.0,
+		control_type = .Free,
+		projection = Perspective_Projection{fov_y = linalg.to_radians(f32(60))},
+		near = 0.1,
+		far = 100.0,
 	}
 	camera_update_vectors(&c)
 	return c

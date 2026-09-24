@@ -202,9 +202,12 @@ gltf_extract_material :: proc(
 	}
 	alpha_mode: AlphaMode
 	switch mat.alpha_mode {
-	case .opaque: alpha_mode = .Opaque
-	case .mask:   alpha_mode = .Mask
-	case .blend:  alpha_mode = .Blend
+	case .opaque:
+		alpha_mode = .Opaque
+	case .mask:
+		alpha_mode = .Mask
+	case .blend:
+		alpha_mode = .Blend
 	}
 
 	return material_create(
