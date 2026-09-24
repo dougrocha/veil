@@ -37,6 +37,8 @@ DefaultTexture :: enum u8 {
 	Flat_Normal,
 	Metallic_Roughness,
 	Occlusion,
+	// 1x1 opaque black cube; texture_load_cubemap's fallback, so cube bindings never get a 2D view.
+	Black_Cube,
 }
 
 TextureSystem :: struct {
@@ -169,6 +171,17 @@ texture_create_builtin :: proc(engine: ^Engine) {
 		Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4},
 		&white,
 	)
+
+	{
+		staging := backend.buffer_create(u8, &engine.vk_ctx, 6 * 4, .Staging)
+		defer backend.buffer_destroy(&engine.vk_ctx, staging)
+		black := ([^][4]u8)(backend.buffer_mapped_ptr(staging))
+		for i in 0 ..< 6 do black[i] = {0, 0, 0, 0xFF}
+
+		cube := cubemap_upload(&engine.vk_ctx, staging, 1)
+		ts.defaults[.Black_Cube] = pool_alloc(&ts.textures, cube)
+		write_descriptor_texture(&engine.vk_ctx, ts, ts.defaults[.Black_Cube], u32(ts.defaults[.Black_Cube].index))
+	}
 }
 
 texture_load :: proc {
@@ -313,7 +326,7 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	ts := &engine.texture_system
 	if !texture_system_has_capacity(ts) {
 		log.errorf("Texture system is full (max: %d)", ts.config.max_textures_count)
-		return texture_load(engine, DefaultTexture.White)
+		return ts.defaults[.Black_Cube]
 	}
 
 	c_path := strings.clone_to_cstring(path)
@@ -323,8 +336,14 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	pixels := stbi.load(c_path, &width, &height, &channels, 4)
 	defer stbi.image_free(pixels)
 	if pixels == nil {
-		log.errorf("Failed to read cubemap image: %s", stbi.failure_reason())
-		return texture_load(engine, DefaultTexture.White)
+		log.errorf("Failed to read cubemap image '%s': %s", path, stbi.failure_reason())
+		return ts.defaults[.Black_Cube]
+	}
+
+	// Horizontal cross: 4x3 grid of square faces.
+	if width <= 0 || width % 4 != 0 || height % 3 != 0 || width / 4 != height / 3 {
+		log.errorf("Cubemap '%s' is %dx%d, expected a 4:3 horizontal cross of square faces", path, width, height)
+		return ts.defaults[.Black_Cube]
 	}
 
 	log.debugf("Loading cubemap: %s (%dx%d)", path, width, height)
@@ -360,20 +379,30 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 		}
 	}
 
+	t := cubemap_upload(&engine.vk_ctx, staging, face_w)
+	return texture_register(engine, &ts.cubemap_map, path, t)
+}
+
+// Uploads six tightly packed RGBA8 sRGB faces (+X, -X, +Y, -Y, +Z, -Z) of size x size
+// texels from staging into a cube image with a cube view.
+@(private = "file")
+cubemap_upload :: proc(ctx: ^backend.Context, staging: backend.GpuBuffer(u8), size: u32) -> Texture {
+	face_size := size * size * 4
+
 	desc := backend.image_desc_default(
-		backend.extent3d(face_w, face_h, 1),
+		backend.extent3d(size, size, 1),
 		backend.texture_format_to_backend(.Rgba8_Unorm_Srgb),
 		{.TransferDst, .Sampled},
 	)
 	desc.array_layers = 6
 	backend.image_desc_set_cube_array(&desc)
-	gpu_img := backend.image_create(&engine.vk_ctx, desc)
+	gpu_img := backend.image_create(ctx, desc)
 
 	{
-		cmd := backend.immediate_submit(&engine.vk_ctx)
+		cmd := backend.immediate_submit(ctx)
 
 		backend.image_barrier(cmd, &gpu_img, .Transfer_Dst, backend.ImageAspectFlags{.Color}, layer_count = 6)
-		backend.copy_buffer_to_cubemap(cmd, staging.buffer, &gpu_img, face_w, face_h, face_size)
+		backend.copy_buffer_to_cubemap(cmd, staging.buffer, &gpu_img, size, size, face_size)
 		backend.image_barrier(cmd, &gpu_img, .Shader_Read, backend.ImageAspectFlags{.Color}, layer_count = 6)
 	}
 
@@ -381,9 +410,8 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 		gpu           = gpu_img,
 		channel_count = 4,
 	}
-	backend.image_view_create_cubemap(&engine.vk_ctx, &t.gpu)
-
-	return texture_register(engine, &ts.cubemap_map, path, t)
+	backend.image_view_create_cubemap(ctx, &t.gpu)
+	return t
 }
 
 texture_image_view_create :: proc(ctx: ^backend.Context, t: ^Texture) {
