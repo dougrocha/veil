@@ -100,12 +100,14 @@ texture_system_has_capacity :: proc(ts: ^TextureSystem) -> bool {
 // Frees a single texture's GPU resources and removes it from the given cache
 // (srgb_texture_map / linear_texture_map / cubemap_map) and the pool. The
 // bindless descriptor slot is left stale until reused by a future registration.
+// Waits for the device to go idle first, since in-flight frames may still sample it.
 texture_unload :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: string) {
 	ts := &engine.texture_system
 	handle, ok := cache[key]
 	if !ok {
 		return
 	}
+	backend.device_wait_idle(&engine.vk_ctx)
 	texture_destroy(&engine.vk_ctx, pool_get(&ts.textures, handle)^)
 	pool_free(&ts.textures, handle)
 	delete_key(cache, key)

@@ -163,9 +163,11 @@ descriptor_set_create_bindless_array :: proc(
 		{binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = slot_count, stageFlags = {.FRAGMENT}},
 		{binding = 1, descriptorType = .SAMPLER, descriptorCount = slot_count, stageFlags = {.FRAGMENT}},
 	}
+	// UPDATE_UNUSED_WHILE_PENDING: texture registration writes a new slot into every frame's
+	// set, including ones a submitted frame is still executing.
 	binding_flags := []vk.DescriptorBindingFlags {
-		DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND},
-		DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND},
+		DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND, .UPDATE_UNUSED_WHILE_PENDING},
+		DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND, .UPDATE_UNUSED_WHILE_PENDING},
 	}
 	return descriptor_set_create(
 		ctx,

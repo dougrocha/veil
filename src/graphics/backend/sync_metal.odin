@@ -66,7 +66,13 @@ frame_wait_before_render :: proc(ctx: ^Context, frame_index: u64) {
 	}
 }
 
-queue_submit_frame :: proc(ctx: ^Context, cmd: CommandBuffer, frame_sync: ^FrameSync, signal_value: u64) {
+queue_submit_frame :: proc(
+	ctx: ^Context,
+	cmd: CommandBuffer,
+	swapchain: ^Swapchain,
+	frame_sync: ^FrameSync,
+	signal_value: u64,
+) {
 	mtl_cmd := (^MTL.CommandBuffer)(cmd)
 	mtl_cmd->retain()
 	frame_sync.command_buffer = mtl_cmd

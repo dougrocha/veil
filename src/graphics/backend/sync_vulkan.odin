@@ -21,10 +21,9 @@ PresentFrameResult :: enum {
 }
 
 FrameSync :: struct {
-	command_pool:              vk.CommandPool,
-	command_buffer:            CommandBuffer,
-	image_acquired_semaphore:  vk.Semaphore,
-	render_complete_semaphore: vk.Semaphore,
+	command_pool:             vk.CommandPool,
+	command_buffer:           CommandBuffer,
+	image_acquired_semaphore: vk.Semaphore,
 }
 
 frame_sync_create :: proc(ctx: ^Context) {
@@ -34,14 +33,12 @@ frame_sync_create :: proc(ctx: ^Context) {
 		sync.command_pool = command_pool_create(ctx)
 		sync.command_buffer = command_buffer_allocate(ctx, sync.command_pool)
 		sync.image_acquired_semaphore = binary_semaphore_create(ctx)
-		sync.render_complete_semaphore = binary_semaphore_create(ctx)
 	}
 }
 
 frame_sync_destroy :: proc(ctx: ^Context) {
 	for &sync in ctx.frame_sync {
 		vk.DestroySemaphore(ctx.device, sync.image_acquired_semaphore, nil)
-		vk.DestroySemaphore(ctx.device, sync.render_complete_semaphore, nil)
 		vk.DestroyCommandPool(ctx.device, sync.command_pool, nil)
 	}
 
@@ -114,9 +111,11 @@ binary_semaphore_create :: proc(ctx: ^Context) -> vk.Semaphore {
 	return sem
 }
 
-frame_wait_before_render :: proc(ctx: ^Context, next_signal_value: u64) {
-	if next_signal_value >= MAX_FRAMES_IN_FLIGHT {
-		wait_value := next_signal_value - MAX_FRAMES_IN_FLIGHT + 1
+// Frame N signals the timeline with N + 1. Before reusing this frame's slot, wait for the
+// frame that last used it (N - MAX_FRAMES_IN_FLIGHT) to finish.
+frame_wait_before_render :: proc(ctx: ^Context, frame_index: u64) {
+	if frame_index >= MAX_FRAMES_IN_FLIGHT {
+		wait_value := frame_index - MAX_FRAMES_IN_FLIGHT + 1
 		wait_info := vk.SemaphoreWaitInfo {
 			sType          = .SEMAPHORE_WAIT_INFO,
 			semaphoreCount = 1,
@@ -127,7 +126,13 @@ frame_wait_before_render :: proc(ctx: ^Context, next_signal_value: u64) {
 	}
 }
 
-queue_submit_frame :: proc(ctx: ^Context, cmd: CommandBuffer, frame_sync: ^FrameSync, signal_value: u64) {
+queue_submit_frame :: proc(
+	ctx: ^Context,
+	cmd: CommandBuffer,
+	swapchain: ^Swapchain,
+	frame_sync: ^FrameSync,
+	signal_value: u64,
+) {
 	image_acquired_wait_info := vk.SemaphoreSubmitInfo {
 		sType     = .SEMAPHORE_SUBMIT_INFO,
 		semaphore = frame_sync.image_acquired_semaphore,
@@ -137,7 +142,7 @@ queue_submit_frame :: proc(ctx: ^Context, cmd: CommandBuffer, frame_sync: ^Frame
 	semaphore_signals := [2]vk.SemaphoreSubmitInfo {
 		{
 			sType = .SEMAPHORE_SUBMIT_INFO,
-			semaphore = frame_sync.render_complete_semaphore,
+			semaphore = swapchain.present_semaphores[swapchain.current_image_index],
 			stageMask = {.ALL_GRAPHICS},
 		},
 		{

@@ -157,8 +157,7 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 		app.engine.swapchain.require_recreate = false
 	}
 
-	next_signal_value := app.engine.frame_index + 1
-	backend.frame_wait_before_render(&app.engine.vk_ctx, next_signal_value)
+	backend.frame_wait_before_render(&app.engine.vk_ctx, app.engine.frame_index)
 
 	current_frame_sync := backend.current_frame_sync(&app.engine.vk_ctx, app.engine.frame_index)
 	current_frame_data := current_frame_data(&app.engine)
@@ -194,9 +193,8 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 
 	cmd := record_command_buffer(&app.engine)
 
-	signal_value := next_signal_value
-
-	backend.queue_submit_frame(&app.engine.vk_ctx, cmd, current_frame_sync, signal_value)
+	signal_value := app.engine.frame_index + 1
+	backend.queue_submit_frame(&app.engine.vk_ctx, cmd, &app.engine.swapchain, current_frame_sync, signal_value)
 
 	present_result := backend.queue_present_frame(&app.engine.vk_ctx, cmd, &app.engine.swapchain, current_frame_sync)
 
@@ -361,14 +359,15 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		f32(engine.swapchain.extent.width) / f32(engine.swapchain.extent.height),
 	)
 
-	draw_instance :: proc(engine: ^Engine, frustum: Frustum, cmd: backend.RenderEncoder, i: int, blend: bool) {
+	draw_instance :: proc(
+		engine: ^Engine,
+		cmd: backend.RenderEncoder,
+		pipeline: backend.Pipeline,
+		i: int,
+		blend: bool,
+	) {
 		instance := &engine.scene.instances.values[i]
 		model := pool_get(&engine.model_system.models, instance.model)
-
-		if !volume_is_on_frustum(frustum, model.bounds, instance.transform) {
-			return
-		}
-		engine.drawn_instance_count += 1
 
 		frame := current_frame_data(engine)
 		for &mesh in model.meshes {
@@ -384,57 +383,53 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 				material_index   = u32(mesh.material.index),
 				instance_index   = u32(i),
 			}
-			backend.pipeline_push(
-				cmd,
-				get_pipeline(&engine.pipeline_registry, .Mesh),
-				{.Vertex, .Fragment},
-				&pc,
-				index = 1,
-			)
+			backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc, index = 1)
 			backend.cmd_draw_indexed(cmd, mesh.index_buffer.buffer, mesh.index_count)
 		}
 	}
 
-	// opaque + mask
-	for &instance, i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
-		model := &pool_get(&engine.model_system.models, instance.model)^
-		for &mesh in model.meshes {
-			mat := pool_get(&engine.material_system.materials, mesh.material)
-			if mat.alpha_mode == .Blend do continue
-			draw_instance(engine, frustum, cmd, i, false)
-			break
-		}
-	}
-
-	// transparent — collect and sort back-to-front
 	TransparentEntry :: struct {
 		index: int,
 		dist:  f32,
 	}
 	transparent := make([dynamic]TransparentEntry, context.temp_allocator)
+
+	// Cull once per instance, draw its opaque/mask meshes now, and queue its blended meshes.
 	for &instance, i in engine.scene.instances.values {
 		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
-		model := &pool_get(&engine.model_system.models, instance.model)^
+		model := pool_get(&engine.model_system.models, instance.model)
+		if !volume_is_on_frustum(frustum, model.bounds, instance.transform) do continue
+		engine.drawn_instance_count += 1
+
+		has_opaque, has_blend: bool
 		for &mesh in model.meshes {
 			mat := pool_get(&engine.material_system.materials, mesh.material)
-			if mat.alpha_mode != .Blend do continue
-			pos := instance.transform.translation
-			cam := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name).position
-			dist := linalg.length(pos - cam)
+			if mat.alpha_mode == .Blend {
+				has_blend = true
+			} else {
+				has_opaque = true
+			}
+		}
+
+		if has_opaque do draw_instance(engine, cmd, mesh_pipeline, i, false)
+		if has_blend {
+			dist := linalg.length(instance.transform.translation - active_camera.position)
 			append(&transparent, TransparentEntry{index = i, dist = dist})
-			break
 		}
 	}
 
+	// transparent: back-to-front
 	slice.sort_by(transparent[:], proc(a, b: TransparentEntry) -> bool {return a.dist > b.dist})
 	backend.pipeline_set_depth_write(cmd, mesh_pipeline, false)
 	for entry in transparent {
-		draw_instance(engine, frustum, cmd, entry.index, true)
+		draw_instance(engine, cmd, mesh_pipeline, entry.index, true)
 	}
 }
 
 set_skybox_texture :: proc(engine: ^Engine, handle: TextureHandle) {
+	// The global set isn't update-after-bind and this writes every frame's copy, so no
+	// in-flight frame may be using it.
+	backend.device_wait_idle(&engine.vk_ctx)
 	t := pool_get(&engine.texture_system.textures, handle)
 	backend.descriptor_write_image_view(&engine.vk_ctx, &engine.global_descriptor, 2, &t.gpu, t.sampler)
 }

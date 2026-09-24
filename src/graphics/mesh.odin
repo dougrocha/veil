@@ -99,16 +99,18 @@ model_load :: proc(engine: ^Engine, path: string, material: MaterialHandle = INV
 				}
 			}
 
+			uv: Vec2
+			if index.vt_idx != tinyobj.INVALID_INDEX {
+				uv = {obj.attrib.texcoords[2 * index.vt_idx + 0], 1.0 - obj.attrib.texcoords[2 * index.vt_idx + 1]}
+			}
+
 			vertex := Vertex {
 				pos    = {
 					obj.attrib.vertices[3 * index.v_idx + 0],
 					obj.attrib.vertices[3 * index.v_idx + 1],
 					obj.attrib.vertices[3 * index.v_idx + 2],
 				},
-				uv     = {
-					obj.attrib.texcoords[2 * index.vt_idx + 0],
-					1.0 - obj.attrib.texcoords[2 * index.vt_idx + 1],
-				},
+				uv     = uv,
 				normal = normal,
 			}
 

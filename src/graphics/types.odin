@@ -57,7 +57,6 @@ Engine :: struct {
 	// frame and sync resources
 	frame_data:           [backend.MAX_FRAMES_IN_FLIGHT]FrameData,
 	frame_index:          u64,
-	current_image_index:  u32,
 
 	// buffers
 	model_system:         ModelSystem,
@@ -69,7 +68,7 @@ Engine :: struct {
 	// texture
 	texture_system:       TextureSystem,
 
-	// global resources (binding 0 = shadow map, binding 1 = skybox)
+	// global resources (binding 0 = point shadow cube atlas, 1 = 2D shadow atlas, 2 = skybox)
 	global_descriptor:    backend.DescriptorSet,
 	shadow_atlas:         ShadowAtlas,
 	shadow_2d_atlas:      ShadowAtlas,

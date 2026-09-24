@@ -2,6 +2,8 @@
 
 package backend
 
+import "core:log"
+
 import vk "vendor:vulkan"
 
 RenderTargets :: struct {
@@ -14,6 +16,9 @@ RenderTargets :: struct {
 Swapchain :: struct {
 	handle:              vk.SwapchainKHR,
 	images:              []vk.Image,
+	// Signaled by the frame's submit, waited on by present. One per image, not per frame in
+	// flight: the presentation engine can still hold it after that frame's fence has passed.
+	present_semaphores:  []vk.Semaphore,
 	require_recreate:    bool,
 	extent:              vk.Extent2D,
 	render_targets:      RenderTargets,
@@ -22,10 +27,19 @@ Swapchain :: struct {
 
 swapchain_create :: proc(ctx: ^Context, width, height: u32) -> Swapchain {
 	swapchain: Swapchain
-	swapchain.extent = {width, height}
 
 	surface_caps: vk.SurfaceCapabilitiesKHR
 	vk_check(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.physical_device, ctx.surface, &surface_caps))
+
+	// A defined currentExtent must be used as-is; 0xFFFFFFFF means the surface takes our size.
+	if surface_caps.currentExtent.width != max(u32) {
+		swapchain.extent = surface_caps.currentExtent
+	} else {
+		swapchain.extent = {
+			clamp(width, surface_caps.minImageExtent.width, surface_caps.maxImageExtent.width),
+			clamp(height, surface_caps.minImageExtent.height, surface_caps.maxImageExtent.height),
+		}
+	}
 
 	requested_image_count := max(2, surface_caps.minImageCount)
 	if surface_caps.maxImageCount > 0 {
@@ -54,11 +68,20 @@ swapchain_create :: proc(ctx: ^Context, width, height: u32) -> Swapchain {
 	swapchain.images = make([]vk.Image, image_count)
 	vk.GetSwapchainImagesKHR(ctx.device, swapchain.handle, &image_count, raw_data(swapchain.images))
 
+	swapchain.present_semaphores = make([]vk.Semaphore, image_count)
+	for &sem in swapchain.present_semaphores {
+		sem = binary_semaphore_create(ctx)
+	}
+
 	return swapchain
 }
 
 swapchain_destroy :: proc(ctx: ^Context, swapchain: ^Swapchain) {
 	render_targets_destroy(ctx, &swapchain.render_targets)
+	for sem in swapchain.present_semaphores {
+		vk.DestroySemaphore(ctx.device, sem, nil)
+	}
+	delete(swapchain.present_semaphores)
 	delete(swapchain.images)
 	vk.DestroySwapchainKHR(ctx.device, swapchain.handle, nil)
 }
@@ -122,8 +145,11 @@ swapchain_acquire_next_image :: proc(
 		return .OutOfDate
 	case .SUBOPTIMAL_KHR:
 		return .Suboptimal
+	case .NOT_READY, .TIMEOUT:
+		return .NotReady
 	case:
-		return .OutOfDate
+		// DEVICE_LOST, SURFACE_LOST, OOM: recreating the swapchain won't fix these.
+		log.panicf("vkAcquireNextImageKHR failed: %v", acquire_result)
 	}
 }
 
@@ -158,7 +184,7 @@ queue_present_frame :: proc(
 	swapchain: ^Swapchain,
 	frame_sync: ^FrameSync,
 ) -> PresentFrameResult {
-	sem := frame_sync.render_complete_semaphore
+	sem := swapchain.present_semaphores[swapchain.current_image_index]
 	handle := swapchain.handle
 	idx := swapchain.current_image_index
 
