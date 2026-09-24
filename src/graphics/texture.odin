@@ -102,7 +102,8 @@ texture_system_destroy :: proc(engine: ^Engine) {
 }
 
 texture_system_has_capacity :: proc(ts: ^TextureSystem) -> bool {
-	return ts.textures.count < ts.config.max_textures_count
+	// count is the pool's high-water mark; unloading returns slots to free_list instead.
+	return ts.textures.count < ts.config.max_textures_count || len(ts.textures.free_list) > 0
 }
 
 // Frees a single texture's GPU resources and removes it from the given cache
