@@ -108,6 +108,22 @@ cmd_barrier_compute_write_to_vertex_read :: proc(cmd: ComputeEncoder) {
 	vk.CmdPipelineBarrier2(vk.CommandBuffer(cmd), &dep_info)
 }
 
+cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
+	barrier := vk.MemoryBarrier2 {
+		sType         = .MEMORY_BARRIER_2,
+		srcStageMask  = {.COMPUTE_SHADER},
+		srcAccessMask = {.SHADER_WRITE},
+		dstStageMask  = {.COMPUTE_SHADER},
+		dstAccessMask = {.SHADER_READ},
+	}
+	dep_info := vk.DependencyInfo {
+		sType              = .DEPENDENCY_INFO,
+		memoryBarrierCount = 1,
+		pMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(vk.CommandBuffer(cmd), &dep_info)
+}
+
 pipeline_bind_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline) {
 	vk.CmdBindPipeline(vk.CommandBuffer(cmd), .COMPUTE, pipeline.pipeline)
 }

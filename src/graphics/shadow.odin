@@ -103,7 +103,8 @@ compute_directional_shadow_data :: proc(
 		data.view_proj[i] = dir_proj * dir_view
 	}
 
-	data.splits = Vec4{splits[0], splits[1], splits[2], splits[3]}
+	#assert(SHADOW_MAP_CASCADE_COUNT <= 4, "cascade splits are packed into a Vec4")
+	for split, i in splits do data.splits[i] = split
 	return data
 }
 

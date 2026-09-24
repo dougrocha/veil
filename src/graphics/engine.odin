@@ -218,6 +218,8 @@ dispatch_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		delta_time    = engine.time_info.delta_time,
 	}
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
+	// particles_in was written by the previous frame's dispatch in an earlier submission.
+	backend.cmd_barrier_compute_write_to_compute_read(encoder)
 	backend.pipeline_bind_compute(encoder, pipeline)
 	backend.pipeline_push_compute(encoder, pipeline, &compute_pc)
 	backend.cmd_dispatch(encoder, PARTICLE_COUNT / 256, 1, 1)
@@ -563,7 +565,7 @@ draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 }
 
 draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	// dispatch_particles(engine, cmd)
+	if engine.debug_settings.particles do dispatch_particles(engine, cmd)
 
 	draw_shadow_maps(engine, cmd)
 
@@ -581,7 +583,7 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		)
 		draw_meshes(engine, encoder)
 		draw_skybox(engine, encoder)
-		// draw_particles(engine, encoder)
+		if engine.debug_settings.particles do draw_particles(engine, encoder)
 		line_renderer_flush(engine, encoder)
 		backend.end_render_pass(encoder)
 	}

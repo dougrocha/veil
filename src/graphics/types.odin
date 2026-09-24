@@ -102,6 +102,7 @@ LightMask :: enum u32 {
 
 DebugSettings :: struct {
 	show_cascades, disable_shadows, light_mask: u32,
+	particles:                                  bool, // CPU-only; not uploaded to the GPU
 }
 
 TimeInfo :: struct {

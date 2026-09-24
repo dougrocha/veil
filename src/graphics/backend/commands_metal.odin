@@ -70,6 +70,9 @@ cmd_use_buffer :: proc(cmd: RenderEncoder, buffer: GpuBuffer($T)) {
 cmd_barrier_compute_write_to_vertex_read :: proc(cmd: ComputeEncoder) {
 }
 
+cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
+}
+
 pipeline_bind_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline) {
 	encoder := (^MTL.ComputeCommandEncoder)(cmd)
 	encoder->setComputePipelineState(pipeline.compute_state)

@@ -53,80 +53,6 @@ main :: proc() {
 
 	app.engine.camera_system.default_camera = gfx.camera_create({0, 1, 5}, yaw = -90, pitch = 0)
 
-	/*
-	wood_gate_mat := gfx.material_create(
-		&app.engine,
-		"wood_gate",
-		base_color_texture = gfx.texture_load(&app.engine, "assets/textures/wooden_gate_diff_4k.jpg"),
-		normal_map_texture = gfx.texture_load(&app.engine, "assets/textures/wooden_gate_nor_gl_4k.jpg", false),
-		metallic_roughness_texture = gfx.texture_load(&app.engine, "assets/textures/wooden_gate_arm_4k.jpg", false),
-		occlusion_texture = gfx.texture_load(&app.engine, "assets/textures/wooden_gate_ao_4k.png", false),
-	)
-	wood_gate := gfx.model_load(&app.engine, "assets/models/wooden_gate_4k.gltf", wood_gate_mat)
-	gfx.instance_spawn(&app.engine, wood_gate, gfx.transform_create(translation = {0, 1, -2}))
-
-	lion_head_mat := gfx.material_create(
-		&app.engine,
-		"lion_head",
-		base_color_texture = gfx.texture_load(&app.engine, "assets/models/textures/lion_head_diff_4k.jpg"),
-		normal_map_texture = gfx.texture_load(&app.engine, "assets/models/textures/lion_head_nor_gl_4k.jpg", false),
-		metallic_roughness_texture = gfx.texture_load(
-			&app.engine,
-			"assets/models/textures/lion_head_arm_4k.jpg",
-			false,
-		),
-		occlusion_texture = gfx.texture_load(&app.engine, "assets/models/textures/lion_head_arm_4k.jpg", false),
-	)
-	lion_head := gfx.model_load(&app.engine, "assets/models/lion_head_4k.gltf", lion_head_mat)
-	gfx.instance_spawn(&app.engine, lion_head, gfx.transform_create(translation = {0, 1.5, 0}))
-
-	boulder_mat := gfx.material_create(
-		&app.engine,
-		"boulder",
-		base_color_texture = gfx.texture_load(
-			&app.engine,
-			"assets/models/textures/namaqualand_boulder_02_diff_4k.jpg",
-		),
-		normal_map_texture = gfx.texture_load(
-			&app.engine,
-			"assets/models/textures/namaqualand_boulder_02_nor_gl_4k.jpg",
-			false,
-		),
-		metallic_roughness_texture = gfx.texture_load(
-			&app.engine,
-			"assets/models/textures/namaqualand_boulder_02_arm_4k.jpg",
-			false,
-		),
-		occlusion_texture = gfx.texture_load(
-			&app.engine,
-			"assets/models/textures/namaqualand_boulder_02_arm_4k.jpg",
-			false,
-		),
-	)
-	boulder := gfx.model_load(&app.engine, "assets/models/namaqualand_boulder_02_4k.gltf", boulder_mat)
-	gfx.instance_spawn(&app.engine, boulder, gfx.transform_create(translation = {3, 0.06, 2}))
-
-	duck_mat := gfx.material_create(
-		&app.engine,
-		"duck",
-		base_color_texture = gfx.texture_load(&app.engine, "assets/models/textures/rubber_duck_toy_diff_4k.jpg"),
-		normal_map_texture = gfx.texture_load(
-			&app.engine,
-			"assets/models/textures/rubber_duck_toy_nor_gl_4k.jpg",
-			false,
-		),
-		metallic_roughness_texture = gfx.texture_load(
-			&app.engine,
-			"assets/models/textures/rubber_duck_toy_arm_4k.jpg",
-			false,
-		),
-		occlusion_texture = gfx.texture_load(&app.engine, "assets/models/textures/rubber_duck_toy_arm_4k.jpg", false),
-	)
-	duck := gfx.model_load(&app.engine, "assets/models/rubber_duck_toy_4k.gltf", duck_mat)
-	gfx.instance_spawn(&app.engine, duck, gfx.transform_create(translation = {-3, 0, 2}))
-	*/
-
-
 	shiny_mat := gfx.material_create(&app.engine, "shiny_mat", perceptual_roughness = 0.0)
 	rough_mat := gfx.material_create(&app.engine, "rough_mat", perceptual_roughness = 1.0)
 	shiny_cube := gfx.primitive_cube(&app.engine, "shiny_cube", shiny_mat)
@@ -147,8 +73,9 @@ main :: proc() {
 	back_wall := gfx.primitive_cube(&app.engine, "back_wall", rough_mat)
 	gfx.instance_spawn(&app.engine, back_wall, gfx.transform_create(translation = {0, 2, -6}, scale = {6, 2, 0.2}))
 
-	// sponza := gfx.model_load(&app.engine, "assets/models/sponza-gltf-pbr/sponza.glb")
-	// gfx.instance_spawn(&app.engine, sponza, gfx.transform_create(translation = {0, 0, 0}, scale = {0.01, 0.01, 0.01}))
+	// Optional scenes, not loaded by default:
+	// load_pbr_showcase(&app.engine)
+	// load_sponza(&app.engine)
 
 	space_skybox_tex := gfx.texture_load_cubemap(&app.engine, "assets/textures/StandardCubeMap.png")
 	gfx.set_skybox_texture(&app.engine, space_skybox_tex)
@@ -278,6 +205,9 @@ main :: proc() {
 				case .J:
 					app.engine.debug_settings.light_mask ~= u32(gfx.LightMask.Directional)
 					log.infof("light mask: 0b%b", app.engine.debug_settings.light_mask)
+				case .X:
+					app.engine.debug_settings.particles = !app.engine.debug_settings.particles
+					log.infof("particles: %v", app.engine.debug_settings.particles)
 				case .O:
 					switch _ in active_cam.projection {
 					case gfx.Perspective_Projection:
@@ -443,8 +373,6 @@ main :: proc() {
 			app.fps_timer = 0
 		}
 
-		// app.engine.scene.spot_lights[0].pos = app.engine.camera_system.default_camera.position
-		// gfx.line_renderer_push(&app.engine.line_renderer, {0, 0, 0}, {0, 5, 0}, {1, 0, 0, 1})
 		if app.engine.scene.selected_instance != gfx.INVALID_INSTANCE {
 			selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
 			if gizmo_mode == .Translate {
@@ -474,6 +402,74 @@ main :: proc() {
 
 		gfx.engine_render(&app, delta_time)
 	}
+}
+
+// 4K scanned PBR models with their texture sets.
+load_pbr_showcase :: proc(engine: ^gfx.Engine) {
+	wood_gate_mat := gfx.material_create(
+		engine,
+		"wood_gate",
+		base_color_texture = gfx.texture_load(engine, "assets/textures/wooden_gate_diff_4k.jpg"),
+		normal_map_texture = gfx.texture_load(engine, "assets/textures/wooden_gate_nor_gl_4k.jpg", false),
+		metallic_roughness_texture = gfx.texture_load(engine, "assets/textures/wooden_gate_arm_4k.jpg", false),
+		occlusion_texture = gfx.texture_load(engine, "assets/textures/wooden_gate_ao_4k.png", false),
+	)
+	wood_gate := gfx.model_load(engine, "assets/models/wooden_gate_4k.gltf", wood_gate_mat)
+	gfx.instance_spawn(engine, wood_gate, gfx.transform_create(translation = {0, 1, -2}))
+
+	lion_head_mat := gfx.material_create(
+		engine,
+		"lion_head",
+		base_color_texture = gfx.texture_load(engine, "assets/models/textures/lion_head_diff_4k.jpg"),
+		normal_map_texture = gfx.texture_load(engine, "assets/models/textures/lion_head_nor_gl_4k.jpg", false),
+		metallic_roughness_texture = gfx.texture_load(engine, "assets/models/textures/lion_head_arm_4k.jpg", false),
+		occlusion_texture = gfx.texture_load(engine, "assets/models/textures/lion_head_arm_4k.jpg", false),
+	)
+	lion_head := gfx.model_load(engine, "assets/models/lion_head_4k.gltf", lion_head_mat)
+	gfx.instance_spawn(engine, lion_head, gfx.transform_create(translation = {0, 1.5, 0}))
+
+	boulder_mat := gfx.material_create(
+		engine,
+		"boulder",
+		base_color_texture = gfx.texture_load(engine, "assets/models/textures/namaqualand_boulder_02_diff_4k.jpg"),
+		normal_map_texture = gfx.texture_load(
+			engine,
+			"assets/models/textures/namaqualand_boulder_02_nor_gl_4k.jpg",
+			false,
+		),
+		metallic_roughness_texture = gfx.texture_load(
+			engine,
+			"assets/models/textures/namaqualand_boulder_02_arm_4k.jpg",
+			false,
+		),
+		occlusion_texture = gfx.texture_load(
+			engine,
+			"assets/models/textures/namaqualand_boulder_02_arm_4k.jpg",
+			false,
+		),
+	)
+	boulder := gfx.model_load(engine, "assets/models/namaqualand_boulder_02_4k.gltf", boulder_mat)
+	gfx.instance_spawn(engine, boulder, gfx.transform_create(translation = {3, 0.06, 2}))
+
+	duck_mat := gfx.material_create(
+		engine,
+		"duck",
+		base_color_texture = gfx.texture_load(engine, "assets/models/textures/rubber_duck_toy_diff_4k.jpg"),
+		normal_map_texture = gfx.texture_load(engine, "assets/models/textures/rubber_duck_toy_nor_gl_4k.jpg", false),
+		metallic_roughness_texture = gfx.texture_load(
+			engine,
+			"assets/models/textures/rubber_duck_toy_arm_4k.jpg",
+			false,
+		),
+		occlusion_texture = gfx.texture_load(engine, "assets/models/textures/rubber_duck_toy_arm_4k.jpg", false),
+	)
+	duck := gfx.model_load(engine, "assets/models/rubber_duck_toy_4k.gltf", duck_mat)
+	gfx.instance_spawn(engine, duck, gfx.transform_create(translation = {-3, 0, 2}))
+}
+
+load_sponza :: proc(engine: ^gfx.Engine) {
+	sponza := gfx.model_load(engine, "assets/models/sponza-gltf-pbr/sponza.glb")
+	gfx.instance_spawn(engine, sponza, gfx.transform_create(translation = {0, 0, 0}, scale = {0.01, 0.01, 0.01}))
 }
 
 // SDL reports logical window coordinates; rendering and picking use pixels.
