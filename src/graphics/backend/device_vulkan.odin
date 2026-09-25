@@ -98,11 +98,11 @@ instance_create :: proc(ctx: ^Context) {
 
 	instance_flags: vk.InstanceCreateFlags
 
-	has_validation_layer := validation_layer_available()
+	has_validation_layer := VEIL_VALIDATION && validation_layer_available()
 	requested_layers := make([dynamic]cstring, context.temp_allocator)
 	if has_validation_layer {
 		append(&requested_layers, VALIDATION_LAYER_NAME)
-	} else {
+	} else if VEIL_VALIDATION {
 		log.warnf(
 			"%s not found; install the Vulkan SDK or your distro's validation layer package to run with validation",
 			VALIDATION_LAYER_NAME,

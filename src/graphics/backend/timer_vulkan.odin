@@ -8,11 +8,11 @@ import vk "vendor:vulkan"
 
 // One query pool per frame slot, so a slot's results are read only after its fence has passed.
 GpuTimer :: struct {
-	pools:     [MAX_FRAMES_IN_FLIGHT]vk.QueryPool,
-	written:   [MAX_FRAMES_IN_FLIGHT]u32, // timestamps recorded into each slot's last submission
-	period_ns: f64,
+	pools:      [MAX_FRAMES_IN_FLIGHT]vk.QueryPool,
+	written:    [MAX_FRAMES_IN_FLIGHT]u32, // timestamps recorded into each slot's last submission
+	period_ns:  f64,
 	valid_mask: u64,
-	supported: bool,
+	supported:  bool,
 }
 
 gpu_timer_create :: proc(ctx: ^Context) -> (timer: GpuTimer) {

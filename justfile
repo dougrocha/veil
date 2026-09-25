@@ -12,9 +12,19 @@ debug: gpu-types vma
         -extra-linker-flags:'-rpath {{slang_rpath}}' \
         -debug -sanitize:address
 
+# optimized, no validation layers -> odin-vulkan-release.out
+build-release: gpu-types vma
+    odin build src -collection:shared=shared -out:{{out_base}}-release.out \
+        -extra-linker-flags:'-rpath {{slang_rpath}}' \
+        -o:speed -define:VEIL_VALIDATION=false
+
 # build, then run
 run: build
     ./{{out_base}}.out
+
+# release build, then run
+release: build-release
+    ./{{out_base}}-release.out
 
 # debug build, then run
 run-debug: debug

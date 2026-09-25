@@ -7,6 +7,9 @@ VEIL_VULKAN :: ODIN_OS == .Linux
 
 MAX_FRAMES_IN_FLIGHT :: 2
 
+// Validation layers cost CPU on every command; release builds pass -define:VEIL_VALIDATION=false.
+VEIL_VALIDATION :: #config(VEIL_VALIDATION, true)
+
 // Timestamp queries per frame slot (GpuTimer).
 MAX_GPU_TIMESTAMPS :: 64
 
