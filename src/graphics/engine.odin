@@ -83,7 +83,7 @@ global_resources_create :: proc(engine: ^Engine) {
 	vk_ctx := &engine.vk_ctx
 
 	engine.global_descriptor = backend.descriptor_set_create_sampler_array(vk_ctx, 3)
-	engine.shadow_atlas = shadow_atlas_create(vk_ctx, SHADOW_MAP_SIZE, MAX_POINT_LIGHTS * 6, cube = true)
+	engine.shadow_atlas = shadow_atlas_create(vk_ctx, POINT_SHADOW_MAP_SIZE, MAX_POINT_LIGHTS * 6, cube = true)
 	backend.descriptor_write_image_view(
 		vk_ctx,
 		&engine.global_descriptor,

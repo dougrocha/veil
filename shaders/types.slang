@@ -1,7 +1,7 @@
 // Generated from src/graphics/gpu_types.odin. Do not edit.
 
-static const uint MAX_POINT_LIGHTS = 16;
-static const uint MAX_DIRECTIONAL_LIGHTS = 4;
+static const uint MAX_POINT_LIGHTS = 8;
+static const uint MAX_DIRECTIONAL_LIGHTS = 2;
 static const uint MAX_SPOT_LIGHTS = 4;
 static const uint SHADOW_MAP_CASCADE_COUNT = 4;
 static const uint MAX_SHADOW_2D_SLOTS = (((MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT)) + MAX_SPOT_LIGHTS);

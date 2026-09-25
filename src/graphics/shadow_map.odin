@@ -2,7 +2,10 @@ package graphics
 
 import "backend"
 
+// Cascades and spot maps share the 2D atlas; point cube faces are lower-res since each light
+// costs 6 faces. Memory: 8 lights x 6 x 1024^2 x D32 = 192 MiB, 12 slots x 2048^2 x D32 = 192 MiB.
 SHADOW_MAP_SIZE :: 2048
+POINT_SHADOW_MAP_SIZE :: 1024
 
 // First spot-light layer in the 2D shadow atlas; directional cascades occupy the layers before it.
 SPOT_SHADOW_SLOT_BASE :: MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT
