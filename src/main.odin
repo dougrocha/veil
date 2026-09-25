@@ -3,7 +3,6 @@ package main
 import "core:c"
 import "core:fmt"
 import "core:log"
-import "core:math"
 import "core:math/linalg"
 import "core:time"
 
@@ -53,91 +52,10 @@ main :: proc() {
 
 	app.last_frame_time = time.now()
 
-	app.engine.camera_system.default_camera = gfx.camera_create({0, 1, 5}, yaw = -90, pitch = 0)
-
-	shiny_mat := gfx.material_create(&app.engine, "shiny_mat", perceptual_roughness = 0.0)
-	rough_mat := gfx.material_create(&app.engine, "rough_mat", perceptual_roughness = 1.0)
-	shiny_cube := gfx.primitive_cube(&app.engine, "shiny_cube", shiny_mat)
-	rough_cube := gfx.primitive_cube(&app.engine, "rough_cube", rough_mat)
-	shiny_cube_instance := gfx.instance_spawn(&app.engine, shiny_cube, gfx.transform_create(translation = {-2, 1, 0}))
-	rough_cube_instance := gfx.instance_spawn(&app.engine, rough_cube, gfx.transform_create(translation = {2, 1, 0}))
-
-	ground_mat := gfx.material_create(&app.engine, "ground_mat", perceptual_roughness = 0.9)
-	ground_plane := gfx.primitive_plane(&app.engine, "ground_plane", ground_mat, half_size = {10, 10})
-	gfx.instance_spawn(&app.engine, ground_plane, gfx.transform_create(translation = {0, 0, 0}))
-
-	// center sphere: main shadow caster for the camera-mounted spot light
-	matte_mat := gfx.material_create(&app.engine, "matte_mat", perceptual_roughness = 0.5)
-	test_sphere := gfx.primitive_sphere(&app.engine, "test_sphere", material = matte_mat)
-	gfx.instance_spawn(&app.engine, test_sphere, gfx.transform_create(translation = {0, 1, 0}))
-
-	// back wall: vertical receiver so spot/point shadows are visible without looking at the floor
-	back_wall := gfx.primitive_cube(&app.engine, "back_wall", rough_mat)
-	gfx.instance_spawn(&app.engine, back_wall, gfx.transform_create(translation = {0, 2, -6}, scale = {6, 2, 0.2}))
-
-	// Optional scenes, not loaded by default:
-	// load_pbr_showcase(&app.engine)
-	// load_sponza(&app.engine)
+	load_sponza(&app.engine)
 
 	space_skybox_tex := gfx.texture_load_cubemap(&app.engine, "assets/textures/StandardCubeMap.png")
 	gfx.set_skybox_texture(&app.engine, space_skybox_tex)
-
-	point_light_index := app.engine.scene.point_light_count
-	gfx.light_spawn_point(
-		&app.engine,
-		gfx.PointLight {
-			pos = {0, 10, 0},
-			range = 20.0,
-			shadow_near = 0.1,
-			color = {1, 0.2, 0.2},
-			constant = 1,
-			linear = 0.09,
-			quadratic = 0.032,
-			diffuse_intensity = 1.0,
-			specular_intensity = 0.5,
-		},
-	)
-	gfx.spawn_spot_light(
-		&app.engine,
-		gfx.SpotLight {
-			pos                = {0, 6, 5},
-			range              = 20.0,
-			shadow_near        = 0.1,
-			direction          = {0, -1, -1}, // aimed dead-center at the test sphere
-			color              = {1, 1, 1},
-			inner_cutoff       = math.cos(math.to_radians(f32(12.5))),
-			outer_cutoff       = math.cos(math.to_radians(f32(22.5))),
-			constant           = 1,
-			linear             = 0.09,
-			quadratic          = 0.032,
-			diffuse_intensity  = 1.0,
-			specular_intensity = 1.0,
-		},
-	)
-	gfx.spawn_directional_light(
-		&app.engine,
-		gfx.DirectionalLight {
-			direction               = linalg.normalize(gfx.Vec3{-1.0, -1.0, 0.5}),
-			color                   = {1.0, 0.9, 0.8},
-			diffuse_intensity       = 0.3,
-			specular_intensity      = 0.2,
-			// scene is ~15 units deep; keeps all four cascades over real geometry
-			shadow_maximum_distance = 25.0,
-		},
-	)
-
-	yellow_mat := gfx.material_create(&app.engine, "yellow_mat", base_color = {1, 1, 0, 1})
-	light_sphere_model := gfx.primitive_sphere(&app.engine, "light_sphere", material = yellow_mat)
-	light_sphere := gfx.instance_spawn(
-		&app.engine,
-		light_sphere_model,
-		gfx.transform_create(scale = {0.2, 0.2, 0.2}),
-		casts_shadow = false,
-	)
-
-	light_pos := gfx.Vec3{-3, 3, 1}
-	app.engine.scene.point_lights[point_light_index].pos = light_pos
-	gfx.instance_get(&app.engine, light_sphere).transform.translation = light_pos
 
 	gizmo: gfx.GizmoController
 	main_loop: for {
@@ -255,26 +173,16 @@ main :: proc() {
 		app.fps_frame_count += 1
 		app.fps_timer += delta_time
 		process_input(active_cam, delta_time)
-		app.engine.scene.point_lights[point_light_index].pos =
-			gfx.instance_get(&app.engine, light_sphere).transform.translation
 		if app.fps_timer >= 1.0 {
 			app.avg_fps = app.fps_frame_count
 			log.infof("FPS: %d, models drawn: %d", app.fps_frame_count, app.engine.drawn_instance_count)
 			log.infof("(%v) Camera position: %v", app.engine.scene.active_camera_name, active_cam.position)
-			log.infof("Point light position: %v", app.engine.scene.point_lights[point_light_index].pos)
-			log.infof(
-				"Shiny cube position: %v",
-				gfx.instance_get(&app.engine, shiny_cube_instance).transform.translation,
-			)
-			log.infof(
-				"Rough cube position: %v",
-				gfx.instance_get(&app.engine, rough_cube_instance).transform.translation,
-			)
 			app.fps_frame_count = 0
 			app.fps_timer = 0
 		}
 
 		gfx.gizmo_draw(&gizmo, &app.engine)
+
 
 		fps_text := fmt.tprintf("%d Avg FPS", app.avg_fps)
 		gfx.ui_draw_text(&app.engine, &ui_font, fps_text, 10, 30, {0, 0, 0, 255})
@@ -349,6 +257,47 @@ load_pbr_showcase :: proc(engine: ^gfx.Engine) {
 load_sponza :: proc(engine: ^gfx.Engine) {
 	sponza := gfx.model_load(engine, "assets/models/sponza-gltf-pbr/sponza.glb")
 	gfx.instance_spawn(engine, sponza, gfx.transform_create(translation = {0, 0, 0}, scale = {0.01, 0.01, 0.01}))
+
+	// West end of the atrium, looking down its long (+x) axis.
+	engine.camera_system.default_camera = gfx.camera_create({-12, 1.8, 0}, yaw = 0, pitch = 5)
+
+	// No GI, so the arcades rely on ambient to stay readable.
+	engine.scene.ambient_light = gfx.AmbientLight {
+		color      = {0.6, 0.7, 1.0, 1},
+		brightness = 0.3,
+	}
+	// Steep sun through the open roof, tilted across the short (z) axis so one arcade is lit
+	// and the gallery columns cast long shadows on the floor.
+	gfx.spawn_directional_light(
+		engine,
+		gfx.DirectionalLight {
+			direction               = linalg.normalize(gfx.Vec3{0.2, -1.0, 0.35}),
+			color                   = {1.0, 0.92, 0.8},
+			diffuse_intensity       = 1.2,
+			specular_intensity      = 0.3,
+			// atrium is ~30 units long at 0.01 scale
+			shadow_maximum_distance = 40.0,
+		},
+	)
+
+	// Fire light above the four wall-mounted torch bowls on the inner columns.
+	torches := [?]gfx.Vec3{{4.88, 2.4, -2.0}, {-6.19, 2.4, -2.0}, {4.88, 2.4, 1.25}, {-6.19, 2.4, 1.25}}
+	for pos in torches {
+		gfx.light_spawn_point(
+			engine,
+			gfx.PointLight {
+				pos = pos,
+				range = 10.0,
+				shadow_near = 0.1,
+				color = {1.0, 0.6, 0.3},
+				constant = 1,
+				linear = 0.22,
+				quadratic = 0.2,
+				diffuse_intensity = 1.5,
+				specular_intensity = 0.5,
+			},
+		)
+	}
 }
 
 // SDL reports logical window coordinates; rendering and picking use pixels.
