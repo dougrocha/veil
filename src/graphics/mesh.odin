@@ -1,5 +1,6 @@
 package graphics
 
+import "core:fmt"
 import "core:log"
 import "core:math/linalg"
 import "core:path/filepath"
@@ -16,6 +17,7 @@ Mesh :: struct {
 	material:      MaterialHandle,
 	positions:     []Vec3,
 	indices:       []u32,
+	bounds:        AABB, // model space
 }
 
 ModelHandle :: Handle(Model)
@@ -40,14 +42,23 @@ Instance :: struct {
 
 MAX_MODEL_INSTANCES :: 4096
 
+// One spawnable piece of a file loaded with model_load_parts. transform places the piece
+// relative to the file's root.
+ModelPart :: struct {
+	model:     ModelHandle,
+	transform: Transform,
+}
+
 ModelSystem :: struct {
 	models:    Pool(Model),
 	model_map: map[string]ModelHandle,
+	parts_map: map[string][]ModelPart,
 }
 
 create_model_system :: proc(engine: ^Engine) {
 	engine.model_system.models = pool_init(1024, Model)
 	engine.model_system.model_map = make(map[string]ModelHandle)
+	engine.model_system.parts_map = make(map[string][]ModelPart)
 	engine.scene.instances = pool_init(MAX_MODEL_INSTANCES, Instance)
 }
 
@@ -67,6 +78,11 @@ destroy_model_system :: proc(engine: ^Engine) {
 	}
 	pool_destroy(&ms.models)
 	delete(ms.model_map)
+	for key, parts in ms.parts_map {
+		delete(key)
+		delete(parts)
+	}
+	delete(ms.parts_map)
 	pool_destroy(&engine.scene.instances)
 }
 
@@ -153,33 +169,94 @@ model_register :: proc(
 		material      = material_handle,
 		positions     = positions,
 		indices       = mesh_indices,
+		bounds        = aabb_from_points(positions),
 	}
 
-	center := Vec3{0, 0, 0}
-	for v in vertices {
-		center += v.pos
-	}
-	center /= f32(len(vertices))
-
-	radius: f32 = 0
-	for v in vertices {
-		radius = max(radius, linalg.length(v.pos - center))
-	}
-
-	bounds := BoundingSphere{center, radius}
-
-	// Owned copy, shared by Model.name and the map key.
-	name := strings.clone(name)
 	model := Model {
-		name   = name,
-		bounds = bounds,
+		name = strings.clone(name),
 	}
 	append(&model.meshes, mesh)
+	return model_add(engine, model)
+}
 
+// Takes ownership of model, whose name must be an owned copy (it doubles as the map key).
+model_add :: proc(engine: ^Engine, model: Model) -> ModelHandle {
+	model := model
+	model_compute_bounds(&model)
 	handle := pool_alloc(&engine.model_system.models, model)
-	engine.model_system.model_map[name] = handle
-
+	engine.model_system.model_map[model.name] = handle
 	return handle
+}
+
+// Bounding sphere around every mesh, centered on the union of their AABBs.
+model_compute_bounds :: proc(model: ^Model) {
+	if len(model.meshes) == 0 do return
+	lo := model.meshes[0].bounds.center - model.meshes[0].bounds.extents
+	hi := model.meshes[0].bounds.center + model.meshes[0].bounds.extents
+	for &mesh in model.meshes[1:] {
+		lo = linalg.min(lo, mesh.bounds.center - mesh.bounds.extents)
+		hi = linalg.max(hi, mesh.bounds.center + mesh.bounds.extents)
+	}
+	center := (lo + hi) * 0.5
+	radius: f32 = 0
+	for &mesh in model.meshes {
+		for p in mesh.positions {
+			radius = max(radius, linalg.length(p - center))
+		}
+	}
+	model.bounds = BoundingSphere{center, radius}
+}
+
+// Loads a file as separately spawnable pieces. glTF files get one part per mesh node, or one per
+// primitive of each mesh node with split_primitives (for files flattened into a single mesh, like
+// Sponza). Other formats come back as a single part.
+model_load_parts :: proc(
+	engine: ^Engine,
+	path: string,
+	material: MaterialHandle = INVALID_MATERIAL,
+	split_primitives := false,
+) -> []ModelPart {
+	key := fmt.tprintf("{}#split", path) if split_primitives else path
+	if parts, ok := engine.model_system.parts_map[key]; ok {
+		return parts
+	}
+
+	parts: []ModelPart
+	ext := filepath.ext(path)
+	if ext == ".gltf" || ext == ".glb" {
+		parts = model_load_gltf_parts(engine, path, material, split_primitives)
+	} else {
+		model := model_load(engine, path, material)
+		if model != INVALID_MODEL {
+			parts = make([]ModelPart, 1)
+			parts[0] = {
+				model     = model,
+				transform = transform_create(),
+			}
+		}
+	}
+	if len(parts) > 0 {
+		engine.model_system.parts_map[strings.clone(key)] = parts
+	}
+	return parts
+}
+
+// Spawns one instance per part, placed as if the parts were children of transform.
+// Returns the handles in part order.
+instance_spawn_parts :: proc(
+	engine: ^Engine,
+	parts: []ModelPart,
+	transform: Transform,
+	casts_shadow := true,
+	allocator := context.temp_allocator,
+) -> []InstanceHandle {
+	handles := make([]InstanceHandle, len(parts), allocator)
+	parent := transform_to_matrix(transform)
+	for part, i in parts {
+		part_transform := transform_from_matrix(parent * transform_to_matrix(part.transform))
+		handles[i] = instance_spawn(engine, part.model, part_transform, casts_shadow)
+	}
+	return handles
 }
 
 instance_get :: proc(engine: ^Engine, handle: InstanceHandle) -> ^Instance {

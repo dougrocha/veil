@@ -263,11 +263,13 @@ load_pbr_showcase :: proc(engine: ^gfx.Engine) {
 }
 
 load_sponza :: proc(engine: ^gfx.Engine) {
-	sponza := gfx.model_load(engine, "assets/models/sponza-gltf-pbr/sponza.glb")
-	gfx.instance_spawn(engine, sponza, gfx.transform_create(translation = {0, 0, 0}, scale = {0.01, 0.01, 0.01}))
+	// The file is one mesh with a primitive per material, so splitting primitives is the only way to
+	// get separately pickable pieces. The root node's 0.008 scale brings it to meters.
+	sponza := gfx.model_load_parts(engine, "assets/models/sponza-gltf-pbr/sponza.glb", split_primitives = true)
+	gfx.instance_spawn_parts(engine, sponza, gfx.transform_create())
 
 	// West end of the atrium, looking down its long (+x) axis.
-	engine.camera_system.default_camera = gfx.camera_create({-12, 1.8, 0}, yaw = 0, pitch = 5)
+	engine.camera_system.default_camera = gfx.camera_create({-9.6, 1.44, 0}, yaw = 0, pitch = 5)
 
 	// No GI, so the arcades rely on ambient to stay readable.
 	engine.scene.ambient_light = gfx.AmbientLight {
@@ -283,24 +285,24 @@ load_sponza :: proc(engine: ^gfx.Engine) {
 			color                   = {1.0, 0.92, 0.8},
 			diffuse_intensity       = 1.2,
 			specular_intensity      = 0.3,
-			// atrium is ~30 units long at 0.01 scale
-			shadow_maximum_distance = 40.0,
+			// atrium is ~24 m long
+			shadow_maximum_distance = 32.0,
 		},
 	)
 
 	// Fire light above the four wall-mounted torch bowls on the inner columns.
-	torches := [?]gfx.Vec3{{4.88, 2.4, -2.0}, {-6.19, 2.4, -2.0}, {4.88, 2.4, 1.25}, {-6.19, 2.4, 1.25}}
+	torches := [?]gfx.Vec3{{3.9, 1.92, -1.6}, {-4.95, 1.92, -1.6}, {3.9, 1.92, 1.0}, {-4.95, 1.92, 1.0}}
 	for pos in torches {
 		gfx.light_spawn_point(
 			engine,
 			gfx.PointLight {
 				pos = pos,
-				range = 10.0,
+				range = 8.0,
 				shadow_near = 0.1,
 				color = {1.0, 0.6, 0.3},
 				constant = 1,
-				linear = 0.22,
-				quadratic = 0.2,
+				linear = 0.275,
+				quadratic = 0.31,
 				diffuse_intensity = 1.5,
 				specular_intensity = 0.5,
 			},

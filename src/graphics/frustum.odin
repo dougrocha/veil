@@ -147,6 +147,16 @@ AABB :: struct {
 	extents: Vec3,
 }
 
+aabb_from_points :: proc(points: []Vec3) -> AABB {
+	if len(points) == 0 do return {}
+	lo, hi := points[0], points[0]
+	for p in points[1:] {
+		lo = linalg.min(lo, p)
+		hi = linalg.max(hi, p)
+	}
+	return AABB{(lo + hi) * 0.5, (hi - lo) * 0.5}
+}
+
 Volume :: union {
 	BoundingSphere,
 	AABB,
@@ -212,9 +222,10 @@ sphere_is_on_frustum :: proc(
 aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, transform: Transform, skip_near := false) -> bool {
 	global_center := transform_to_matrix(transform) * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
 
-	right := transform_right(transform) * volume.extents.x
-	up := transform_up(transform) * volume.extents.y
-	forward := transform_forward(transform) * volume.extents.z
+	extents := volume.extents * linalg.abs(transform_global_scale(transform))
+	right := transform_right(transform) * extents.x
+	up := transform_up(transform) * extents.y
+	forward := transform_forward(transform) * extents.z
 
 	new_ii :=
 		abs(linalg.dot(Vec3{1, 0, 0}, right)) +
@@ -231,7 +242,6 @@ aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, transform: Transform,
 		abs(linalg.dot(Vec3{0, 0, 1}, up)) +
 		abs(linalg.dot(Vec3{0, 0, 1}, forward))
 
-	// No need to divide by scale — this is already based on the AABB's half-extents.
 	global_aabb := AABB{global_center.xyz, {new_ii, new_ij, new_ik}}
 
 	for plane, i in frustum.planes {

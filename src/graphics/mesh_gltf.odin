@@ -10,123 +10,71 @@ import "backend"
 
 import cgltf "vendor:cgltf"
 
-model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle) -> ModelHandle {
+@(private = "file")
+gltf_open :: proc(path: string) -> (^cgltf.data, bool) {
 	c_path := strings.clone_to_cstring(path, context.temp_allocator)
 
 	options := cgltf.options{}
 	gltf_data, res := cgltf.parse_file(options, c_path)
 	if res != .success {
 		log.errorf("cgltf: failed to parse {}: {}", path, res)
-		return INVALID_MODEL
+		return nil, false
 	}
-	defer cgltf.free(gltf_data)
 
 	res = cgltf.load_buffers(options, gltf_data, c_path)
 	if res != .success {
 		log.errorf("cgltf: failed to load buffers for {}: {}", path, res)
-		return INVALID_MODEL
+		cgltf.free(gltf_data)
+		return nil, false
+	}
+	return gltf_data, true
+}
+
+// Mesh nodes of the default scene, depth first. Files without scenes use every root node.
+@(private = "file")
+gltf_mesh_nodes :: proc(data: ^cgltf.data) -> []^cgltf.node {
+	nodes := make([dynamic]^cgltf.node, context.temp_allocator)
+
+	visit :: proc(nodes: ^[dynamic]^cgltf.node, node: ^cgltf.node) {
+		if node.mesh != nil do append(nodes, node)
+		for child in node.children do visit(nodes, child)
 	}
 
-	// Owned copy, shared by Model.name and the map key.
+	scene := data.scene
+	if scene == nil && len(data.scenes) > 0 do scene = &data.scenes[0]
+	if scene != nil {
+		for root in scene.nodes do visit(&nodes, root)
+	} else {
+		for &node in data.nodes {
+			if node.parent == nil do visit(&nodes, &node)
+		}
+	}
+	return nodes[:]
+}
+
+@(private = "file")
+gltf_node_world :: proc(node: ^cgltf.node) -> Mat4x4 {
+	m: [16]f32
+	cgltf.node_transform_world(node, raw_data(m[:]))
+	return transmute(Mat4x4)m // both column major
+}
+
+// Loads every mesh node of the default scene into one Model, with node transforms baked into the
+// vertices. Use model_load_parts to keep nodes as separate instances.
+model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle) -> ModelHandle {
+	gltf_data, ok := gltf_open(path)
+	if !ok do return INVALID_MODEL
+	defer cgltf.free(gltf_data)
+
 	model := Model {
 		name = strings.clone(path),
 	}
-
-	bounds_min := Vec3{max(f32), max(f32), max(f32)}
-	bounds_max := Vec3{min(f32), min(f32), min(f32)}
-	all_positions := make([dynamic]Vec3, context.temp_allocator)
-
-	for &mesh in gltf_data.meshes {
-		for &prim in mesh.primitives {
-			if prim.type != .triangles {
-				continue
+	for node in gltf_mesh_nodes(gltf_data) {
+		world := gltf_node_world(node)
+		for &prim in node.mesh.primitives {
+			if mesh, _, prim_ok := gltf_load_primitive(engine, path, gltf_data, &prim, material, world); prim_ok {
+				append(&model.meshes, mesh)
 			}
-
-			pos_acc, uv_acc, norm_acc, tan_acc: ^cgltf.accessor
-			for attr in prim.attributes {
-				switch attr.type {
-				case .position:
-					pos_acc = attr.data
-				case .texcoord:
-					uv_acc = attr.data
-				case .normal:
-					norm_acc = attr.data
-				case .tangent:
-					tan_acc = attr.data
-				case .invalid, .color, .joints, .weights, .custom:
-				}
-			}
-
-			if pos_acc == nil {
-				log.warnf("cgltf: primitive in {} has no POSITION, skipping", path)
-				continue
-			}
-
-			vertex_count := uint(pos_acc.count)
-			vertices := make([dynamic]Vertex, vertex_count, context.temp_allocator)
-
-			for i in 0 ..< vertex_count {
-				pos: [3]f32
-				_ = cgltf.accessor_read_float(pos_acc, i, raw_data(pos[:]), 3)
-				vertices[i].pos = pos
-
-				bounds_min = linalg.min(bounds_min, pos)
-				bounds_max = linalg.max(bounds_max, pos)
-				append(&all_positions, pos)
-
-				if uv_acc != nil {
-					uv: [2]f32
-					_ = cgltf.accessor_read_float(uv_acc, i, raw_data(uv[:]), 2)
-					vertices[i].uv = uv
-				}
-
-				if norm_acc != nil {
-					n: [3]f32
-					_ = cgltf.accessor_read_float(norm_acc, i, raw_data(n[:]), 3)
-					vertices[i].normal = n
-				}
-
-				if tan_acc != nil {
-					t: [4]f32
-					_ = cgltf.accessor_read_float(tan_acc, i, raw_data(t[:]), 4)
-					vertices[i].tangent = t
-				}
-			}
-
-			indices := make([dynamic]u32, prim.indices.count, context.temp_allocator)
-			for i in 0 ..< prim.indices.count {
-				indices[i] = u32(cgltf.accessor_read_index(prim.indices, i))
-			}
-
-			prim_mat: MaterialHandle
-			if material != INVALID_MATERIAL {
-				prim_mat = material
-			} else if prim.material != nil {
-				prim_mat = gltf_extract_material(engine, path, gltf_data, prim.material)
-			} else {
-				prim_mat = material_get_default(engine)
-			}
-
-			vertex_buf := backend.buffer_upload(&engine.vk_ctx, vertices[:], .Storage)
-			index_buf := backend.buffer_upload(&engine.vk_ctx, indices[:], .Index)
-			positions := make([]Vec3, len(vertices))
-			for vertex, i in vertices {
-				positions[i] = vertex.pos
-			}
-			mesh_indices := make([]u32, len(indices))
-			copy(mesh_indices, indices[:])
-
-			append(
-				&model.meshes,
-				Mesh {
-					vertex_buffer = vertex_buf,
-					index_buffer = index_buf,
-					index_count = u32(len(indices)),
-					material = prim_mat,
-					positions = positions,
-					indices = mesh_indices,
-				},
-			)
 		}
 	}
 
@@ -136,17 +84,206 @@ model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 		delete(model.name)
 		return INVALID_MODEL
 	}
+	return model_add(engine, model)
+}
 
-	center := (bounds_min + bounds_max) * 0.5
-	radius: f32 = 0
-	for p in all_positions {
-		radius = max(radius, linalg.length(p - center))
+// One part per mesh node, or per primitive of each mesh node with split_primitives. Nodes that
+// share a glTF mesh share its models.
+model_load_gltf_parts :: proc(
+	engine: ^Engine,
+	path: string,
+	material: MaterialHandle,
+	split_primitives: bool,
+) -> []ModelPart {
+	gltf_data, ok := gltf_open(path)
+	if !ok do return nil
+	defer cgltf.free(gltf_data)
+
+	// Per glTF mesh: its models, each placed relative to the node that references it.
+	mesh_pieces := make([][]ModelPart, len(gltf_data.meshes), context.temp_allocator)
+	mesh_loaded := make([]bool, len(gltf_data.meshes), context.temp_allocator)
+
+	parts := make([dynamic]ModelPart)
+	for node in gltf_mesh_nodes(gltf_data) {
+		mesh_index := cgltf.mesh_index(gltf_data, node.mesh)
+		if !mesh_loaded[mesh_index] {
+			mesh_pieces[mesh_index] = gltf_load_mesh_pieces(
+				engine,
+				path,
+				gltf_data,
+				int(mesh_index),
+				material,
+				split_primitives,
+			)
+			mesh_loaded[mesh_index] = true
+		}
+
+		world := gltf_node_world(node)
+		for piece in mesh_pieces[mesh_index] {
+			append(
+				&parts,
+				ModelPart {
+					model = piece.model,
+					transform = transform_from_matrix(world * transform_to_matrix(piece.transform)),
+				},
+			)
+		}
 	}
-	model.bounds = BoundingSphere{center, radius}
 
-	handle := pool_alloc(&engine.model_system.models, model)
-	engine.model_system.model_map[model.name] = handle
-	return handle
+	if len(parts) == 0 do log.warnf("cgltf: no meshes found in {}", path)
+	return parts[:]
+}
+
+// Registers one Model for the whole glTF mesh, or one per primitive recentered on its own bounds
+// so a split piece pivots around itself instead of the file origin.
+@(private = "file")
+gltf_load_mesh_pieces :: proc(
+	engine: ^Engine,
+	path: string,
+	data: ^cgltf.data,
+	mesh_index: int,
+	material: MaterialHandle,
+	split_primitives: bool,
+) -> []ModelPart {
+	gltf_mesh := &data.meshes[mesh_index]
+	pieces := make([dynamic]ModelPart, context.temp_allocator)
+
+	if split_primitives {
+		for &prim, prim_index in gltf_mesh.primitives {
+			mesh, center, ok := gltf_load_primitive(engine, path, data, &prim, material, recenter = true)
+			if !ok do continue
+			model := Model {
+				name = fmt.aprintf("{}#mesh{}.prim{}", path, mesh_index, prim_index),
+			}
+			append(&model.meshes, mesh)
+			append(&pieces, ModelPart{model_add(engine, model), transform_create(translation = center)})
+		}
+		return pieces[:]
+	}
+
+	model := Model {
+		name = fmt.aprintf("{}#mesh{}", path, mesh_index),
+	}
+	for &prim in gltf_mesh.primitives {
+		if mesh, _, ok := gltf_load_primitive(engine, path, data, &prim, material); ok {
+			append(&model.meshes, mesh)
+		}
+	}
+	if len(model.meshes) == 0 {
+		delete(model.meshes)
+		delete(model.name)
+		return nil
+	}
+	append(&pieces, ModelPart{model_add(engine, model), transform_create()})
+	return pieces[:]
+}
+
+// Uploads one triangle primitive with xform baked into its vertices. With recenter, positions are
+// shifted so the mesh bounds are centered on the origin, and the removed offset is returned.
+@(private = "file")
+gltf_load_primitive :: proc(
+	engine: ^Engine,
+	path: string,
+	data: ^cgltf.data,
+	prim: ^cgltf.primitive,
+	material: MaterialHandle,
+	xform := linalg.MATRIX4F32_IDENTITY,
+	recenter := false,
+) -> (
+	mesh: Mesh,
+	center: Vec3,
+	ok: bool,
+) {
+	if prim.type != .triangles do return
+	pos_acc, uv_acc, norm_acc, tan_acc: ^cgltf.accessor
+	for attr in prim.attributes {
+		switch attr.type {
+		case .position:
+			pos_acc = attr.data
+		case .texcoord:
+			uv_acc = attr.data
+		case .normal:
+			norm_acc = attr.data
+		case .tangent:
+			tan_acc = attr.data
+		case .invalid, .color, .joints, .weights, .custom:
+		}
+	}
+
+	if pos_acc == nil {
+		log.warnf("cgltf: primitive in {} has no POSITION, skipping", path)
+		return
+	}
+
+	linear := linalg.matrix3_from_matrix4(xform)
+	normal_matrix := linalg.transpose(linalg.inverse(linear))
+	// A mirroring transform flips triangle winding and tangent-space handedness.
+	mirrored := linalg.determinant(linear) < 0
+
+	vertex_count := uint(pos_acc.count)
+	vertices := make([]Vertex, vertex_count, context.temp_allocator)
+	positions := make([]Vec3, vertex_count)
+
+	for i in 0 ..< vertex_count {
+		pos: [3]f32
+		_ = cgltf.accessor_read_float(pos_acc, i, raw_data(pos[:]), 3)
+		positions[i] = (xform * Vec4{pos.x, pos.y, pos.z, 1}).xyz
+
+		if uv_acc != nil {
+			uv: [2]f32
+			_ = cgltf.accessor_read_float(uv_acc, i, raw_data(uv[:]), 2)
+			vertices[i].uv = uv
+		}
+
+		if norm_acc != nil {
+			n: [3]f32
+			_ = cgltf.accessor_read_float(norm_acc, i, raw_data(n[:]), 3)
+			vertices[i].normal = linalg.normalize0(normal_matrix * Vec3(n))
+		}
+
+		if tan_acc != nil {
+			t: [4]f32
+			_ = cgltf.accessor_read_float(tan_acc, i, raw_data(t[:]), 4)
+			tangent := linalg.normalize0(linear * t.xyz)
+			vertices[i].tangent = {tangent.x, tangent.y, tangent.z, -t.w if mirrored else t.w}
+		}
+	}
+
+	bounds := aabb_from_points(positions)
+	if recenter {
+		center = bounds.center
+		bounds.center = {}
+		for &p in positions do p -= center
+	}
+	for p, i in positions do vertices[i].pos = p
+
+	indices := make([]u32, prim.indices.count)
+	for i in 0 ..< prim.indices.count {
+		indices[i] = u32(cgltf.accessor_read_index(prim.indices, i))
+	}
+	if mirrored {
+		for i := 0; i + 2 < len(indices); i += 3 do indices[i + 1], indices[i + 2] = indices[i + 2], indices[i + 1]
+	}
+
+	prim_mat: MaterialHandle
+	if material != INVALID_MATERIAL {
+		prim_mat = material
+	} else if prim.material != nil {
+		prim_mat = gltf_extract_material(engine, path, data, prim.material)
+	} else {
+		prim_mat = material_get_default(engine)
+	}
+
+	mesh = Mesh {
+		vertex_buffer = backend.buffer_upload(&engine.vk_ctx, vertices, .Storage),
+		index_buffer  = backend.buffer_upload(&engine.vk_ctx, indices, .Index),
+		index_count   = u32(len(indices)),
+		material      = prim_mat,
+		positions     = positions,
+		indices       = indices,
+		bounds        = bounds,
+	}
+	return mesh, center, true
 }
 
 gltf_extract_material :: proc(
