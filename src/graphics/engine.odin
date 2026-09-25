@@ -55,6 +55,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	create_model_system(engine)
 
 	global_resources_create(engine)
+	gpu_profiler_create(engine)
 
 	register_shadow_pipelines(engine, shadow_handle)
 	register_ui_pipeline(engine, ui_handle)
@@ -117,6 +118,7 @@ engine_destroy :: proc(self: ^Engine) {
 	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_atlas)
 	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_2d_atlas)
 
+	gpu_profiler_destroy(self)
 	line_renderer_destroy(self)
 	ui_renderer_destroy(self)
 
@@ -173,6 +175,7 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 	}
 
 	engine.time_info.frame_count += 1
+	gpu_profiler_collect(engine)
 	wait_ms := tick_ms(wait_start)
 	record_start := time.tick_now()
 
@@ -447,6 +450,7 @@ draw_shadow_maps :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 
 	// 2D atlas: directional cascades first, then spot lights from SPOT_SHADOW_SLOT_BASE
 	atlas_2d := &engine.shadow_2d_atlas
+	scope_2d := gpu_scope_begin(engine, cmd, "shadow 2d")
 	shadow_atlas_transition(cmd, atlas_2d, .Depth_Write, MAX_SHADOW_2D_SLOTS)
 	for light_i in 0 ..< dir_count {
 		for cascade in 0 ..< SHADOW_MAP_CASCADE_COUNT {
@@ -459,9 +463,12 @@ draw_shadow_maps :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		shadow_pass(engine, cmd, atlas_2d, slot, .Spot, u32(light_i), scene_data.shadow_2d_view_proj[slot])
 	}
 	shadow_atlas_transition(cmd, atlas_2d, .Depth_Read, MAX_SHADOW_2D_SLOTS)
+	gpu_scope_end(engine, cmd, scope_2d)
 
 	// cube atlas: 6 faces per point light
 	atlas_cube := &engine.shadow_atlas
+	scope_cube := gpu_scope_begin(engine, cmd, "shadow point")
+	defer gpu_scope_end(engine, cmd, scope_cube)
 	shadow_atlas_transition(cmd, atlas_cube, .Depth_Write, MAX_POINT_LIGHTS * 6)
 	for light_i in 0 ..< point_count {
 		for face_i in 0 ..< 6 {
@@ -524,10 +531,15 @@ draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 }
 
 draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	if engine.debug_settings.particles do dispatch_particles(engine, cmd)
+	if engine.debug_settings.particles {
+		scope := gpu_scope_begin(engine, cmd, "particles")
+		dispatch_particles(engine, cmd)
+		gpu_scope_end(engine, cmd, scope)
+	}
 
 	draw_shadow_maps(engine, cmd)
 
+	main_scope := gpu_scope_begin(engine, cmd, "main")
 	{
 		encoder := backend.begin_render_pass(
 			&engine.vk_ctx,
@@ -546,7 +558,10 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		line_renderer_flush(engine, encoder)
 		backend.end_render_pass(encoder)
 	}
+	gpu_scope_end(engine, cmd, main_scope)
 
+	overlay_scope := gpu_scope_begin(engine, cmd, "overlay")
+	defer gpu_scope_end(engine, cmd, overlay_scope)
 	debug_view_flush(engine, cmd)
 
 	{
@@ -567,10 +582,12 @@ record_command_buffer :: proc(engine: ^Engine) -> backend.CommandBuffer {
 	backend.cmd_begin_recording(&engine.vk_ctx, cmd, engine.frame_index)
 	stats_record_begin(engine)
 	defer stats_record_end(engine)
+	gpu_profiler_reset(engine, cmd)
 
+	frame_scope := gpu_scope_begin(engine, cmd, "frame")
 	draw_scene(engine, cmd)
-
 	backend.present_blit(&engine.vk_ctx, cmd, &engine.swapchain)
+	gpu_scope_end(engine, cmd, frame_scope)
 
 	backend.cmd_end_recording(cmd)
 	return cmd

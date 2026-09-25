@@ -75,6 +75,7 @@ Engine :: struct {
 	scene:             Scene,
 	camera_system:     CameraSystem,
 	stats:             Stats,
+	gpu_profiler:      GpuProfiler,
 
 	// debug capture
 	frame_dump:        FrameDump,

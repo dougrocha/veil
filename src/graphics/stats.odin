@@ -1,6 +1,7 @@
 package graphics
 
 import "core:fmt"
+import "core:strings"
 import "core:time"
 
 // Timings are averaged over this window so the overlay is readable.
@@ -22,6 +23,14 @@ CpuTimings :: struct {
 	submit: f64, // queue submit + present
 }
 
+// GPU time for one named profiler scope, averaged over the same window as CpuTimings.
+GpuScopeStat :: struct {
+	name:    string,
+	sum:     f64,
+	samples: int,
+	avg:     f64, // ms, published once per window
+}
+
 Stats :: struct {
 	counters:     FrameCounters, // accumulating for the frame being recorded
 	last:         FrameCounters, // last fully recorded frame
@@ -38,6 +47,8 @@ Stats :: struct {
 	frame_min:    f64,
 	frame_max:    f64,
 	fps:          f64,
+	gpu:          [MAX_GPU_SCOPES]GpuScopeStat, // in first-seen order
+	gpu_count:    int,
 }
 
 stats_record_begin :: proc(engine: ^Engine) {
@@ -74,9 +85,33 @@ stats_add_timings :: proc(engine: ^Engine, t: CpuTimings) {
 	s.frame_min = s.window_min
 	s.frame_max = s.window_max
 	s.fps = n / s.window_time
+	for &g in s.gpu[:s.gpu_count] {
+		// a scope that stopped being recorded (e.g. particles toggled off) drops to 0
+		g.avg = g.sum / f64(g.samples) if g.samples > 0 else 0
+		g.sum = 0
+		g.samples = 0
+	}
 	s.sum = {}
 	s.window_count = 0
 	s.window_time = 0
+}
+
+stats_add_gpu :: proc(engine: ^Engine, name: string, ms: f64) {
+	s := &engine.stats
+	for &g in s.gpu[:s.gpu_count] {
+		if g.name == name {
+			g.sum += ms
+			g.samples += 1
+			return
+		}
+	}
+	if s.gpu_count >= len(s.gpu) do return
+	s.gpu[s.gpu_count] = {
+		name    = name,
+		sum     = ms,
+		samples = 1,
+	}
+	s.gpu_count += 1
 }
 
 tick_ms :: proc(start: time.Tick) -> f64 {
@@ -104,7 +139,16 @@ stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32) {
 			c.shadow_views,
 		),
 	}
-	for line, i in lines {
+	gpu_line := "gpu  timestamps unsupported"
+	if s.gpu_count > 0 {
+		b := strings.builder_make(context.temp_allocator)
+		strings.write_string(&b, "gpu")
+		for g in s.gpu[:s.gpu_count] do fmt.sbprintf(&b, "  %s %.2f", g.name, g.avg)
+		gpu_line = strings.to_string(b)
+	}
+
+	all_lines := [?]string{lines[0], lines[1], gpu_line, lines[2]}
+	for line, i in all_lines {
 		ly := y + f32(i) * line_height
 		// drop shadow keeps it readable over bright and dark scenes
 		ui_draw_text(engine, font, line, x + 1, ly + 1, {0, 0, 0, 255})
