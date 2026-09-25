@@ -139,6 +139,7 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 	defer {
 		line_renderer_clear(engine)
 		ui_renderer_clear(engine)
+		debug_view_clear(engine)
 	}
 
 	engine.time_info.delta_time = delta_time
@@ -498,70 +499,6 @@ draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	backend.cmd_draw(cmd)
 }
 
-// Draws a single texture, shadow-cube face, or directional shadow slice into a screen-space
-// rect. Reusable for shadow-atlas debugging as well as inspecting any bindless model texture.
-draw_debug_view :: proc(engine: ^Engine, cmd: backend.RenderEncoder, pc: DebugViewPushConstants, rect: Rect2D) {
-	pipeline := get_pipeline(&engine.pipeline_registry, .Debug_View)
-	frame_idx := current_frame_res_index(engine)
-	sets := [2]backend.DescriptorSetHandle {
-		engine.texture_system.descriptor.sets[frame_idx],
-		engine.global_descriptor.sets[frame_idx],
-	}
-	backend.pipeline_bind(cmd, pipeline, sets[:])
-
-	backend.pipeline_set_viewport(cmd, f32(rect.extent.x), f32(rect.extent.y), f32(rect.offset.x), f32(rect.offset.y))
-	backend.pipeline_set_scissor(cmd, rect.extent.x, rect.extent.y, rect.offset.x, rect.offset.y)
-
-	pc := pc
-	backend.pipeline_push(cmd, pipeline, {.Fragment}, &pc, index = 1)
-	backend.cmd_draw(cmd)
-}
-
-draw_debug_shadow_map :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	DEBUG_SIZE :: 128
-
-	encoder := backend.begin_render_pass(
-		&engine.vk_ctx,
-		cmd,
-		backend.PassConfig{color = {image = &engine.swapchain.render_targets.draw}, load_op = .Load},
-	)
-
-	// 6 point-light cube faces, then the first directional light's cascades, then the first spot light.
-	tile_count := 6 + SHADOW_MAP_CASCADE_COUNT + 1
-	for i in 0 ..< tile_count {
-		offset_x := u32(i) * DEBUG_SIZE
-		if offset_x >= u32(engine.swapchain.extent.width) do break
-		rect := Rect2D {
-			offset = {i32(offset_x), 0},
-			extent = {min(DEBUG_SIZE, u32(engine.swapchain.extent.width) - offset_x), DEBUG_SIZE},
-		}
-		pc: DebugViewPushConstants
-		if i < 6 {
-			pc = {
-				mode  = .Shadow_Cube_Face,
-				index = 0,
-				face  = u32(i),
-			}
-		} else if i < 6 + SHADOW_MAP_CASCADE_COUNT {
-			// cascades of directional light 0 only
-			cascade := i - 6
-			pc = {
-				mode  = .Shadow_2D,
-				index = u32(cascade),
-			}
-		} else {
-			// first spot light's slot in the 2D shadow atlas
-			pc = {
-				mode  = .Shadow_2D,
-				index = SPOT_SHADOW_SLOT_BASE,
-			}
-		}
-		draw_debug_view(engine, encoder, pc, rect)
-	}
-
-	backend.end_render_pass(encoder)
-}
-
 draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	frame_idx := current_frame_res_index(engine)
 	sets := [2]backend.DescriptorSetHandle {
@@ -597,7 +534,7 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		backend.end_render_pass(encoder)
 	}
 
-	draw_debug_shadow_map(engine, cmd)
+	debug_view_flush(engine, cmd)
 
 	{
 		encoder := backend.begin_render_pass(

@@ -408,8 +408,8 @@ gizmo_cancel :: proc(gc: ^GizmoController) {
 // nothing was hit (or nothing is selected), so the caller can fall back to selecting an object.
 gizmo_mouse_down :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mouse_pos, viewport: Vec2) -> bool {
 	axis: GizmoAxis = .None
-	if engine.scene.selected_instance != INVALID_INSTANCE {
-		selected := instance_get(engine, engine.scene.selected_instance)
+	if selected_instance(&engine.scene) != INVALID_INSTANCE {
+		selected := instance_get(engine, selected_instance(&engine.scene))
 		if gc.mode == .Translate {
 			axis = gizmo_pick_translation(engine, selected.transform, mouse_pos, viewport, gc.space)
 		} else {
@@ -425,7 +425,7 @@ gizmo_mouse_down :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mou
 	}
 
 	gc.active_axis = axis
-	selected := instance_get(engine, engine.scene.selected_instance)
+	selected := instance_get(engine, selected_instance(&engine.scene))
 	gc.drag_origin = selected.transform.translation
 	if gc.mode == .Translate {
 		gc.drag_direction = gizmo_translation_axis_direction(selected.transform, axis, gc.space)
@@ -456,7 +456,7 @@ gizmo_mouse_down :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mou
 // Applies an in-progress drag to the selected instance. Does nothing when not dragging.
 gizmo_mouse_move :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mouse_pos, viewport: Vec2) {
 	if !gc.dragging do return
-	selected := instance_get(engine, engine.scene.selected_instance)
+	selected := instance_get(engine, selected_instance(&engine.scene))
 
 	if gc.mode == .Translate {
 		parameter, ok := gizmo_drag_parameter(cam, gc.drag_origin, gc.drag_direction, mouse_pos, viewport)
@@ -484,8 +484,8 @@ gizmo_mouse_up :: proc(gc: ^GizmoController) {
 
 // Queues the gizmo for the selected instance into this frame's debug lines. No-op without a selection.
 gizmo_draw :: proc(gc: ^GizmoController, engine: ^Engine) {
-	if engine.scene.selected_instance == INVALID_INSTANCE do return
-	selected := instance_get(engine, engine.scene.selected_instance)
+	if selected_instance(&engine.scene) == INVALID_INSTANCE do return
+	selected := instance_get(engine, selected_instance(&engine.scene))
 	if gc.mode == .Translate {
 		gizmo_draw_translation(engine, selected.transform, gc.active_axis, gc.dragging, gc.space)
 	} else {

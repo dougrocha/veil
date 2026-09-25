@@ -127,8 +127,8 @@ main :: proc() {
 						active_cam.control_type = .Free
 					} else {
 						target := gfx.Vec3{0, 0, 0}
-						if app.engine.scene.selected_instance != gfx.INVALID_INSTANCE {
-							selected := gfx.instance_get(&app.engine, app.engine.scene.selected_instance)
+						if gfx.selected_instance(&app.engine.scene) != gfx.INVALID_INSTANCE {
+							selected := gfx.instance_get(&app.engine, gfx.selected_instance(&app.engine.scene))
 							target = selected.transform.translation
 						}
 						gfx.camera_orbit_begin(active_cam, target)
@@ -147,8 +147,9 @@ main :: proc() {
 					if viewport_size.x <= 0 || viewport_size.y <= 0 do continue
 					if !gfx.gizmo_mouse_down(&gizmo, &app.engine, active_cam^, mouse_pos, viewport_size) {
 						hit := gfx.pick(&app.engine, mouse_pos)
-						app.engine.scene.selected_instance = hit
+						app.engine.scene.selection = nil
 						if hit != gfx.INVALID_INSTANCE {
+							app.engine.scene.selection = hit
 							instance := gfx.instance_get(&app.engine, hit)
 							model := gfx.pool_get(&app.engine.model_system.models, instance.model)
 							log.infof("selected: %v", model.name)
@@ -183,6 +184,20 @@ main :: proc() {
 
 		gfx.gizmo_draw(&gizmo, &app.engine)
 
+		// Debug texture views are queued per frame like UI text. Example: show the selection's
+		// textures (material maps, or a light's shadow maps) as a column of 128px tiles.
+		//
+		// app.engine.scene.selection = gfx.DirectionalLightIndex(0)
+		// for tex, i in gfx.entity_textures(&app.engine, app.engine.scene.selection) {
+		// 	rect := gfx.Rect2D {
+		// 		offset = {10, 50 + i32(i) * 136},
+		// 		extent = {128, 128},
+		// 	}
+		// 	gfx.debug_view_draw(&app.engine, tex.view, rect)
+		// }
+		//
+		// Any 2D texture handle works too (not cubemaps like the skybox):
+		// gfx.debug_view_texture(&app.engine, some_texture, {offset = {10, 50}, extent = {256, 256}})
 
 		fps_text := fmt.tprintf("%d Avg FPS", app.avg_fps)
 		gfx.ui_draw_text(&app.engine, &ui_font, fps_text, 10, 30, {0, 0, 0, 255})

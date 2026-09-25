@@ -87,6 +87,7 @@ Engine :: struct {
 	// other stuff
 	line_renderer:        LineRenderer,
 	ui_renderer:          UIRenderer,
+	debug_views:          DebugViewQueue,
 	debug_settings:       DebugSettings,
 
 	// Temp allocator for engine_render, reset at the end of every frame. Kept apart from the
@@ -120,7 +121,7 @@ Scene :: struct {
 	directional_light_count: u32,
 	spot_light_count:        u32,
 	instances:               Pool(Instance),
-	selected_instance:       InstanceHandle,
+	selection:               Selection,
 }
 
 AlphaMode :: enum {
