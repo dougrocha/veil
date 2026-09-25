@@ -12,6 +12,7 @@ FrameCounters :: struct {
 	draw_calls:          u32,
 	triangles:           u64,
 	instances_drawn:     u32, // main pass, after frustum culling
+	meshes_culled:       u32, // main pass, meshes of drawn instances rejected by their AABB
 	shadow_views:        u32, // cascades + spot maps + cube faces rendered
 	shadow_views_cached: u32, // spot maps + cube faces reused from an earlier frame
 }
@@ -133,10 +134,11 @@ stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32) {
 			max(s.avg.frame - s.avg.wait - s.avg.record - s.avg.submit, 0),
 		),
 		fmt.tprintf(
-			"draws %d  tris %.2fM  instances %d  shadow views %d (%d cached)",
+			"draws %d  tris %.2fM  instances %d  meshes culled %d  shadow views %d (%d cached)",
 			c.draw_calls,
 			f64(c.triangles) / 1e6,
 			c.instances_drawn,
+			c.meshes_culled,
 			c.shadow_views,
 			c.shadow_views_cached,
 		),

@@ -323,9 +323,10 @@ draw_shadow :: proc(
 		}
 
 		for &mesh in model.meshes {
-			backend.cmd_use_buffer(cmd, mesh.vertex_buffer)
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode == .Blend do continue
+			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform, skip_near = directional) do continue
+			backend.cmd_use_buffer(cmd, mesh.vertex_buffer)
 
 			pc := ShadowPushConstants {
 				scene_data       = frame.scene_data_buffer.ptr,
@@ -370,6 +371,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		engine: ^Engine,
 		cmd: backend.RenderEncoder,
 		pipeline: backend.Pipeline,
+		frustum: Frustum,
 		i: int,
 		blend: bool,
 	) {
@@ -378,9 +380,13 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 
 		frame := current_frame_data(engine)
 		for &mesh in model.meshes {
-			backend.cmd_use_buffer(cmd, mesh.vertex_buffer)
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if (mat.alpha_mode == .Blend) != blend do continue
+			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform) {
+				engine.stats.counters.meshes_culled += 1
+				continue
+			}
+			backend.cmd_use_buffer(cmd, mesh.vertex_buffer)
 
 			pc := PushConstants {
 				scene_data       = frame.scene_data_buffer.ptr,
@@ -402,7 +408,8 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	}
 	transparent := make([dynamic]TransparentEntry, context.temp_allocator)
 
-	// Cull once per instance, draw its opaque/mask meshes now, and queue its blended meshes.
+	// Cull per instance by bounding sphere, then per mesh by AABB inside draw_instance. Opaque/mask
+	// meshes draw now; blended ones are queued.
 	for &instance, i in engine.scene.instances.values {
 		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
 		model := pool_get(&engine.model_system.models, instance.model)
@@ -419,7 +426,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 			}
 		}
 
-		if has_opaque do draw_instance(engine, cmd, mesh_pipeline, i, false)
+		if has_opaque do draw_instance(engine, cmd, mesh_pipeline, frustum, i, false)
 		if has_blend {
 			dist := linalg.length(instance.transform.translation - active_camera.position)
 			append(&transparent, TransparentEntry{index = i, dist = dist})
@@ -430,7 +437,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	slice.sort_by(transparent[:], proc(a, b: TransparentEntry) -> bool {return a.dist > b.dist})
 	backend.pipeline_set_depth_write(cmd, mesh_pipeline, false)
 	for entry in transparent {
-		draw_instance(engine, cmd, mesh_pipeline, entry.index, true)
+		draw_instance(engine, cmd, mesh_pipeline, frustum, entry.index, true)
 	}
 }
 
