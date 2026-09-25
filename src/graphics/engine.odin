@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:mem"
 import "core:mem/virtual"
 import "core:slice"
+import "core:time"
 
 import sdl "vendor:sdl3"
 
@@ -156,6 +157,7 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 		backend.swapchain_recreate(&engine.vk_ctx, &engine.swapchain, app.width, app.height)
 	}
 
+	wait_start := time.tick_now()
 	backend.frame_wait_before_render(&engine.vk_ctx, engine.frame_index)
 	frame_sync := backend.current_frame_sync(&engine.vk_ctx, engine.frame_index)
 
@@ -171,12 +173,16 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 	}
 
 	engine.time_info.frame_count += 1
+	wait_ms := tick_ms(wait_start)
+	record_start := time.tick_now()
 
 	scene_data_buffer_update(engine)
 	update_transforms_buffer(engine)
 	shader_poll_hotreload(engine)
 
 	cmd := record_command_buffer(engine)
+	record_ms := tick_ms(record_start)
+	submit_start := time.tick_now()
 
 	signal_value := engine.frame_index + 1
 	backend.queue_submit_frame(&engine.vk_ctx, cmd, &engine.swapchain, frame_sync, signal_value)
@@ -186,6 +192,10 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 	case .OutOfDate, .Suboptimal:
 		engine.swapchain.require_recreate = true
 	}
+	stats_add_timings(
+		engine,
+		{frame = f64(delta_time) * 1000, wait = wait_ms, record = record_ms, submit = tick_ms(submit_start)},
+	)
 
 	if engine.frame_dump.enabled {
 		backend.device_wait_idle(&engine.vk_ctx)
@@ -246,6 +256,7 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	backend.cmd_use_buffer(cmd, engine.frame_data[frame_res_index].particle_buffer)
 	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &particle_pc)
 	backend.cmd_draw_points(cmd, PARTICLE_COUNT)
+	stats_count_draw(engine)
 }
 
 CUBE_FACE_DIRS := [6]struct {
@@ -323,13 +334,12 @@ draw_shadow :: proc(
 			}
 			backend.pipeline_push(cmd, shadow_pipeline, {.Vertex, .Fragment}, &pc, index = 1)
 			backend.cmd_draw_indexed(cmd, mesh.index_buffer.buffer, mesh.index_count)
+			stats_count_draw(engine, u64(mesh.index_count / 3))
 		}
 	}
 }
 
 draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	engine.drawn_instance_count = 0
-
 	mesh_pipeline := get_pipeline(&engine.pipeline_registry, .Mesh)
 
 	frame_idx := current_frame_res_index(engine)
@@ -376,6 +386,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 			}
 			backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc, index = 1)
 			backend.cmd_draw_indexed(cmd, mesh.index_buffer.buffer, mesh.index_count)
+			stats_count_draw(engine, u64(mesh.index_count / 3))
 		}
 	}
 
@@ -390,7 +401,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
 		model := pool_get(&engine.model_system.models, instance.model)
 		if !volume_is_on_frustum(frustum, model.bounds, instance.transform) do continue
-		engine.drawn_instance_count += 1
+		engine.stats.counters.instances_drawn += 1
 
 		has_opaque, has_blend: bool
 		for &mesh in model.meshes {
@@ -482,6 +493,7 @@ shadow_pass :: proc(
 			skip_depth_transition = true,
 		},
 	)
+	engine.stats.counters.shadow_views += 1
 	draw_shadow(engine, encoder, light_type, light_index, view_proj)
 	backend.end_render_pass(encoder)
 }
@@ -497,6 +509,7 @@ draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	}
 	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc)
 	backend.cmd_draw(cmd)
+	stats_count_draw(engine)
 }
 
 draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
@@ -552,6 +565,8 @@ record_command_buffer :: proc(engine: ^Engine) -> backend.CommandBuffer {
 	cmd := backend.frame_command_buffer_begin(&engine.vk_ctx, current_frame_sync)
 
 	backend.cmd_begin_recording(&engine.vk_ctx, cmd, engine.frame_index)
+	stats_record_begin(engine)
+	defer stats_record_end(engine)
 
 	draw_scene(engine, cmd)
 

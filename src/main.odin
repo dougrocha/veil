@@ -45,7 +45,7 @@ main :: proc() {
 	}
 	defer gfx.engine_destroy(&app.engine)
 
-	ui_font, font_ok := gfx.font_load_default_system(&app.engine, 32)
+	ui_font, font_ok := gfx.font_load_default_system(&app.engine, 20)
 	assert(font_ok, "no default system font found")
 	// Declared after engine_destroy's defer, so it runs first.
 	defer gfx.font_destroy(&app.engine, &ui_font)
@@ -58,6 +58,7 @@ main :: proc() {
 	gfx.set_skybox_texture(&app.engine, space_skybox_tex)
 
 	gizmo: gfx.GizmoController
+	show_stats := true
 	main_loop: for {
 		// Game-side temp allocations live for one loop iteration; the engine resets its own
 		// frame arena inside engine_render.
@@ -94,6 +95,8 @@ main :: proc() {
 				case ._4:
 					active_cam.near = 500.0
 					active_cam.far = 5000.0
+				case .F3:
+					show_stats = !show_stats
 				case .C:
 					app.engine.debug_settings.show_cascades = 1 - app.engine.debug_settings.show_cascades
 				case .V:
@@ -171,16 +174,7 @@ main :: proc() {
 		delta_time := f32(time.duration_seconds(time.diff(app.last_frame_time, now)))
 		app.last_frame_time = now
 
-		app.fps_frame_count += 1
-		app.fps_timer += delta_time
 		process_input(active_cam, delta_time)
-		if app.fps_timer >= 1.0 {
-			app.avg_fps = app.fps_frame_count
-			log.infof("FPS: %d, models drawn: %d", app.fps_frame_count, app.engine.drawn_instance_count)
-			log.infof("(%v) Camera position: %v", app.engine.scene.active_camera_name, active_cam.position)
-			app.fps_frame_count = 0
-			app.fps_timer = 0
-		}
 
 		gfx.gizmo_draw(&gizmo, &app.engine)
 
@@ -199,8 +193,7 @@ main :: proc() {
 		// Any 2D texture handle works too (not cubemaps like the skybox):
 		// gfx.debug_view_texture(&app.engine, some_texture, {offset = {10, 50}, extent = {256, 256}})
 
-		fps_text := fmt.tprintf("%d Avg FPS", app.avg_fps)
-		gfx.ui_draw_text(&app.engine, &ui_font, fps_text, 10, 30, {0, 0, 0, 255})
+		if show_stats do gfx.stats_draw(&app.engine, &ui_font, 10, 24, 24)
 
 		gfx.engine_render(&app, delta_time)
 	}

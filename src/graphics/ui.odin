@@ -80,6 +80,7 @@ ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		backend.pipeline_bind(cmd, pipeline, {engine.texture_system.descriptor.sets[frame_res_index]})
 		backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc, index = 1)
 		backend.cmd_draw(cmd, u32(len(batch.vertices)))
+		stats_count_draw(engine)
 
 		clear(&batch.vertices)
 	}

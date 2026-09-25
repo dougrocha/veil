@@ -151,6 +151,7 @@ flush_batch :: proc(
 	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc)
 	// Line segments expand to six vertices; sector triangles use their three stored vertices.
 	backend.cmd_draw(cmd, u32(len(batch.vertices)) * vertex_multiplier)
+	stats_count_draw(engine)
 
 	clear(&batch.vertices)
 }

@@ -38,61 +38,56 @@ App :: struct {
 	height:          u32,
 	engine:          Engine,
 	last_frame_time: time.Time,
-	fps_timer:       f32,
-	fps_frame_count: u32,
-	avg_fps:         u32,
 }
 
 Engine :: struct {
-	vk_ctx:               backend.Context,
+	vk_ctx:            backend.Context,
 
 	// swapchain
-	swapchain:            backend.Swapchain,
+	swapchain:         backend.Swapchain,
 
 	// shaders
-	shader_system:        ShaderSystem,
+	shader_system:     ShaderSystem,
 
 	// graphics pipeline
-	pipeline_registry:    PipelineRegistry,
+	pipeline_registry: PipelineRegistry,
 
 	// frame and sync resources
-	frame_data:           [backend.MAX_FRAMES_IN_FLIGHT]FrameData,
-	frame_index:          u64,
+	frame_data:        [backend.MAX_FRAMES_IN_FLIGHT]FrameData,
+	frame_index:       u64,
 
 	// buffers
-	model_system:         ModelSystem,
-	material_system:      MaterialSystem,
+	model_system:      ModelSystem,
+	material_system:   MaterialSystem,
 
 	// timers
-	time_info:            TimeInfo,
+	time_info:         TimeInfo,
 
 	// texture
-	texture_system:       TextureSystem,
+	texture_system:    TextureSystem,
 
 	// global resources (binding 0 = point shadow cube atlas, 1 = 2D shadow atlas, 2 = skybox)
-	global_descriptor:    backend.DescriptorSet,
-	shadow_atlas:         ShadowAtlas,
-	shadow_2d_atlas:      ShadowAtlas,
+	global_descriptor: backend.DescriptorSet,
+	shadow_atlas:      ShadowAtlas,
+	shadow_2d_atlas:   ShadowAtlas,
 
 	// simulation state — no Vulkan types
-	scene:                Scene,
-	camera_system:        CameraSystem,
-
-	// stats
-	drawn_instance_count: u32,
+	scene:             Scene,
+	camera_system:     CameraSystem,
+	stats:             Stats,
 
 	// debug capture
-	frame_dump:           FrameDump,
+	frame_dump:        FrameDump,
 
 	// other stuff
-	line_renderer:        LineRenderer,
-	ui_renderer:          UIRenderer,
-	debug_views:          DebugViewQueue,
-	debug_settings:       DebugSettings,
+	line_renderer:     LineRenderer,
+	ui_renderer:       UIRenderer,
+	debug_views:       DebugViewQueue,
+	debug_settings:    DebugSettings,
 
 	// Temp allocator for engine_render, reset at the end of every frame. Kept apart from the
 	// game loop's context.temp_allocator so each side resets on its own schedule.
-	frame_arena:          virtual.Arena,
+	frame_arena:       virtual.Arena,
 }
 
 LightMask :: enum u32 {
