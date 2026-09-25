@@ -56,6 +56,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 
 	global_resources_create(engine)
 	gpu_profiler_create(engine)
+	shadow_cache_create(engine)
 
 	register_shadow_pipelines(engine, shadow_handle)
 	register_ui_pipeline(engine, ui_handle)
@@ -119,6 +120,7 @@ engine_destroy :: proc(self: ^Engine) {
 	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_2d_atlas)
 
 	gpu_profiler_destroy(self)
+	shadow_cache_destroy(self)
 	line_renderer_destroy(self)
 	ui_renderer_destroy(self)
 
@@ -181,6 +183,7 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 
 	scene_data_buffer_update(engine)
 	update_transforms_buffer(engine)
+	shadow_cache_update(engine)
 	shader_poll_hotreload(engine)
 
 	cmd := record_command_buffer(engine)
@@ -448,6 +451,17 @@ draw_shadow_maps :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	spot_count := min(int(engine.scene.spot_light_count), MAX_SPOT_LIGHTS)
 	point_count := min(int(engine.scene.point_light_count), MAX_POINT_LIGHTS)
 
+	// Masked-off or disabled shadows aren't sampled, so skip rendering them. Cached maps stay
+	// valid and are re-checked when the light is enabled again.
+	settings := &engine.debug_settings
+	shadows_on := settings.disable_shadows == 0
+	if !shadows_on || settings.light_mask & u32(LightMask.Directional) == 0 do dir_count = 0
+	if !shadows_on || settings.light_mask & u32(LightMask.Spot) == 0 do spot_count = 0
+	if !shadows_on || settings.light_mask & u32(LightMask.Point) == 0 do point_count = 0
+
+	// Transitions run even when every pass is skipped: Depth_Read -> Depth_Write keeps the
+	// contents, and the atlases must end in Depth_Read for the main pass.
+
 	// 2D atlas: directional cascades first, then spot lights from SPOT_SHADOW_SLOT_BASE
 	atlas_2d := &engine.shadow_2d_atlas
 	scope_2d := gpu_scope_begin(engine, cmd, "shadow 2d")
@@ -459,8 +473,13 @@ draw_shadow_maps :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		}
 	}
 	for light_i in 0 ..< spot_count {
+		if shadow_cache_spot_fresh(engine, light_i) {
+			engine.stats.counters.shadow_views_cached += 1
+			continue
+		}
 		slot := SPOT_SHADOW_SLOT_BASE + u32(light_i)
 		shadow_pass(engine, cmd, atlas_2d, slot, .Spot, u32(light_i), scene_data.shadow_2d_view_proj[slot])
+		shadow_cache_spot_rendered(engine, light_i)
 	}
 	shadow_atlas_transition(cmd, atlas_2d, .Depth_Read, MAX_SHADOW_2D_SLOTS)
 	gpu_scope_end(engine, cmd, scope_2d)
@@ -471,11 +490,16 @@ draw_shadow_maps :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	defer gpu_scope_end(engine, cmd, scope_cube)
 	shadow_atlas_transition(cmd, atlas_cube, .Depth_Write, MAX_POINT_LIGHTS * 6)
 	for light_i in 0 ..< point_count {
+		if shadow_cache_point_fresh(engine, light_i) {
+			engine.stats.counters.shadow_views_cached += 6
+			continue
+		}
 		for face_i in 0 ..< 6 {
 			layer := u32(light_i * 6 + face_i)
 			view_proj := scene_data.point_light_view_proj[light_i][face_i]
 			shadow_pass(engine, cmd, atlas_cube, layer, .Point, u32(light_i), view_proj)
 		}
+		shadow_cache_point_rendered(engine, light_i)
 	}
 	shadow_atlas_transition(cmd, atlas_cube, .Depth_Read, MAX_POINT_LIGHTS * 6)
 }

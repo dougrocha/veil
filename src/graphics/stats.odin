@@ -9,10 +9,11 @@ STATS_WINDOW_SECONDS :: 0.5
 
 // Per-frame counts, filled while the command buffer is recorded.
 FrameCounters :: struct {
-	draw_calls:      u32,
-	triangles:       u64,
-	instances_drawn: u32, // main pass, after frustum culling
-	shadow_views:    u32, // cascades + spot maps + cube faces rendered
+	draw_calls:          u32,
+	triangles:           u64,
+	instances_drawn:     u32, // main pass, after frustum culling
+	shadow_views:        u32, // cascades + spot maps + cube faces rendered
+	shadow_views_cached: u32, // spot maps + cube faces reused from an earlier frame
 }
 
 // CPU milliseconds per engine_render phase.
@@ -132,11 +133,12 @@ stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32) {
 			max(s.avg.frame - s.avg.wait - s.avg.record - s.avg.submit, 0),
 		),
 		fmt.tprintf(
-			"draws %d  tris %.2fM  instances %d  shadow views %d",
+			"draws %d  tris %.2fM  instances %d  shadow views %d (%d cached)",
 			c.draw_calls,
 			f64(c.triangles) / 1e6,
 			c.instances_drawn,
 			c.shadow_views,
+			c.shadow_views_cached,
 		),
 	}
 	gpu_line := "gpu  timestamps unsupported"

@@ -256,6 +256,7 @@ shader_poll_hotreload :: proc(self: ^Engine) {
 		for kind in PipelineKind {
 			if self.pipeline_registry.shaders[kind] == handle {
 				pipeline_reload(self, kind, module_name)
+				if kind == .Shadow do shadow_cache_invalidate(self)
 			}
 		}
 	}
