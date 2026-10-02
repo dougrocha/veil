@@ -1,5 +1,3 @@
-#+build linux
-
 package backend
 
 import vk "vendor:vulkan"
@@ -260,9 +258,4 @@ descriptor_write_bindless_sampler :: proc(ctx: ^Context, desc: ^DescriptorSet, a
 		}
 		vk.UpdateDescriptorSets(ctx.device, 1, &write, 0, nil)
 	}
-}
-
-descriptor_bind_image :: proc(cmd: RenderEncoder, handle: DescriptorSetHandle, binding, target_index: u32) {
-	// Vulkan bindings are fixed by the descriptor-set layout and already bound
-	// by pipeline_bind; target_index is only needed for Metal's compacted slots.
 }

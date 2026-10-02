@@ -1,4 +1,4 @@
-#include "platform.slang"
+#include "bindless.slang"
 
 struct UIVertex {
     float2 position; // screen-space pixels, top-left origin, y-down
@@ -33,12 +33,8 @@ float4 unpack_color(uint c) {
 VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     let v = pc.vertex_buffer[vertex_index];
 
-    // Screen space here is y-down. Vulkan's NDC matches that directly; Metal's
-    // NDC is y-up, so it needs the flip.
+    // Screen space is y-down, which matches Vulkan NDC directly.
     float2 ndc = (v.position / pc.screen_size) * 2.0 - 1.0;
-#if VEIL_METAL
-    ndc.y = -ndc.y;
-#endif
 
     VSOutput output;
     output.pos = float4(ndc, 0.0, 1.0);

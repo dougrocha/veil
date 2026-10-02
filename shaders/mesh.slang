@@ -1,4 +1,4 @@
-#include "platform.slang"
+#include "bindless.slang"
 import types;
 
 struct PushConstants {
@@ -154,14 +154,9 @@ float select_component(float4 v, uint idx) {
     return v.w;
 }
 
-// Metal textures use a top-left origin, while projected NDC coordinates are
-// bottom-up. Vulkan's projection matrix already performs this flip on the CPU.
+// The y-flip is already in the light's projection matrix (see math.odin).
 float2 shadow_uv_from_ndc(float2 ndc) {
-    float2 uv = ndc * 0.5 + 0.5;
-#if VEIL_METAL
-    uv.y = 1.0 - uv.y;
-#endif
-    return uv;
+    return ndc * 0.5 + 0.5;
 }
 
 bool outside_shadow_map(float2 uv, float depth) {

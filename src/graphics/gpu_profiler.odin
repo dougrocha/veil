@@ -47,7 +47,6 @@ gpu_profiler_reset :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	backend.gpu_timer_reset(cmd, &p.timer, slot)
 }
 
-// Scopes must be opened and closed outside render passes (Metal samples at encoder boundaries).
 gpu_scope_begin :: proc(engine: ^Engine, cmd: backend.CommandBuffer, name: string) -> int {
 	p := &engine.gpu_profiler
 	slot := current_frame_res_index(engine)

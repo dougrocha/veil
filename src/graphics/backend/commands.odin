@@ -1,5 +1,3 @@
-#+build linux
-
 package backend
 
 import vk "vendor:vulkan"
@@ -64,13 +62,6 @@ cmd_end_recording :: proc(cmd: CommandBuffer) {
 
 cmd_set_depth_bias :: proc(cmd: CommandBuffer, bias, clamp, slope: f32) {
 	vk.CmdSetDepthBias(vk.CommandBuffer(cmd), bias, clamp, slope)
-}
-
-cmd_use_buffer :: proc(cmd: RenderEncoder, buffer: GpuBuffer($T)) {
-}
-
-// Vulkan uses explicit barriers; buffer addresses don't require residency declarations.
-cmd_use_compute_buffer :: proc(cmd: ComputeEncoder, buffer: GpuBuffer($T), access: BufferAccessFlags) {
 }
 
 cmd_draw :: proc(

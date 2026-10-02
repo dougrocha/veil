@@ -1,7 +1,7 @@
-out_base := if os() == "macos" { "odin-metal" } else { "odin-vulkan" }
+out_base := "odin-vulkan"
 slang_rpath := if os() == "macos" { "@executable_path/shared/odin-slang/slang/lib" } else { "$ORIGIN/shared/odin-slang/slang/lib" }
 
-# build src -> odin-vulkan.out (odin-metal.out on macos)
+# build src -> odin-vulkan.out
 build: gpu-types vma
     odin build src -collection:shared=shared -out:{{out_base}}.out \
         -extra-linker-flags:'-rpath {{slang_rpath}}'

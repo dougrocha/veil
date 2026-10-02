@@ -144,10 +144,6 @@ flush_batch :: proc(
 		thickness     = LINE_THICKNESS_PX,
 	}
 	backend.pipeline_bind(cmd, pipeline)
-	// Both buffers are reached through GPU addresses in the shader, so Metal needs
-	// them made resident explicitly — the encoder can't see them as bound arguments.
-	backend.cmd_use_buffer(cmd, current_frame_data(engine).scene_data_buffer)
-	backend.cmd_use_buffer(cmd, buffer^)
 	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc)
 	// Line segments expand to six vertices; sector triangles use their three stored vertices.
 	backend.cmd_draw(cmd, u32(len(batch.vertices)) * vertex_multiplier)

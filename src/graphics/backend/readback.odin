@@ -1,5 +1,3 @@
-#+build linux
-
 package backend
 
 import vk "vendor:vulkan"

@@ -27,9 +27,6 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 		brightness = 0.03,
 	}
 
-	pool := backend.autorelease_pool_begin()
-	defer backend.autorelease_pool_end(pool)
-
 	vk_ctx := &engine.vk_ctx
 	backend.context_init(vk_ctx, window)
 	backend.upload_pool_create(vk_ctx)
@@ -69,14 +66,6 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	ui_renderer_create(engine)
 
 	return true
-}
-
-window_backend_flags :: proc() -> sdl.WindowFlags {
-	when backend.VEIL_METAL {
-		return {.METAL}
-	} else when backend.VEIL_VULKAN {
-		return {.VULKAN}
-	}
 }
 
 global_resources_create :: proc(engine: ^Engine) {
@@ -152,9 +141,6 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 
 	// A minimized window has no drawable pixels; keep the old swapchain until it returns.
 	if app.width == 0 || app.height == 0 do return
-
-	pool := backend.autorelease_pool_begin()
-	defer backend.autorelease_pool_end(pool)
 
 	if engine.swapchain.require_recreate {
 		backend.device_wait_idle(&engine.vk_ctx)
@@ -236,8 +222,6 @@ dispatch_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		delta_time    = engine.time_info.delta_time,
 	}
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
-	backend.cmd_use_compute_buffer(encoder, engine.frame_data[last_frame].particle_buffer, {.Read})
-	backend.cmd_use_compute_buffer(encoder, engine.frame_data[frame_res_index].particle_buffer, {.Write})
 	// particles_in was written by the previous frame's dispatch in an earlier submission.
 	backend.cmd_barrier_compute_write_to_compute_read(encoder)
 	backend.pipeline_bind_compute(encoder, pipeline)
@@ -258,8 +242,6 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		particles_out = engine.frame_data[frame_res_index].particle_buffer.ptr,
 	}
 	backend.pipeline_bind(cmd, pipeline)
-	backend.cmd_use_buffer(cmd, engine.frame_data[frame_res_index].scene_data_buffer)
-	backend.cmd_use_buffer(cmd, engine.frame_data[frame_res_index].particle_buffer)
 	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &particle_pc)
 	backend.cmd_draw_points(cmd, PARTICLE_COUNT)
 	stats_count_draw(engine)
@@ -305,9 +287,6 @@ draw_shadow :: proc(
 	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
 
 	frame := current_frame_data(engine)
-	backend.cmd_use_buffer(cmd, frame.scene_data_buffer)
-	backend.cmd_use_buffer(cmd, frame.transforms_buffer)
-	backend.cmd_use_buffer(cmd, engine.material_system.buffer)
 
 	frustum := frustum_from_view_proj(view_proj)
 
@@ -326,7 +305,6 @@ draw_shadow :: proc(
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode == .Blend do continue
 			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform, skip_near = directional) do continue
-			backend.cmd_use_buffer(cmd, mesh.vertex_buffer)
 
 			pc := ShadowPushConstants {
 				scene_data       = frame.scene_data_buffer.ptr,
@@ -357,9 +335,6 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	backend.pipeline_bind(cmd, mesh_pipeline, sets[:])
 	backend.pipeline_set_depth_write(cmd, mesh_pipeline, true)
 	frame := current_frame_data(engine)
-	backend.cmd_use_buffer(cmd, frame.scene_data_buffer)
-	backend.cmd_use_buffer(cmd, frame.transforms_buffer)
-	backend.cmd_use_buffer(cmd, engine.material_system.buffer)
 
 	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	frustum := frustum_create_from_camera(
@@ -386,7 +361,6 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 				engine.stats.counters.meshes_culled += 1
 				continue
 			}
-			backend.cmd_use_buffer(cmd, mesh.vertex_buffer)
 
 			pc := PushConstants {
 				scene_data       = frame.scene_data_buffer.ptr,
@@ -540,8 +514,6 @@ draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	pipeline := get_pipeline(&engine.pipeline_registry, .Skybox)
 	skybox_frame_idx := current_frame_res_index(engine)
 	backend.pipeline_bind(cmd, pipeline, {engine.global_descriptor.sets[skybox_frame_idx]})
-	backend.descriptor_bind_image(cmd, engine.global_descriptor.sets[skybox_frame_idx], 2, 0)
-	backend.cmd_use_buffer(cmd, current_frame_data(engine).scene_data_buffer)
 	pc := SkyboxPushConstants {
 		scene_data = current_frame_data(engine).scene_data_buffer.ptr,
 	}

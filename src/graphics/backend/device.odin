@@ -1,5 +1,3 @@
-#+build linux
-
 package backend
 
 import "base:runtime"
@@ -38,8 +36,8 @@ context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 	vma_init(ctx)
 
 	ctx.msaa_samples = vk_get_max_usable_sample_count(ctx)
-	// bindless array sizes must be clamped to what the device actually
-	// supports instead of a single hardcoded constant.
+	// MoltenVK supports far less than a desktop GPU, so bindless array sizes must be
+	// clamped to what the device actually supports instead of a hardcoded constant.
 	ctx.max_bindless_textures_per_stage = vk_get_max_bindless_textures_per_stage(ctx)
 
 	return true
@@ -97,6 +95,11 @@ instance_create :: proc(ctx: ^Context) {
 	}
 
 	instance_flags: vk.InstanceCreateFlags
+	when ODIN_OS == .Darwin {
+		// MoltenVK is a portability driver, the loader hides it unless we opt in
+		append(&extensions, vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)
+		instance_flags += {.ENUMERATE_PORTABILITY_KHR}
+	}
 
 	has_validation_layer := VEIL_VALIDATION && validation_layer_available()
 	requested_layers := make([dynamic]cstring, context.temp_allocator)
@@ -304,6 +307,10 @@ logical_device_create :: proc(ctx: ^Context) -> bool {
 	device_extensions := make([dynamic]cstring, context.temp_allocator)
 	append(&device_extensions, vk.KHR_SWAPCHAIN_EXTENSION_NAME)
 	append(&device_extensions, vk.EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME)
+	when ODIN_OS == .Darwin {
+		// Required by the spec whenever the device advertises it, which MoltenVK does.
+		append(&device_extensions, vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME)
+	}
 
 	dev_create_info := vk.DeviceCreateInfo {
 		sType                   = .DEVICE_CREATE_INFO,
@@ -372,11 +379,4 @@ vk_messenger_callback :: proc "system" (
 	}
 
 	return false
-}
-
-autorelease_pool_begin :: proc() -> rawptr {
-	return nil
-}
-
-autorelease_pool_end :: proc(pool: rawptr) {
 }

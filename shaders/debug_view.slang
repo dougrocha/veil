@@ -1,4 +1,4 @@
-#include "platform.slang"
+#include "bindless.slang"
 [[vk_binding(0, 1)]] SamplerCubeArray shadow_cubes;
 [[vk_binding(1, 1)]] Sampler2DArray shadow_2d_maps;
 
@@ -20,9 +20,6 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     float2 uv = float2((vertex_index << 1) & 2, vertex_index & 2);
     output.uv = uv;
     float2 ndc = uv * 2.0 - 1.0;
-#if VEIL_METAL
-    ndc.y = -ndc.y;
-#endif
     output.pos = float4(ndc, 0.0, 1.0);
     return output;
 }

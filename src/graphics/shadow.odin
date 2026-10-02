@@ -3,7 +3,6 @@ package graphics
 import "core:math"
 import "core:math/linalg"
 
-import "backend"
 
 ShadowParams :: struct {
 	aspect: f32,
@@ -26,7 +25,7 @@ compute_point_light_view_proj :: proc(light: PointLight) -> [6]Mat4x4 {
 		1.0,
 		light.shadow_near,
 		light.range,
-		flip_y_axis = backend.VEIL_METAL,
+		flip_y_axis = false,
 	)
 
 	view_proj: [6]Mat4x4

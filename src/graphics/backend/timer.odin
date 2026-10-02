@@ -1,5 +1,3 @@
-#+build linux
-
 package backend
 
 import "core:log"
@@ -83,8 +81,7 @@ gpu_timer_reset :: proc(cmd: CommandBuffer, timer: ^GpuTimer, slot: u64) {
 	vk.CmdResetQueryPool(vk.CommandBuffer(cmd), timer.pools[slot], 0, MAX_GPU_TIMESTAMPS)
 }
 
-// Writes a timestamp once all prior work completes. Record between passes, not inside one:
-// Metal can only sample at encoder boundaries. Returns false when out of queries or unsupported.
+// Writes a timestamp once all prior work completes. Returns false when out of queries or unsupported.
 gpu_timer_write :: proc(cmd: CommandBuffer, timer: ^GpuTimer, slot: u64) -> (index: u32, ok: bool) {
 	if !timer.supported || timer.written[slot] >= MAX_GPU_TIMESTAMPS do return 0, false
 	index = timer.written[slot]

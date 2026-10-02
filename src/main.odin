@@ -26,9 +26,7 @@ main :: proc() {
 		height = 720,
 	}
 
-	window_flags := gfx.window_backend_flags()
-	window_flags += {.RESIZABLE}
-	app.window = sdl.CreateWindow("veil", i32(app.width), i32(app.height), window_flags)
+	app.window = sdl.CreateWindow("veil", i32(app.width), i32(app.height), {.VULKAN, .RESIZABLE})
 	if app.window == nil {
 		log.errorf("Failed to create window: %s", sdl.GetError())
 		return

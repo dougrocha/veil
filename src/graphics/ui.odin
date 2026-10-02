@@ -70,7 +70,6 @@ ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 			raw_data(batch.vertices),
 			len(batch.vertices) * size_of(UI_Vertex),
 		)
-		backend.cmd_use_buffer(cmd, buffer^)
 
 		pc := UIPushConstants {
 			vertex_buffer = buffer.ptr,

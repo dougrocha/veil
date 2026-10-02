@@ -53,35 +53,22 @@ shader_create_session :: proc(
 	^sp.ISession,
 	bool,
 ) {
-	when backend.VEIL_METAL {
-		compiler_option_entries := []sp.CompilerOptionEntry{}
-		target_desc := sp.TargetDesc {
-			structureSize = size_of(sp.TargetDesc),
-			format        = .METAL,
-			profile       = global_session->findProfile("metal"),
-		}
-	} else when backend.VEIL_VULKAN {
-		compiler_option_entries := []sp.CompilerOptionEntry {
-			{name = .VulkanUseEntryPointName, value = {kind = .Int, intValue0 = 1}},
-			{name = .GLSLForceScalarLayout, value = {kind = .Int, intValue0 = 1}},
-		}
-		target_desc := sp.TargetDesc {
-			structureSize            = size_of(sp.TargetDesc),
-			format                   = .SPIRV,
-			flags                    = {.GENERATE_SPIRV_DIRECTLY},
-			profile                  = global_session->findProfile("spirv"),
-			compilerOptionEntries    = &compiler_option_entries[0],
-			compilerOptionEntryCount = u32(len(compiler_option_entries)),
-		}
+	compiler_option_entries := []sp.CompilerOptionEntry {
+		{name = .VulkanUseEntryPointName, value = {kind = .Int, intValue0 = 1}},
+		{name = .GLSLForceScalarLayout, value = {kind = .Int, intValue0 = 1}},
+	}
+	target_desc := sp.TargetDesc {
+		structureSize            = size_of(sp.TargetDesc),
+		format                   = .SPIRV,
+		flags                    = {.GENERATE_SPIRV_DIRECTLY},
+		profile                  = global_session->findProfile("spirv"),
+		compilerOptionEntries    = &compiler_option_entries[0],
+		compilerOptionEntryCount = u32(len(compiler_option_entries)),
 	}
 
 	search_paths := [1]cstring{"shaders"}
 	bindless_count_str := strings.clone_to_cstring(fmt.tprintf("%d", bindless_texture_count), context.temp_allocator)
-	metal_backend_value: cstring = backend.VEIL_METAL ? "1" : "0"
-	macros := [2]sp.PreprocessorMacroDesc {
-		{name = "BINDLESS_TEXTURE_COUNT", value = bindless_count_str},
-		{name = "VEIL_METAL", value = metal_backend_value},
-	}
+	macros := [1]sp.PreprocessorMacroDesc{{name = "BINDLESS_TEXTURE_COUNT", value = bindless_count_str}}
 	session_desc := sp.SessionDesc {
 		structureSize           = size_of(sp.SessionDesc),
 		targets                 = &target_desc,
@@ -203,13 +190,9 @@ shader_load :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	defer target_code->release()
 
 	code_bytes := slice.bytes_from_ptr(target_code->getBufferPointer(), int(target_code->getBufferSize()))
-	when backend.VEIL_METAL {
-		vk_module := backend.shader_module_create(&self.vk_ctx, string(code_bytes))
-	} else when backend.VEIL_VULKAN {
-		assert(uintptr(raw_data(code_bytes)) % align_of(u32) == 0, "Slang SPIR-V blob is not u32-aligned")
-		spv_u32 := slice.reinterpret([]u32, code_bytes)
-		vk_module := backend.shader_module_create(&self.vk_ctx, spv_u32)
-	}
+	assert(uintptr(raw_data(code_bytes)) % align_of(u32) == 0, "Slang SPIR-V blob is not u32-aligned")
+	spv_u32 := slice.reinterpret([]u32, code_bytes)
+	vk_module := backend.shader_module_create(&self.vk_ctx, spv_u32)
 
 	// check if this module is being reloaded (update in place) or is new
 	if existing, ok := ss.name_to_handle[module_name]; ok {
