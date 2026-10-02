@@ -11,6 +11,7 @@ Vulkan 1.4 renderer in Odin with SDL3 and Slang. macOS runs through MoltenVK.
   - `just build-release` builds `odin-vulkan-release.out` with `-o:speed` and validation layers off (`-define:VEIL_VALIDATION=false`). `just release` builds it, then runs.
 - There are no tests and no linter. Check your work by building, and by running when behavior changes.
 - On first build, Linux compiles VMA in `shared/odin-vma`. This needs `premake5` and `make`.
+- On first build, `just` downloads `libslang-glslang` (spirv-opt) into `shared/odin-slang/slang/lib`, from the Slang release that matches the vendored `libslang`. The `odin-slang` submodule does not ship it.
 
 ## GPU types are generated
 
