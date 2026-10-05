@@ -2,12 +2,13 @@
 import types;
 
 struct ShadowPushConstants {
+    float4x4 view_proj;
     SceneData* scene_data;
     Vertex* vertex_buffer;
     Material* material_buffer;
     Transform* transform_buffer;
-    float4x4 view_proj;
-    uint instance_index;
+    uint* instance_ids;
+    uint instance_offset;
     uint light_type; // 0 = directional, 1 = spot, 2 = point
     uint light_index;
     uint material_index;
@@ -19,9 +20,9 @@ struct VSOutput {
 };
 
 [shader("vertex")]
-VSOutput vertex_main(uint vertex_index : SV_VertexID) {
+VSOutput vertex_main(uint vertex_index : SV_VertexID, uint instance_id : SV_InstanceID) {
     let v = pc.vertex_buffer[vertex_index];
-    let transform = pc.transform_buffer[pc.instance_index];
+    let transform = pc.transform_buffer[pc.instance_ids[pc.instance_offset + instance_id]];
 
     float4 world_pos = mul(transform.model, float4(v.pos.xyz, 1.0));
 

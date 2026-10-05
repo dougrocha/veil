@@ -5,9 +5,11 @@ import "core:math/rand"
 import "backend"
 
 FrameData :: struct {
-	scene_data_buffer: backend.Buffer(SceneData),
-	particle_buffer:   backend.Buffer(Particle),
-	transforms_buffer: backend.Buffer(GpuTransform),
+	scene_data_buffer:   backend.Buffer(SceneData),
+	particle_buffer:     backend.Buffer(Particle),
+	transforms_buffer:   backend.Buffer(GpuTransform),
+	instance_ids_buffer: backend.Buffer(u32),
+	instance_id_count:   u32, // ids written this frame
 }
 
 frame_data_create :: proc(engine: ^Engine) {
@@ -26,6 +28,13 @@ frame_data_create :: proc(engine: ^Engine) {
 			{.Storage},
 			.Shared,
 		)
+		engine.frame_data[i].instance_ids_buffer = backend.buffer_create(
+			u32,
+			&engine.vk_ctx,
+			MAX_INSTANCE_IDS,
+			{.Storage},
+			.Shared,
+		)
 		engine.frame_data[i].particle_buffer = create_particle_buffer(
 			&engine.vk_ctx,
 			Rect2D{extent = {u32(engine.swapchain.extent.width), u32(engine.swapchain.extent.height)}},
@@ -38,6 +47,7 @@ frame_data_destroy :: proc(engine: ^Engine) {
 		backend.buffer_destroy(&engine.vk_ctx, res.scene_data_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.particle_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.transforms_buffer)
+		backend.buffer_destroy(&engine.vk_ctx, res.instance_ids_buffer)
 	}
 }
 

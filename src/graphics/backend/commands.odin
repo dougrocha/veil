@@ -78,9 +78,10 @@ cmd_draw_points :: proc(cmd: RenderEncoder, vertex_count: u32, instance_count: u
 	vk.CmdDraw(cmd.handle, vertex_count, instance_count, first_vertex, 0)
 }
 
-cmd_draw_indexed :: proc(cmd: RenderEncoder, index_buffer: Buffer(u32), index_count: u32) {
+// firstInstance is always 0: pass any instance offset yourself (see instancing.odin).
+cmd_draw_indexed :: proc(cmd: RenderEncoder, index_buffer: Buffer(u32), index_count: u32, instance_count: u32 = 1) {
 	vk.CmdBindIndexBuffer(cmd.handle, buffer_slot(cmd.ctx, index_buffer).buffer, 0, .UINT32)
-	vk.CmdDrawIndexed(cmd.handle, index_count, 1, 0, 0, 0)
+	vk.CmdDrawIndexed(cmd.handle, index_count, instance_count, 0, 0, 0)
 }
 
 // Vulkan takes the local workgroup size from the shader.

@@ -129,13 +129,15 @@ ShadowLightType :: enum u32 {
 	Point,
 }
 
+// view_proj first: after an odd number of pointers Slang would pad it to 16 bytes and #packed wouldn't.
 ShadowPushConstants :: struct #packed {
+	view_proj:        Mat4x4,
 	scene_data:       backend.GPUPtr(SceneData),
 	vertex_buffer:    backend.GPUPtr(Vertex),
 	material_buffer:  backend.GPUPtr(GpuMaterial),
 	transform_buffer: backend.GPUPtr(GpuTransform),
-	view_proj:        Mat4x4,
-	instance_index:   u32,
+	instance_ids:     backend.GPUPtr(u32), // see instancing.odin
+	instance_offset:  u32,
 	light_type:       ShadowLightType,
 	light_index:      u32,
 	material_index:   u32,
@@ -146,8 +148,9 @@ PushConstants :: struct {
 	vertex_buffer:    backend.GPUPtr(Vertex),
 	material_buffer:  backend.GPUPtr(GpuMaterial),
 	transform_buffer: backend.GPUPtr(GpuTransform),
+	instance_ids:     backend.GPUPtr(u32), // see instancing.odin
 	material_index:   u32,
-	instance_index:   u32,
+	instance_offset:  u32,
 }
 
 SkyboxPushConstants :: struct {

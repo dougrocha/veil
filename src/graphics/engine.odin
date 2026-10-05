@@ -160,6 +160,7 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	shadow_cache_update(engine)
 	shader_poll_hotreload(engine)
 
+	instance_ids_reset(engine)
 	record_frame(engine, cmd)
 	record_ms := tick_ms(record_start)
 	submit_start := time.tick_now()
@@ -255,6 +256,7 @@ draw_shadow :: proc(
 
 	frustum := frustum_from_view_proj(view_proj)
 
+	items := make([dynamic]DrawItem, context.temp_allocator)
 	for &instance, slot_i in engine.scene.instances.values {
 		if !pool_is_alive(&engine.scene.instances, Index(slot_i)) do continue
 		if !instance.casts_shadow do continue
@@ -270,22 +272,27 @@ draw_shadow :: proc(
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode == .Blend do continue
 			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform, skip_near = directional) do continue
-
-			pc := ShadowPushConstants {
-				scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
-				vertex_buffer    = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer),
-				material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
-				transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
-				view_proj        = view_proj,
-				instance_index   = u32(slot_i),
-				light_type       = light_type,
-				light_index      = light_i,
-				material_index   = u32(mesh.material.index),
-			}
-			backend.pipeline_push(cmd, &pc)
-			backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count)
-			stats_count_draw(engine, u64(mesh.index_count / 3))
+			append(&items, DrawItem{mesh = &mesh, instance = u32(slot_i)})
 		}
+	}
+
+	for batch in batch_draw_items(engine, items[:]) {
+		mesh := batch.mesh
+		pc := ShadowPushConstants {
+			view_proj        = view_proj,
+			scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
+			vertex_buffer    = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer),
+			material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
+			transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
+			instance_ids     = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
+			instance_offset  = batch.first_id,
+			light_type       = light_type,
+			light_index      = light_i,
+			material_index   = u32(mesh.material.index),
+		}
+		backend.pipeline_push(cmd, &pc)
+		backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count, batch.count)
+		stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 	}
 }
 
@@ -293,7 +300,6 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	mesh_pipeline := get_pipeline(&engine.pipeline_registry, .Mesh)
 
 	backend.pipeline_bind(cmd, mesh_pipeline)
-	frame := current_frame_data(engine)
 
 	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	frustum := frustum_create_from_camera(
@@ -301,38 +307,21 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		f32(engine.swapchain.extent.width) / f32(engine.swapchain.extent.height),
 	)
 
-	draw_instance :: proc(
-		engine: ^Engine,
-		cmd: backend.RenderEncoder,
-		pipeline: backend.Pipeline,
-		frustum: Frustum,
-		i: int,
-		blend: bool,
-	) {
-		instance := &engine.scene.instances.values[i]
-		model := pool_get(&engine.model_system.models, instance.model)
-
+	draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: DrawBatch) {
 		frame := current_frame_data(engine)
-		for &mesh in model.meshes {
-			mat := pool_get(&engine.material_system.materials, mesh.material)
-			if (mat.alpha_mode == .Blend) != blend do continue
-			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform) {
-				engine.stats.counters.meshes_culled += 1
-				continue
-			}
-
-			pc := PushConstants {
-				scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
-				vertex_buffer    = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer),
-				material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
-				transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
-				material_index   = u32(mesh.material.index),
-				instance_index   = u32(i),
-			}
-			backend.pipeline_push(cmd, &pc)
-			backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count)
-			stats_count_draw(engine, u64(mesh.index_count / 3))
+		mesh := batch.mesh
+		pc := PushConstants {
+			scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
+			vertex_buffer    = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer),
+			material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
+			transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
+			instance_ids     = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
+			material_index   = u32(mesh.material.index),
+			instance_offset  = batch.first_id,
 		}
+		backend.pipeline_push(cmd, &pc)
+		backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count, batch.count)
+		stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 	}
 
 	TransparentEntry :: struct {
@@ -340,37 +329,55 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		dist:  f32,
 	}
 	transparent := make([dynamic]TransparentEntry, context.temp_allocator)
+	opaque := make([dynamic]DrawItem, context.temp_allocator)
 
-	// Cull per instance by bounding sphere, then per mesh by AABB inside draw_instance. Opaque/mask
-	// meshes draw now; blended ones are queued.
+	// Cull per instance by bounding sphere, then per mesh by AABB. Opaque/mask meshes are batched
+	// by mesh; instances with blended meshes are queued for the back-to-front pass.
 	for &instance, i in engine.scene.instances.values {
 		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
 		model := pool_get(&engine.model_system.models, instance.model)
 		if !volume_is_on_frustum(frustum, model.bounds, instance.transform) do continue
 		engine.stats.counters.instances_drawn += 1
 
-		has_opaque, has_blend: bool
+		has_blend: bool
 		for &mesh in model.meshes {
 			mat := pool_get(&engine.material_system.materials, mesh.material)
 			if mat.alpha_mode == .Blend {
 				has_blend = true
-			} else {
-				has_opaque = true
+				continue
 			}
+			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform) {
+				engine.stats.counters.meshes_culled += 1
+				continue
+			}
+			append(&opaque, DrawItem{mesh = &mesh, instance = u32(i)})
 		}
-
-		if has_opaque do draw_instance(engine, cmd, mesh_pipeline, frustum, i, false)
 		if has_blend {
 			dist := linalg.length(instance.transform.translation - active_camera.position)
 			append(&transparent, TransparentEntry{index = i, dist = dist})
 		}
 	}
 
-	// transparent: back-to-front
+	for batch in batch_draw_items(engine, opaque[:]) {
+		draw_batch(engine, cmd, batch)
+	}
+
+	// transparent: back-to-front, one draw per mesh so the order holds
 	slice.sort_by(transparent[:], proc(a, b: TransparentEntry) -> bool {return a.dist > b.dist})
 	backend.cmd_set_depth_write(cmd, false)
 	for entry in transparent {
-		draw_instance(engine, cmd, mesh_pipeline, frustum, entry.index, true)
+		instance := &engine.scene.instances.values[entry.index]
+		model := pool_get(&engine.model_system.models, instance.model)
+		for &mesh in model.meshes {
+			mat := pool_get(&engine.material_system.materials, mesh.material)
+			if mat.alpha_mode != .Blend do continue
+			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform) {
+				engine.stats.counters.meshes_culled += 1
+				continue
+			}
+			batch := single_draw_batch(engine, {mesh = &mesh, instance = u32(entry.index)}) or_break
+			draw_batch(engine, cmd, batch)
+		}
 	}
 }
 

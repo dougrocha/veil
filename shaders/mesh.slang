@@ -6,11 +6,13 @@ struct PushConstants {
     Vertex* vertex_buffer;
     Material* material_buffer;
     Transform* transform_buffer;
+    uint* instance_ids;
     uint material_index;
-    uint instance_index;
+    uint instance_offset;
 };
 struct VSInput {
     uint vertex_index : SV_VertexID;
+    uint instance_id : SV_InstanceID;
 };
 
 struct VSOutput {
@@ -25,7 +27,7 @@ struct VSOutput {
 [shader("vertex")]
 VSOutput vertex_main(VSInput input) {
     let v = pc.vertex_buffer[input.vertex_index];
-    let transform = pc.transform_buffer[pc.instance_index];
+    let transform = pc.transform_buffer[pc.instance_ids[pc.instance_offset + input.instance_id]];
 
     VSOutput output;
     float4 world_pos = mul(transform.model, float4(v.pos.xyz, 1.0));
