@@ -141,6 +141,9 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	submit_start := time.tick_now()
 
 	backend.frame_end(&engine.vk_ctx, &engine.swapchain, cmd, engine.render_targets.draw)
+	// Placeholder until the shadow cache commit consumes them. Skipped frames return early above,
+	// so changes accumulate until a frame is recorded.
+	clear(&engine.scene.instance_changes)
 	stats_add_timings(
 		engine,
 		{frame = f64(delta_time) * 1000, wait = wait_ms, record = record_ms, submit = tick_ms(submit_start)},
@@ -210,7 +213,7 @@ update_transforms_buffer :: proc(engine: ^Engine) {
 	transforms := (^GpuTransform)(
 		backend.buffer_contents(&engine.vk_ctx, current_frame_data(engine).transforms_buffer),
 	)
-	for &instance, i in engine.scene.instances.values {
+	for instance, i in engine.scene.instances.values {
 		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
 		model_matrix := transform_to_matrix(instance.transform)
 		normal3 := linalg.transpose(linalg.inverse(linalg.matrix3_from_matrix4(model_matrix)))

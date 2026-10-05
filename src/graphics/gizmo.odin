@@ -458,11 +458,14 @@ gizmo_mouse_down :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mou
 gizmo_mouse_move :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mouse_pos: Vec2) {
 	viewport := render_viewport(engine)
 	if !gc.dragging do return
-	selected := instance_get(engine, selected_instance(&engine.scene))
+	handle := selected_instance(&engine.scene)
+	transform := instance_get(engine, handle).transform
 
 	if gc.mode == .Translate {
 		parameter, ok := gizmo_drag_parameter(cam, gc.drag_origin, gc.drag_direction, mouse_pos, viewport)
-		if ok do selected.transform.translation = gc.drag_origin + gc.drag_direction * (parameter - gc.drag_start_parameter)
+		if !ok do return
+		transform.translation = gc.drag_origin + gc.drag_direction * (parameter - gc.drag_start_parameter)
+		instance_set_transform(engine, handle, transform)
 		return
 	}
 
@@ -473,7 +476,8 @@ gizmo_mouse_move :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mou
 		linalg.dot(gc.drag_previous_radial, radial),
 	)
 	step := linalg.quaternion_angle_axis_f32(angle, gc.drag_direction)
-	selected.transform.rotation = linalg.normalize(step * selected.transform.rotation)
+	transform.rotation = linalg.normalize(step * transform.rotation)
+	instance_set_transform(engine, handle, transform)
 	gc.drag_sweep_angle += angle
 	if gc.drag_sweep_angle >= 2 * math.PI do gc.drag_sweep_angle -= 2 * math.PI
 	if gc.drag_sweep_angle <= -2 * math.PI do gc.drag_sweep_angle += 2 * math.PI

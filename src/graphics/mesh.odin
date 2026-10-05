@@ -2,6 +2,7 @@ package graphics
 
 import "core:fmt"
 import "core:log"
+import "core:math"
 import "core:math/linalg"
 import "core:path/filepath"
 import "core:strings"
@@ -41,6 +42,15 @@ Instance :: struct {
 }
 
 MAX_MODEL_INSTANCES :: 4096
+
+// One setter or spawn call on an instance. Bounds are world-space spheres; a spawn has no old bounds.
+InstanceChange :: struct {
+	instance:         InstanceHandle,
+	old_bounds:       Maybe(BoundingSphere),
+	new_bounds:       BoundingSphere,
+	casts_shadow_old: bool,
+	casts_shadow_new: bool,
+}
 
 // One spawnable piece of a file loaded with model_load_parts. transform places the piece
 // relative to the file's root.
@@ -84,6 +94,7 @@ model_system_destroy :: proc(engine: ^Engine) {
 	}
 	delete(ms.parts_map)
 	pool_destroy(&engine.scene.instances)
+	delete(engine.scene.instance_changes)
 }
 
 model_load :: proc(engine: ^Engine, path: string, material: MaterialHandle = INVALID_MATERIAL) -> ModelHandle {
@@ -259,8 +270,50 @@ instance_spawn_parts :: proc(
 	return handles
 }
 
-instance_get :: proc(engine: ^Engine, handle: InstanceHandle) -> ^Instance {
-	return pool_get(&engine.scene.instances, handle)
+// Returns a copy. Change an instance through the setters, so the change is recorded.
+instance_get :: proc(engine: ^Engine, handle: InstanceHandle) -> Instance {
+	return pool_get(&engine.scene.instances, handle)^
+}
+
+instance_set_transform :: proc(engine: ^Engine, handle: InstanceHandle, transform: Transform) {
+	instance := pool_get(&engine.scene.instances, handle)
+	old := instance^
+	instance.transform = transform
+	instance_change_record(engine, handle, old, instance^)
+}
+
+instance_set_casts_shadow :: proc(engine: ^Engine, handle: InstanceHandle, casts_shadow: bool) {
+	instance := pool_get(&engine.scene.instances, handle)
+	old := instance^
+	instance.casts_shadow = casts_shadow
+	instance_change_record(engine, handle, old, instance^)
+}
+
+// World-space bounding sphere: the model's sphere moved by the transform, radius scaled by the
+// largest axis scale.
+instance_world_sphere :: proc(engine: ^Engine, instance: Instance) -> BoundingSphere {
+	model := pool_get(&engine.model_system.models, instance.model)
+	center :=
+		transform_to_matrix(instance.transform) *
+		Vec4{model.bounds.center.x, model.bounds.center.y, model.bounds.center.z, 1}
+	scale := transform_global_scale(instance.transform)
+	max_scale := max(math.abs(scale.x), math.abs(scale.y), math.abs(scale.z))
+	return BoundingSphere{center.xyz, model.bounds.radius * max_scale}
+}
+
+// Appends one change per call, never merged. old is nil for a spawn.
+@(private = "file")
+instance_change_record :: proc(engine: ^Engine, handle: InstanceHandle, old: Maybe(Instance), new: Instance) {
+	change := InstanceChange {
+		instance         = handle,
+		new_bounds       = instance_world_sphere(engine, new),
+		casts_shadow_new = new.casts_shadow,
+	}
+	if o, ok := old.?; ok {
+		change.old_bounds = instance_world_sphere(engine, o)
+		change.casts_shadow_old = o.casts_shadow
+	}
+	append(&engine.scene.instance_changes, change)
 }
 
 instance_spawn :: proc(
@@ -273,8 +326,12 @@ instance_spawn :: proc(
 		log.errorf("spawn: refusing to spawn an instance of an invalid model handle")
 		return INVALID_INSTANCE
 	}
-	return pool_alloc(
-		&engine.scene.instances,
-		Instance{model = model, transform = transform, casts_shadow = casts_shadow},
-	)
+	instance := Instance {
+		model        = model,
+		transform    = transform,
+		casts_shadow = casts_shadow,
+	}
+	handle := pool_alloc(&engine.scene.instances, instance)
+	instance_change_record(engine, handle, nil, instance)
+	return handle
 }

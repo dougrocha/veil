@@ -39,14 +39,7 @@ pick :: proc(engine: ^Engine, mouse_pos: Vec2) -> InstanceHandle {
 		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
 
 		model := pool_get(&engine.model_system.models, instance.model)
-
-		global_center :=
-			transform_to_matrix(instance.transform) *
-			Vec4{model.bounds.center.x, model.bounds.center.y, model.bounds.center.z, 1}
-		global_scale := transform_global_scale(instance.transform)
-		max_scale := max(math.abs(global_scale.x), math.abs(global_scale.y), math.abs(global_scale.z))
-
-		sphere := BoundingSphere{global_center.xyz, model.bounds.radius * max_scale}
+		sphere := instance_world_sphere(engine, instance)
 
 		to_center := sphere.center - ray_origin
 		proj_length := linalg.dot(to_center, ray_dir)
