@@ -77,7 +77,7 @@ main :: proc() {
 
 	app.last_frame_time = time.now()
 
-	load_bloom_test(&app.engine)
+	load_sponza(&app.engine)
 
 	space_skybox_tex := gfx.texture_load_cubemap(&app.engine, "assets/textures/StandardCubeMap.png")
 	gfx.set_skybox_texture(&app.engine, space_skybox_tex)

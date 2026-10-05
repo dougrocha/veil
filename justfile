@@ -30,7 +30,17 @@ run: build
 release: build-release
     ./{{out_base}}-release
 
-# debug build, then run
+# debug build, then run. lsan.supp hides third-party leaks (dbus, NVIDIA driver). The NVIDIA libs
+# are preloaded when present: the driver unloads them before the leak check, which would leave
+# their frames unnamed and unmatchable.
+[linux]
+debug: build-debug
+    #!/usr/bin/env bash
+    set -euo pipefail
+    preload=$(ls /usr/lib/libnvidia-glcore.so.* /usr/lib/libnvidia-glsi.so.* 2>/dev/null | paste -sd: || true)
+    LD_PRELOAD="$preload" LSAN_OPTIONS=suppressions=lsan.supp:print_suppressions=0 ./{{out_base}}-debug
+
+[macos]
 debug: build-debug
     ./{{out_base}}-debug
 

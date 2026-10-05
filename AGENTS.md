@@ -6,7 +6,7 @@ Vulkan 1.4 renderer in Odin with SDL3 and Slang. macOS runs through MoltenVK.
 
 - Always build through `just`. Do not call `odin build` or `odin check` directly. The justfile sets `-collection:shared=shared` and the Slang rpath.
   - `just build` builds `build/veil`. `just build-debug` and `just build-release` write `build/veil-debug` and `build/veil-release`.
-  - `just build-debug` builds with `-debug -sanitize:address`.
+  - `just build-debug` builds with `-debug -sanitize:address`. `just debug` runs it with `lsan.supp`, which hides third-party leaks (dbus, NVIDIA driver), so a clean run exits 0.
   - `just run`, `just debug` and `just release` build their binary, then run it.
   - `just build-release` builds with `-o:speed` and validation layers off (`-define:VEIL_VALIDATION=false`).
 - There are no tests and no linter. Check your work by building, and by running when behavior changes.

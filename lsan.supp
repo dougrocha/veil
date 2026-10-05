@@ -1,0 +1,5 @@
+# LeakSanitizer suppressions for `just debug`: third-party allocations that live until exit.
+# Same entries Chromium uses (build/sanitizers/lsan_suppressions.cc).
+leak:libdbus-1.so
+leak:libnvidia-glcore.so
+leak:libnvidia-glsi.so

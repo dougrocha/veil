@@ -4,7 +4,6 @@ import "core:log"
 import "core:math/linalg"
 import "core:mem"
 import "core:mem/virtual"
-import "core:slice"
 import "core:time"
 
 import sdl "vendor:sdl3"
