@@ -44,9 +44,8 @@ DrawList :: struct {
 // - Cull each instance by its model's bounding volume (volume_is_on_frustum), then each mesh by its
 //   AABB (aabb_is_on_frustum). Shadow_Directional passes skip_near = true to both.
 // - Opaque and mask meshes go to opaque, grouped with draw_runs_from_items.
-// - Shadow kinds drop blended meshes. View collects each visible instance that has any blended mesh,
-//   sorts those instances back to front by distance from camera_pos to the instance's translation,
-//   then appends each instance's blended meshes that pass the AABB test, in the model's mesh order.
+// - Shadow kinds drop blended meshes. View sorts its visible blended meshes back to front across all
+//   instances, by distance from camera_pos to each mesh's world-space AABB center.
 // - Count instances_visible and meshes_culled (opaque and blended AABB misses both count).
 build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, camera_pos: Vec3) -> DrawList {
 	skip_near := kind == .Shadow_Directional
@@ -55,11 +54,11 @@ build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, c
 	blended_items := make([dynamic]DrawItem, context.temp_allocator)
 	instances_viewed, culled: u32
 
-	BlendedInstance :: struct {
-		slot:  u32,
+	BlendedMesh :: struct {
+		item:  DrawItem,
 		dist2: f32,
 	}
-	blended_instances := make([dynamic]BlendedInstance, context.temp_allocator)
+	blended_meshes := make([dynamic]BlendedMesh, context.temp_allocator)
 
 	for instance, slot_i in view.instances.values {
 		if !pool_is_alive(view.instances, Index(slot_i)) do continue
@@ -69,46 +68,33 @@ build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, c
 
 		if !volume_is_on_frustum(frustum, model.bounds, instance.transform, skip_near) do continue
 
-		has_blended := false
-
 		for &mesh in model.meshes {
 			material := pool_get(view.materials, mesh.material)
 
-			if material.alpha_mode == .Blend {
-				has_blended = true
-				continue
-			}
+			blended := material.alpha_mode == .Blend
+			if blended && kind != .View do continue
 			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform, skip_near) {
 				culled += 1
 				continue
 			}
-			append(&opaque_items, DrawItem{mesh = &mesh, instance = u32(slot_i)})
-		}
-
-		if kind == .View && has_blended {
-			dist2 := linalg.length2(instance.transform.translation - camera_pos)
-			append(&blended_instances, BlendedInstance{slot = u32(slot_i), dist2 = dist2})
+			item := DrawItem {
+				mesh     = &mesh,
+				instance = u32(slot_i),
+			}
+			if blended {
+				dist2 := linalg.length2(transform_point(instance.transform, mesh.bounds.center) - camera_pos)
+				append(&blended_meshes, BlendedMesh{item = item, dist2 = dist2})
+			} else {
+				append(&opaque_items, item)
+			}
 		}
 
 		instances_viewed += 1
 	}
 
-	slice.sort_by(blended_instances[:], proc(a, b: BlendedInstance) -> bool {return a.dist2 > b.dist2})
-
-	for blended_instance in blended_instances {
-		instance := view.instances.values[blended_instance.slot]
-		model := pool_get(view.models, instance.model)
-		for &mesh in model.meshes {
-			material := pool_get(view.materials, mesh.material)
-
-			if material.alpha_mode != .Blend do continue
-			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform, skip_near) {
-				culled += 1
-				continue
-			}
-			append(&blended_items, DrawItem{mesh = &mesh, instance = blended_instance.slot})
-		}
-	}
+	// Back to front by each mesh's world-space AABB center, across instances.
+	slice.sort_by(blended_meshes[:], proc(a, b: BlendedMesh) -> bool {return a.dist2 > b.dist2})
+	for blended in blended_meshes do append(&blended_items, blended.item)
 
 	return {
 		opaque = draw_runs_from_items(opaque_items[:]),

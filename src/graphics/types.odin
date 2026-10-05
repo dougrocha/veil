@@ -211,6 +211,11 @@ transform_create :: proc(
 	return Transform{translation = translation, rotation = rotation, scale = scale}
 }
 
+// Maps a point from local space to world space: scale, then rotate, then translate.
+transform_point :: proc(transform: Transform, p: Vec3) -> Vec3 {
+	return transform.translation + linalg.quaternion_mul_vector3(transform.rotation, p * transform.scale)
+}
+
 // Builds the model matrix by combining translation, rotation, and scale
 transform_to_matrix :: proc(transform: Transform) -> Mat4x4 {
 	translation := linalg.matrix4_translate(transform.translation)
