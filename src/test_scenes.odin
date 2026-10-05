@@ -209,7 +209,7 @@ load_transparency_test :: proc(engine: ^gfx.Engine) {
 	)
 	solid := gfx.primitive_cube(engine, "transparency_solid", solid_mat, half_size = {0.5, 0.5, 0.5})
 	for x in ([?]f32{-3, 0, 3}) {
-		gfx.instance_spawn(engine, solid, gfx.transform_create(translation = {x, 0.5, -4}))
+		gfx.instance_spawn(engine, solid, gfx.transform_create(translation = {x, 0.501, -4}))
 	}
 
 	Glass :: struct {
