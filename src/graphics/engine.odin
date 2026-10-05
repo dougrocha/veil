@@ -327,28 +327,31 @@ set_skybox_texture :: proc(engine: ^Engine, handle: TextureHandle) {
 	engine.skybox_cube = texture_cube_slot(engine, handle)
 }
 
-// Renders every active light's shadow maps. Each atlas is transitioned as a whole (all layers,
-// used or not) so the mesh pass always samples it in the layout the descriptor expects.
-draw_shadow_maps :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	scene_data := (^SceneData)(backend.buffer_contents(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer))
-	dir_count := min(int(engine.scene.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
-	spot_count := min(int(engine.scene.spot_light_count), MAX_SPOT_LIGHTS)
-	point_count := min(int(engine.scene.point_light_count), MAX_POINT_LIGHTS)
+// Shadow views each atlas renders this frame. Masked-off lights aren't sampled, so they're
+// skipped. Cached maps stay valid and are re-checked when the light is enabled again.
+@(private = "file")
+shadow_counts :: proc(engine: ^Engine) -> (dir_count, spot_count, point_count: int) {
+	dir_count = min(int(engine.scene.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
+	spot_count = min(int(engine.scene.spot_light_count), MAX_SPOT_LIGHTS)
+	point_count = min(int(engine.scene.point_light_count), MAX_POINT_LIGHTS)
+	mask := engine.debug_settings.light_mask
+	if mask & u32(LightMask.Directional) == 0 do dir_count = 0
+	if mask & u32(LightMask.Spot) == 0 do spot_count = 0
+	if mask & u32(LightMask.Point) == 0 do point_count = 0
+	return
+}
 
-	// Masked-off or disabled shadows aren't sampled, so skip rendering them. Cached maps stay
-	// valid and are re-checked when the light is enabled again.
-	settings := &engine.debug_settings
-	shadows_on := settings.disable_shadows == 0
-	if !shadows_on || settings.light_mask & u32(LightMask.Directional) == 0 do dir_count = 0
-	if !shadows_on || settings.light_mask & u32(LightMask.Spot) == 0 do spot_count = 0
-	if !shadows_on || settings.light_mask & u32(LightMask.Point) == 0 do point_count = 0
+@(private = "file")
+current_scene_data :: proc(engine: ^Engine) -> ^SceneData {
+	return (^SceneData)(backend.buffer_contents(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer))
+}
 
-	// Transitions run even when every pass is skipped: Depth_Read -> Depth_Write keeps the
-	// contents, and the atlases must end in Depth_Read for the main pass.
-
-	// 2D atlas: directional cascades first, then spot lights from SPOT_SHADOW_SLOT_BASE
+// 2D atlas: directional cascades first, then spot lights from SPOT_SHADOW_SLOT_BASE. The atlas is
+// transitioned as a whole (all layers, used or not) so later passes sample it in one layout.
+record_shadow_2d :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+	scene_data := current_scene_data(engine)
+	dir_count, spot_count, _ := shadow_counts(engine)
 	atlas_2d := &engine.shadow_2d_atlas
-	scope_2d := gpu_scope_begin(engine, cmd, "shadow 2d")
 	shadow_atlas_transition(cmd, atlas_2d, .Depth_Write, MAX_SHADOW_2D_SLOTS)
 	for light_i in 0 ..< dir_count {
 		for cascade in 0 ..< SHADOW_MAP_CASCADE_COUNT {
@@ -366,12 +369,13 @@ draw_shadow_maps :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		shadow_cache_spot_rendered(engine, light_i)
 	}
 	shadow_atlas_transition(cmd, atlas_2d, .Depth_Read, MAX_SHADOW_2D_SLOTS)
-	gpu_scope_end(engine, cmd, scope_2d)
+}
 
-	// cube atlas: 6 faces per point light
+// Cube atlas: 6 faces per point light.
+record_shadow_point :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+	scene_data := current_scene_data(engine)
+	_, _, point_count := shadow_counts(engine)
 	atlas_cube := &engine.shadow_atlas
-	scope_cube := gpu_scope_begin(engine, cmd, "shadow point")
-	defer gpu_scope_end(engine, cmd, scope_cube)
 	shadow_atlas_transition(cmd, atlas_cube, .Depth_Write, MAX_POINT_LIGHTS * 6)
 	for light_i in 0 ..< point_count {
 		if shadow_cache_point_fresh(engine, light_i) {
@@ -430,68 +434,12 @@ draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	ui_renderer_flush(engine, cmd)
 }
 
-draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	if engine.debug_settings.particles {
-		scope := gpu_scope_begin(engine, cmd, "particles")
-		dispatch_particles(engine, cmd)
-		gpu_scope_end(engine, cmd, scope)
-	}
-
-	draw_shadow_maps(engine, cmd)
-
-	main_scope := gpu_scope_begin(engine, cmd, "main")
-	{
-		encoder := backend.begin_render_pass(
-			&engine.vk_ctx,
-			cmd,
-			backend.PassConfig {
-				color = {image = engine.render_targets.color},
-				resolve = {image = engine.render_targets.hdr},
-				depth = {image = engine.render_targets.depth},
-				clear_color = {0.1, 0.1, 0.1, 1},
-				load_op = .Clear,
-			},
-		)
-		// Opaque, then the skybox where nothing opaque wrote depth, then transparent on top.
-		view_list := view_draw_list(engine)
-		draw_meshes_opaque(engine, encoder, view_list)
-		draw_skybox(engine, encoder)
-		draw_meshes_transparent(engine, encoder, view_list)
-		if engine.debug_settings.particles do draw_particles(engine, encoder)
-		line_renderer_flush(engine, encoder)
-		backend.end_render_pass(encoder)
-	}
-	gpu_scope_end(engine, cmd, main_scope)
-
-	bloom_scope := gpu_scope_begin(engine, cmd, "bloom")
-	dispatch_bloom(engine, cmd)
-	gpu_scope_end(engine, cmd, bloom_scope)
-
-	tonemap_scope := gpu_scope_begin(engine, cmd, "tonemap")
-	dispatch_tonemap(engine, cmd)
-	gpu_scope_end(engine, cmd, tonemap_scope)
-
-	overlay_scope := gpu_scope_begin(engine, cmd, "overlay")
-	defer gpu_scope_end(engine, cmd, overlay_scope)
-	debug_view_flush(engine, cmd)
-
-	{
-		encoder := backend.begin_render_pass(
-			&engine.vk_ctx,
-			cmd,
-			backend.PassConfig{color = {image = engine.render_targets.draw}, load_op = .Load},
-		)
-		draw_ui(engine, encoder)
-		backend.end_render_pass(encoder)
-	}
-}
-
 record_frame :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	stats_record_begin(engine)
 	defer stats_record_end(engine)
 	gpu_profiler_reset(engine, cmd)
 
 	frame_scope := gpu_scope_begin(engine, cmd, "frame")
-	draw_scene(engine, cmd)
+	run_passes(engine, cmd)
 	gpu_scope_end(engine, cmd, frame_scope)
 }
