@@ -93,14 +93,14 @@ render_targets_images_create :: proc(ctx: ^backend.Context, extent: backend.Exte
 			extent_3d,
 			backend.DRAW_FORMAT,
 			{.Transient, .ColorAttachment},
-			samples = ctx.msaa_samples,
+			samples = backend.limits(ctx).msaa_samples,
 		),
 		depth = backend.render_target_create(
 			ctx,
 			extent_3d,
 			backend.DEPTH_FORMAT,
 			{.DepthStencilAttachment},
-			samples = ctx.msaa_samples,
+			samples = backend.limits(ctx).msaa_samples,
 		),
 		hdr = backend.render_target_create(ctx, extent_3d, backend.DRAW_FORMAT, {.ColorAttachment, .Sampled}),
 		draw = backend.render_target_create(

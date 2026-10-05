@@ -224,8 +224,9 @@ pipeline_create_compute :: proc(ctx: ^Context, stage: ShaderStageDesc) -> Pipeli
 	return Pipeline{pipeline = pipeline}
 }
 
+// Deferred like images and buffers: frames in flight may still be using it.
 pipeline_destroy :: proc(ctx: ^Context, pipeline: Pipeline) {
-	vk.DestroyPipeline(ctx.device, pipeline.pipeline, nil)
+	release_deferred(ctx, pipeline)
 }
 
 @(private)

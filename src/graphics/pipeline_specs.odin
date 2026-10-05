@@ -86,7 +86,7 @@ target_layout :: proc(ctx: ^backend.Context, targets: TargetLayout) -> backend.A
 			color = {0 = backend.DRAW_FORMAT},
 			color_count = 1,
 			depth = backend.DEPTH_FORMAT,
-			samples = ctx.msaa_samples,
+			samples = backend.limits(ctx).msaa_samples,
 		}
 	case .Overlay:
 		return {color = {0 = backend.DRAW_FORMAT}, color_count = 1, samples = 1}

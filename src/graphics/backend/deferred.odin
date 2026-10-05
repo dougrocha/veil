@@ -9,6 +9,7 @@ Releasable :: union {
 	ImageSlot,
 	BufferSlot,
 	ShaderSlot,
+	Pipeline,
 }
 
 PendingRelease :: struct {
@@ -48,6 +49,8 @@ release_up_to :: proc(ctx: ^Context, value: u64) {
 			buffer_slot_release(ctx, resource)
 		case ShaderSlot:
 			shader_slot_release(ctx, resource)
+		case Pipeline:
+			vk.DestroyPipeline(ctx.device, resource.pipeline, nil)
 		}
 		done += 1
 	}

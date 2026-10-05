@@ -48,6 +48,10 @@ context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 	return true
 }
 
+limits :: proc(ctx: ^Context) -> Limits {
+	return {max_bindless_textures_per_stage = ctx.max_bindless_textures_per_stage, msaa_samples = ctx.msaa_samples}
+}
+
 device_wait_idle :: proc(ctx: ^Context) {
 	vk.DeviceWaitIdle(ctx.device)
 }

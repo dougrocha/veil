@@ -107,6 +107,12 @@ load_op_to_vk :: proc(op: LoadOp) -> vk.AttachmentLoadOp {
 	return .DONT_CARE
 }
 
+// Device capabilities the engine sizes things by.
+Limits :: struct {
+	max_bindless_textures_per_stage: u32,
+	msaa_samples:                    u32, // highest count usable for color + depth
+}
+
 Context :: struct {
 	instance:                        vk.Instance,
 	surface:                         vk.SurfaceKHR,

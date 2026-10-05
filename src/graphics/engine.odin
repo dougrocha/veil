@@ -37,7 +37,8 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	engine.swapchain = backend.swapchain_create(vk_ctx, width, height)
 
 	// The cube array and the 2 fixed depth slots count against the same per-stage sampled-image limit.
-	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_textures_per_stage - BINDLESS_CUBE_COUNT - 2)
+	limits := backend.limits(vk_ctx)
+	max_bindless_textures := min(MAX_TEXTURES, limits.max_bindless_textures_per_stage - BINDLESS_CUBE_COUNT - 2)
 
 	shader_system_create(engine, max_bindless_textures) or_return
 	texture_system_create(engine, {max_textures_count = max_bindless_textures})
@@ -117,7 +118,6 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 
 	// Reload first: a shadow shader reload invalidates the cache, and the plan must see it.
 	shader_poll_hotreload(engine)
-	pipelines_collect_retired(engine)
 	shadow_plan_update(engine)
 	scene_data_buffer_update(engine)
 	update_transforms_buffer(engine)

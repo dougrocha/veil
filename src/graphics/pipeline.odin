@@ -27,20 +27,11 @@ ComputePipelineKind :: enum u8 {
 	Bloom_Up,
 }
 
-// TODO: rewrite. Duplicates the backend's release_deferred with a different rule (frame_index +
-// MAX_FRAMES_IN_FLIGHT vs the timeline). Make pipeline_destroy defer in the backend, delete this.
-// A pipeline replaced by a hot reload, kept alive until no frame in flight can still use it.
-RetiredPipeline :: struct {
-	pipeline:    backend.Pipeline,
-	frame_index: u64, // ctx.frame_index when it was replaced
-}
-
 PipelineRegistry :: struct {
 	graphics:         [GraphicsPipelineKind]backend.Pipeline,
 	compute:          [ComputePipelineKind]backend.Pipeline,
 	graphics_shaders: [GraphicsPipelineKind]backend.Shader,
 	compute_shaders:  [ComputePipelineKind]backend.Shader,
-	retired:          [dynamic]RetiredPipeline,
 }
 
 // TODO: rewrite. The ModuleUse map + entry lists is a lot of machinery to load each shader once
@@ -110,44 +101,29 @@ compute_pipeline :: #force_inline proc(engine: ^Engine, kind: ComputePipelineKin
 	return engine.pipeline_registry.compute[kind]
 }
 
-// Recreates every pipeline that uses shader (after it was reloaded). The old ones are retired, not
-// destroyed: frames in flight may still be using them. Returns whether any shadow pipeline was
+// Recreates every pipeline that uses shader (after it was reloaded). backend.pipeline_destroy defers
+// the old ones until frames in flight are done with them. Returns whether any shadow pipeline was
 // rebuilt, since cached shadow maps then need re-rendering.
 pipelines_rebuild_for_shader :: proc(engine: ^Engine, shader: backend.Shader) -> (shadow_rebuilt: bool) {
 	reg := &engine.pipeline_registry
-	frame := engine.vk_ctx.frame_index
 	for kind in GraphicsPipelineKind {
 		if reg.graphics_shaders[kind] != shader do continue
-		append(&reg.retired, RetiredPipeline{pipeline = reg.graphics[kind], frame_index = frame})
+		backend.pipeline_destroy(&engine.vk_ctx, reg.graphics[kind])
 		reg.graphics[kind] = graphics_pipeline_create(engine, kind)
 		if kind == .Shadow || kind == .Shadow_Directional do shadow_rebuilt = true
 		log.infof("Rebuilt graphics pipeline: %v", kind)
 	}
 	for kind in ComputePipelineKind {
 		if reg.compute_shaders[kind] != shader do continue
-		append(&reg.retired, RetiredPipeline{pipeline = reg.compute[kind], frame_index = frame})
+		backend.pipeline_destroy(&engine.vk_ctx, reg.compute[kind])
 		reg.compute[kind] = compute_pipeline_create(engine, kind)
 		log.infof("Rebuilt compute pipeline: %v", kind)
 	}
 	return
 }
 
-// Destroys retired pipelines that every frame in flight has finished with. Call after frame_begin.
-pipelines_collect_retired :: proc(engine: ^Engine) {
-	reg := &engine.pipeline_registry
-	#reverse for retired, i in reg.retired {
-		if engine.vk_ctx.frame_index >= retired.frame_index + backend.MAX_FRAMES_IN_FLIGHT {
-			backend.pipeline_destroy(&engine.vk_ctx, retired.pipeline)
-			unordered_remove(&reg.retired, i)
-		}
-	}
-}
-
-// Expects the device to be idle.
 pipelines_destroy :: proc(engine: ^Engine) {
 	reg := &engine.pipeline_registry
-	for retired in reg.retired do backend.pipeline_destroy(&engine.vk_ctx, retired.pipeline)
-	delete(reg.retired)
 	for pipeline in reg.graphics do backend.pipeline_destroy(&engine.vk_ctx, pipeline)
 	for pipeline in reg.compute do backend.pipeline_destroy(&engine.vk_ctx, pipeline)
 }
