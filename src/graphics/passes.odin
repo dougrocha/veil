@@ -102,9 +102,9 @@ frame_resource_image :: proc(engine: ^Engine, resource: FrameResource) -> backen
 	case .Bloom:
 		return targets.bloom
 	case .Shadow_2D:
-		return engine.shadow_2d_atlas.image
+		return engine.shadows.atlas_2d.image
 	case .Shadow_Cube:
-		return engine.shadow_atlas.image
+		return engine.shadows.point_atlas.image
 	}
 	unreachable()
 }

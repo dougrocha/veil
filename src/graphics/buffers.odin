@@ -35,10 +35,7 @@ frame_data_create :: proc(engine: ^Engine) {
 			{.Storage},
 			.Shared,
 		)
-		engine.frame_data[i].particle_buffer = create_particle_buffer(
-			&engine.vk_ctx,
-			Rect2D{extent = {u32(render_extent(engine).width), u32(render_extent(engine).height)}},
-		)
+		engine.frame_data[i].particle_buffer = create_particle_buffer(&engine.vk_ctx)
 	}
 }
 
@@ -52,7 +49,7 @@ frame_data_destroy :: proc(engine: ^Engine) {
 }
 
 // TODO: This code is half engine/game code, needs ot be looked at
-create_particle_buffer :: proc(ctx: ^backend.Context, extent: Rect2D) -> backend.Buffer(Particle) {
+create_particle_buffer :: proc(ctx: ^backend.Context) -> backend.Buffer(Particle) {
 	particles := make([]Particle, PARTICLE_COUNT, context.temp_allocator)
 
 	for &p in particles {

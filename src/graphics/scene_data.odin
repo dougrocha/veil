@@ -69,7 +69,7 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 	for i in 0 ..< MAX_DIRECTIONAL_LIGHTS do scene.directional_lights[i] = gpu_directional_light(engine.scene.directional_lights[i])
 	for i in 0 ..< MAX_SPOT_LIGHTS do scene.spot_lights[i] = gpu_spot_light(engine.scene.spot_lights[i])
 
-	plan := &engine.shadow_plan
+	plan := &engine.shadows.plan
 	scene.shadow_2d_view_proj = plan.shadow_2d_view_proj
 	scene.point_light_view_proj = plan.point_view_proj
 	scene.shadow_cascade_data = plan.cascade_data

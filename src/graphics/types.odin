@@ -51,16 +51,13 @@ Engine :: struct {
 	// texture
 	texture_system:    TextureSystem,
 	skybox_cube:       u32, // bindless cube slot copied into SceneData each frame
-	shadow_atlas:      ShadowAtlas,
-	shadow_2d_atlas:   ShadowAtlas,
+	shadows:           Shadows,
 
 	// simulation state — no Vulkan types
 	scene:             Scene,
 	camera_system:     CameraSystem,
 	stats:             Stats,
 	gpu_profiler:      GpuProfiler,
-	shadow_cache:      ShadowCache,
-	shadow_plan:       ShadowPlan, // this frame's; views live in the frame arena
 
 	// debug capture
 	frame_dump:        FrameDump,
@@ -117,6 +114,18 @@ Scene :: struct {
 	instance_links:          []InstanceLink, // by pool slot
 	instance_changes:        [dynamic]InstanceChange, // since the last recorded frame
 	selection:               Selection,
+}
+
+scene_create :: proc(scene: ^Scene) {
+	scene.instances = pool_init(MAX_MODEL_INSTANCES, Instance)
+	scene.instance_links = make([]InstanceLink, MAX_MODEL_INSTANCES)
+}
+
+scene_destroy :: proc(scene: ^Scene) {
+	for &link in scene.instance_links do delete(link.children)
+	delete(scene.instance_links)
+	pool_destroy(&scene.instances)
+	delete(scene.instance_changes)
 }
 
 AlphaMode :: enum {

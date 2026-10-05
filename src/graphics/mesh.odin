@@ -81,8 +81,6 @@ model_system_create :: proc(engine: ^Engine) {
 	engine.model_system.models = pool_init(1024, Model)
 	engine.model_system.model_map = make(map[string]ModelHandle)
 	engine.model_system.parts_map = make(map[string][]ModelPart)
-	engine.scene.instances = pool_init(MAX_MODEL_INSTANCES, Instance)
-	engine.scene.instance_links = make([]InstanceLink, MAX_MODEL_INSTANCES)
 }
 
 model_system_destroy :: proc(engine: ^Engine) {
@@ -106,10 +104,6 @@ model_system_destroy :: proc(engine: ^Engine) {
 		delete(parts)
 	}
 	delete(ms.parts_map)
-	for &link in engine.scene.instance_links do delete(link.children)
-	delete(engine.scene.instance_links)
-	pool_destroy(&engine.scene.instances)
-	delete(engine.scene.instance_changes)
 }
 
 model_load :: proc(engine: ^Engine, path: string, material: MaterialHandle = INVALID_MATERIAL) -> ModelHandle {

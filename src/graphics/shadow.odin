@@ -5,6 +5,26 @@ import "core:math/linalg"
 
 import "backend"
 
+Shadows :: struct {
+	point_atlas: ShadowAtlas, // cube array, Depth_Cube_Array slot
+	atlas_2d:    ShadowAtlas, // directional + spot, Depth_2D_Array slot
+	cache:       ShadowCache,
+	plan:        ShadowPlan, // this frame's; views live in the frame arena
+}
+
+// Writes the atlases into their fixed bindless slots, so the bindless table must exist
+// (texture_system_create).
+shadows_create :: proc(ctx: ^backend.Context, shadows: ^Shadows) {
+	shadows.point_atlas = shadow_atlas_create(ctx, POINT_SHADOW_MAP_SIZE, MAX_POINT_LIGHTS * 6, cube = true)
+	backend.bindless_write_fixed(ctx, .Depth_Cube_Array, shadows.point_atlas.image, shadows.point_atlas.sampler)
+	shadows.atlas_2d = shadow_atlas_create(ctx, SHADOW_MAP_SIZE, MAX_SHADOW_2D_SLOTS, cube = false)
+	backend.bindless_write_fixed(ctx, .Depth_2D_Array, shadows.atlas_2d.image, shadows.atlas_2d.sampler)
+}
+
+shadows_destroy :: proc(ctx: ^backend.Context, shadows: ^Shadows) {
+	shadow_atlas_destroy(ctx, &shadows.atlas_2d)
+	shadow_atlas_destroy(ctx, &shadows.point_atlas)
+}
 
 ShadowParams :: struct {
 	aspect: f32,
@@ -137,20 +157,20 @@ compute_spot_light_view_proj :: proc(light: SpotLight) -> Mat4x4 {
 shadow_plan_update :: proc(engine: ^Engine) {
 	camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	mask := engine.debug_settings.light_mask if shadows_enabled(engine) else 0
-	engine.shadow_plan = shadow_plan(&engine.scene, camera^, render_aspect(engine), &engine.shadow_cache, mask)
+	engine.shadows.plan = shadow_plan(&engine.scene, camera^, render_aspect(engine), &engine.shadows.cache, mask)
 }
 
 record_shadow_2d :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	record_shadow_views(engine, cmd, .Atlas_2D, &engine.shadow_2d_atlas)
+	record_shadow_views(engine, cmd, .Atlas_2D, &engine.shadows.atlas_2d)
 }
 
 record_shadow_point :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	record_shadow_views(engine, cmd, .Cube, &engine.shadow_atlas)
+	record_shadow_views(engine, cmd, .Cube, &engine.shadows.point_atlas)
 }
 
 @(private = "file")
 record_shadow_views :: proc(engine: ^Engine, cmd: backend.CommandBuffer, kind: ShadowAtlasKind, atlas: ^ShadowAtlas) {
-	for view in engine.shadow_plan.views {
+	for view in engine.shadows.plan.views {
 		if view.atlas != kind do continue
 		// The executor has already put the atlas in .Depth_Write.
 		encoder := backend.begin_render_pass(

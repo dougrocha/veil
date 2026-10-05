@@ -18,6 +18,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 		return false
 	}
 	engine.camera_system = camera_system_create({max_camera_count = 10})
+	scene_create(&engine.scene)
 	engine.scene.active_camera_name = DEFAULT_CAMERA_NAME
 	engine.debug_settings.light_mask = LIGHT_MASK_ALL
 	engine.debug_settings.bloom_max_levels = BLOOM_DEFAULT_LEVELS
@@ -40,12 +41,15 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 
 	shader_system_create(engine, max_bindless_textures) or_return
 	texture_system_create(engine, {max_textures_count = max_bindless_textures})
+	// The skybox pass samples SceneData.skybox_cube every frame; with no skybox configured
+	// the sky renders black.
+	set_skybox_texture(engine, engine.texture_system.defaults[.Black_Cube])
 	material_system_create(engine, {max_material_count = MAX_MATERIALS})
 	model_system_create(engine)
 
-	global_resources_create(engine)
+	shadows_create(vk_ctx, &engine.shadows)
 	render_targets_create(engine)
-	frame_data_create(engine) // particle spawn area is sized by the render extent
+	frame_data_create(engine)
 	gpu_profiler_create(engine)
 
 	pipelines_create(engine) or_return
@@ -54,23 +58,6 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	ui_renderer_create(engine)
 
 	return true
-}
-
-global_resources_create :: proc(engine: ^Engine) {
-	vk_ctx := &engine.vk_ctx
-
-	engine.shadow_atlas = shadow_atlas_create(vk_ctx, POINT_SHADOW_MAP_SIZE, MAX_POINT_LIGHTS * 6, cube = true)
-	backend.bindless_write_fixed(vk_ctx, .Depth_Cube_Array, engine.shadow_atlas.image, engine.shadow_atlas.sampler)
-	engine.shadow_2d_atlas = shadow_atlas_create(vk_ctx, SHADOW_MAP_SIZE, MAX_SHADOW_2D_SLOTS, cube = false)
-	backend.bindless_write_fixed(vk_ctx, .Depth_2D_Array, engine.shadow_2d_atlas.image, engine.shadow_2d_atlas.sampler)
-	// The skybox pass samples SceneData.skybox_cube every frame; with no skybox configured
-	// the sky renders black.
-	set_skybox_texture(engine, engine.texture_system.defaults[.Black_Cube])
-}
-
-global_resources_destroy :: proc(engine: ^Engine) {
-	shadow_atlas_destroy(&engine.vk_ctx, &engine.shadow_2d_atlas)
-	shadow_atlas_destroy(&engine.vk_ctx, &engine.shadow_atlas)
 }
 
 // Exact reverse of engine_create.
@@ -84,7 +71,7 @@ engine_destroy :: proc(self: ^Engine) {
 	gpu_profiler_destroy(self)
 	frame_data_destroy(self)
 	render_targets_destroy(self)
-	global_resources_destroy(self)
+	shadows_destroy(&self.vk_ctx, &self.shadows)
 
 	model_system_destroy(self)
 	material_system_destroy(self)
@@ -95,6 +82,7 @@ engine_destroy :: proc(self: ^Engine) {
 	backend.context_destroy(&self.vk_ctx)
 
 	frame_dump_destroy(self)
+	scene_destroy(&self.scene)
 	camera_system_destroy(&self.camera_system)
 	virtual.arena_destroy(&self.frame_arena)
 }
@@ -143,8 +131,8 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	backend.frame_end(&engine.vk_ctx, &engine.swapchain, cmd, engine.render_targets.draw)
 	// Once per recorded frame, shadow passes on or off. Skipped frames return early above, so their
 	// changes carry over.
-	shadow_cache_commit(&engine.shadow_cache, &engine.shadow_plan, &engine.scene)
-	engine.shadow_plan.views = nil // frame arena memory, freed when engine_render returns
+	shadow_cache_commit(&engine.shadows.cache, &engine.shadows.plan, &engine.scene)
+	engine.shadows.plan.views = nil // frame arena memory, freed when engine_render returns
 	clear(&engine.scene.instance_changes)
 	stats_add_timings(
 		engine,
@@ -352,7 +340,7 @@ draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 record_frame :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	stats_record_begin(engine)
 	defer stats_record_end(engine)
-	engine.stats.counters.shadow_views_cached = engine.shadow_plan.views_cached
+	engine.stats.counters.shadow_views_cached = engine.shadows.plan.views_cached
 	gpu_profiler_reset(engine, cmd)
 
 	frame_scope := gpu_scope_begin(engine, cmd, "frame")
