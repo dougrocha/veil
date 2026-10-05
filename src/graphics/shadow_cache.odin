@@ -46,15 +46,28 @@ shadow_cache_invalidate :: proc(cache: ^ShadowCache) {
 // Applies a recorded plan: clears the entries it invalidated, then marks the lights it rendered
 // valid with their current keys. Runs every frame, even when the shadow passes are disabled.
 shadow_cache_commit :: proc(cache: ^ShadowCache, plan: ^ShadowPlan, scene: ^Scene) {
-	for invalidated, i in plan.invalidated_point do if invalidated do cache.point[i].valid = false
-	for invalidated, i in plan.invalidated_spot do if invalidated do cache.spot[i].valid = false
+	shadow_entries_clear(cache.point[:], plan.invalidated_point[:])
+	shadow_entries_clear(cache.spot[:], plan.invalidated_spot[:])
 	for view in plan.views {
 		switch view.light_type {
 		case .Directional:
 		case .Point:
-			cache.point[view.light_index] = {point_shadow_key(scene.point_lights[view.light_index]), true}
+			shadow_entry_rendered(
+				&cache.point[view.light_index],
+				point_shadow_key(scene.point_lights[view.light_index]),
+			)
 		case .Spot:
-			cache.spot[view.light_index] = {spot_shadow_key(scene.spot_lights[view.light_index]), true}
+			shadow_entry_rendered(&cache.spot[view.light_index], spot_shadow_key(scene.spot_lights[view.light_index]))
 		}
 	}
+}
+
+@(private = "file")
+shadow_entries_clear :: proc(entries: []ShadowCacheEntry($Key), invalidated: []bool) {
+	for hit, i in invalidated do if hit do entries[i].valid = false
+}
+
+@(private = "file")
+shadow_entry_rendered :: proc(entry: ^ShadowCacheEntry($Key), key: Key) {
+	entry^ = {key, true}
 }

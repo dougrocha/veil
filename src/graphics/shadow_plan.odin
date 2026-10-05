@@ -1,5 +1,7 @@
 package graphics
 
+import "core:math/linalg"
+
 ShadowAtlasKind :: enum {
 	Atlas_2D, // directional cascades, then spot maps from SPOT_SHADOW_SLOT_BASE
 	Cube, // 6 faces per point light
@@ -37,9 +39,9 @@ ShadowPlan :: struct {
 //   into cascade_data), spot from compute_spot_light_view_proj (slot SPOT_SHADOW_SLOT_BASE + light),
 //   point from compute_point_light_view_proj.
 // - Directional: every cascade of every light is a view unless Directional is masked.
-// - Spot and point: invalidated when the cached key differs from the light's key, or a change in
-//   scene.instance_changes was a caster before or after (any such change invalidates every light,
-//   until the per-light cache). Invalidation is recorded whether the light is masked or not.
+// - Spot and point: invalidated when the cached key differs from the light's key, or a caster's
+//   instance change overlaps the light's bound (a sphere of radius range around the light, also for
+//   spots). Invalidation is recorded whether the light is masked or not.
 // - A light not masked renders when it is invalidated or its cache entry isn't valid; otherwise it
 //   counts in views_cached (1 per spot, 6 per point light).
 // - View order: cascades, spots, then point faces (light * 6 + face).
@@ -57,15 +59,13 @@ shadow_plan :: proc(
 	dir_count := min(int(scene.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
 	spot_count := min(int(scene.spot_light_count), MAX_SPOT_LIGHTS)
 	point_count := min(int(scene.point_light_count), MAX_POINT_LIGHTS)
-	casters_changed := false
-	for c in scene.instance_changes {
-		if c.new.casts_shadow do casters_changed = true
-		if old, ok := c.old.?; ok && old.casts_shadow do casters_changed = true
-	}
 	for l in 0 ..< dir_count {
 		data := compute_directional_shadow_data(scene.directional_lights[l], camera, {aspect = aspect})
 		for c in 0 ..< SHADOW_MAP_CASCADE_COUNT do plan.shadow_2d_view_proj[l * SHADOW_MAP_CASCADE_COUNT + c] = data.view_proj[c]
-		plan.cascade_data[l] = {split = data.splits, bias = data.bias}
+		plan.cascade_data[l] = {
+			split = data.splits,
+			bias  = data.bias,
+		}
 		if light_mask & u32(LightMask.Directional) == 0 do continue
 		for c in 0 ..< SHADOW_MAP_CASCADE_COUNT {
 			slot := u32(l * SHADOW_MAP_CASCADE_COUNT + c)
@@ -75,10 +75,16 @@ shadow_plan :: proc(
 	for l in 0 ..< spot_count {
 		slot := SPOT_SHADOW_SLOT_BASE + u32(l)
 		plan.shadow_2d_view_proj[slot] = compute_spot_light_view_proj(scene.spot_lights[l])
-		entry := cache.spot[l]
-		plan.invalidated_spot[l] = casters_changed || entry.key != spot_shadow_key(scene.spot_lights[l])
+		light := scene.spot_lights[l]
+		plan.invalidated_spot[l] = shadow_entry_invalidated(
+			cache.spot[l],
+			spot_shadow_key(light),
+			light.pos,
+			light.range,
+			scene.instance_changes[:],
+		)
 		if light_mask & u32(LightMask.Spot) == 0 do continue
-		if entry.valid && !plan.invalidated_spot[l] {
+		if cache.spot[l].valid && !plan.invalidated_spot[l] {
 			plan.views_cached += 1
 			continue
 		}
@@ -86,14 +92,45 @@ shadow_plan :: proc(
 	}
 	for l in 0 ..< point_count {
 		plan.point_view_proj[l] = compute_point_light_view_proj(scene.point_lights[l])
-		entry := cache.point[l]
-		plan.invalidated_point[l] = casters_changed || entry.key != point_shadow_key(scene.point_lights[l])
+		light := scene.point_lights[l]
+		plan.invalidated_point[l] = shadow_entry_invalidated(
+			cache.point[l],
+			point_shadow_key(light),
+			light.pos,
+			light.range,
+			scene.instance_changes[:],
+		)
 		if light_mask & u32(LightMask.Point) == 0 do continue
-		if entry.valid && !plan.invalidated_point[l] {
+		if cache.point[l].valid && !plan.invalidated_point[l] {
 			plan.views_cached += 6
 			continue
 		}
 		for f in 0 ..< 6 do append(&plan.views, ShadowView{.Cube, u32(l * 6 + f), .Point, u32(l), plan.point_view_proj[l][f]})
 	}
 	return
+}
+
+// Same rule for point and spot entries: the light's key changed, or a caster entered, left or moved
+// inside the sphere of radius range around the light.
+@(private = "file")
+shadow_entry_invalidated :: proc(
+	entry: ShadowCacheEntry($Key),
+	key: Key,
+	light_pos: Vec3,
+	light_range: f32,
+	changes: []InstanceChange,
+) -> bool {
+	if entry.key != key do return true
+	bound := BoundingSphere{light_pos, light_range}
+	for change in changes {
+		if change.new.casts_shadow && spheres_overlap(change.new.bounds, bound) do return true
+		if old, ok := change.old.?; ok && old.casts_shadow && spheres_overlap(old.bounds, bound) do return true
+	}
+	return false
+}
+
+@(private = "file")
+spheres_overlap :: proc(a, b: BoundingSphere) -> bool {
+	r := a.radius + b.radius
+	return linalg.length2(a.center - b.center) <= r * r
 }
