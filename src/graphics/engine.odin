@@ -261,42 +261,49 @@ draw_shadow :: proc(
 	}
 }
 
-draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
+// The camera's draw list for this frame. Counts its culling stats.
+view_draw_list :: proc(engine: ^Engine) -> DrawList {
 	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	frustum := frustum_create_from_camera(active_camera, render_aspect(engine))
-
-	draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: DrawBatch) {
-		frame := current_frame_data(engine)
-		mesh := batch.mesh
-		pc := PushConstants {
-			scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
-			vertex_buffer    = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer),
-			material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
-			transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
-			instance_ids     = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
-			material_index   = u32(mesh.material.index),
-			instance_offset  = batch.first_id,
-		}
-		backend.pipeline_push(cmd, &pc)
-		backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count, batch.count)
-		stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
-	}
-
 	list := build_draw_list(scene_view(engine), frustum, .View, active_camera.position)
 	engine.stats.counters.instances_drawn += list.instances_visible
 	engine.stats.counters.meshes_culled += list.meshes_culled
+	return list
+}
 
+draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
 	backend.pipeline_bind(cmd, graphics_pipeline(engine, .Mesh))
 	for batch in draw_runs_upload(engine, list.opaque) {
-		draw_batch(engine, cmd, batch)
+		mesh_draw_batch(engine, cmd, batch)
 	}
+}
 
-	// transparent: back to front, one draw per mesh so the order holds
+// Back to front, one draw per mesh so the order holds. Draw after everything opaque, skybox
+// included: these don't write depth, so anything drawn later would cover them.
+draw_meshes_transparent :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
 	backend.pipeline_bind(cmd, graphics_pipeline(engine, .Mesh_Transparent))
 	for item in list.transparent {
 		batch := single_draw_batch(engine, item) or_break
-		draw_batch(engine, cmd, batch)
+		mesh_draw_batch(engine, cmd, batch)
 	}
+}
+
+@(private = "file")
+mesh_draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: DrawBatch) {
+	frame := current_frame_data(engine)
+	mesh := batch.mesh
+	pc := PushConstants {
+		scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
+		vertex_buffer    = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer),
+		material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
+		transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
+		instance_ids     = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
+		material_index   = u32(mesh.material.index),
+		instance_offset  = batch.first_id,
+	}
+	backend.pipeline_push(cmd, &pc)
+	backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count, batch.count)
+	stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 }
 
 // Takes effect on the next recorded frame: it only changes the cube slot SceneData carries.
@@ -429,8 +436,11 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 				load_op = .Clear,
 			},
 		)
-		draw_meshes(engine, encoder)
+		// Opaque, then the skybox where nothing opaque wrote depth, then transparent on top.
+		view_list := view_draw_list(engine)
+		draw_meshes_opaque(engine, encoder, view_list)
 		draw_skybox(engine, encoder)
+		draw_meshes_transparent(engine, encoder, view_list)
 		if engine.debug_settings.particles do draw_particles(engine, encoder)
 		line_renderer_flush(engine, encoder)
 		backend.end_render_pass(encoder)
