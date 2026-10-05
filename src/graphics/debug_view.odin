@@ -65,7 +65,7 @@ debug_view_flush :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			f32(req.rect.offset.y),
 		)
 		backend.pipeline_set_scissor(encoder, u32(x1 - x0), u32(y1 - y0), x0, y0)
-		backend.pipeline_push(encoder, pipeline, {.Fragment}, &req.view, index = 1)
+		backend.pipeline_push(encoder, &req.view)
 		backend.cmd_draw(encoder)
 		stats_count_draw(engine)
 	}

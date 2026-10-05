@@ -123,11 +123,21 @@ cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
 // Binds the pipeline and the bindless table (set 0).
 pipeline_bind_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline) {
 	vk.CmdBindPipeline(cmd.handle, .COMPUTE, pipeline.pipeline)
-	vk.CmdBindDescriptorSets(cmd.handle, .COMPUTE, pipeline.layout, 0, 1, &cmd.ctx.bindless.set, 0, nil)
+	vk.CmdBindDescriptorSets(
+		cmd.handle,
+		.COMPUTE,
+		cmd.ctx.bindless.pipeline_layout,
+		0,
+		1,
+		&cmd.ctx.bindless.set,
+		0,
+		nil,
+	)
 }
 
-pipeline_push_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline, data: ^$T, offset: u32 = 0) {
-	vk.CmdPushConstants(cmd.handle, pipeline.layout, {.COMPUTE}, offset, u32(size_of(T)), data)
+pipeline_push_compute :: proc(cmd: ComputeEncoder, data: ^$T) {
+	#assert(size_of(T) <= PUSH_CONSTANT_SIZE)
+	vk.CmdPushConstants(cmd.handle, cmd.ctx.bindless.pipeline_layout, PUSH_CONSTANT_STAGES, 0, u32(size_of(T)), data)
 }
 
 begin_compute_pass :: proc(ctx: ^Context, cmd: CommandBuffer) -> ComputeEncoder {

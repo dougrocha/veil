@@ -220,7 +220,7 @@ dispatch_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	// particles_in was written by the previous frame's dispatch in an earlier submission.
 	backend.cmd_barrier_compute_write_to_compute_read(encoder)
 	backend.pipeline_bind_compute(encoder, pipeline)
-	backend.pipeline_push_compute(encoder, pipeline, &compute_pc)
+	backend.pipeline_push_compute(encoder, &compute_pc)
 	// Keep the local size in sync with particle.slang's numthreads declaration.
 	#assert(PARTICLE_COUNT % 256 == 0)
 	backend.cmd_dispatch(encoder, PARTICLE_COUNT / 256, 1, 1, {256, 1, 1})
@@ -237,7 +237,7 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		particles_out = backend.buffer_address(&engine.vk_ctx, engine.frame_data[frame_res_index].particle_buffer),
 	}
 	backend.pipeline_bind(cmd, pipeline)
-	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &particle_pc)
+	backend.pipeline_push(cmd, &particle_pc)
 	backend.cmd_draw_points(cmd, PARTICLE_COUNT)
 	stats_count_draw(engine)
 }
@@ -302,7 +302,7 @@ draw_shadow :: proc(
 				light_index      = light_i,
 				material_index   = u32(mesh.material.index),
 			}
-			backend.pipeline_push(cmd, shadow_pipeline, {.Vertex, .Fragment}, &pc, index = 1)
+			backend.pipeline_push(cmd, &pc)
 			backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count)
 			stats_count_draw(engine, u64(mesh.index_count / 3))
 		}
@@ -313,7 +313,6 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	mesh_pipeline := get_pipeline(&engine.pipeline_registry, .Mesh)
 
 	backend.pipeline_bind(cmd, mesh_pipeline)
-	backend.pipeline_set_depth_write(cmd, mesh_pipeline, true)
 	frame := current_frame_data(engine)
 
 	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
@@ -350,7 +349,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 				material_index   = u32(mesh.material.index),
 				instance_index   = u32(i),
 			}
-			backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc, index = 1)
+			backend.pipeline_push(cmd, &pc)
 			backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count)
 			stats_count_draw(engine, u64(mesh.index_count / 3))
 		}
@@ -389,7 +388,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 
 	// transparent: back-to-front
 	slice.sort_by(transparent[:], proc(a, b: TransparentEntry) -> bool {return a.dist > b.dist})
-	backend.pipeline_set_depth_write(cmd, mesh_pipeline, false)
+	backend.cmd_set_depth_write(cmd, false)
 	for entry in transparent {
 		draw_instance(engine, cmd, mesh_pipeline, frustum, entry.index, true)
 	}
@@ -492,7 +491,7 @@ draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	pc := SkyboxPushConstants {
 		scene_data = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
 	}
-	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc)
+	backend.pipeline_push(cmd, &pc)
 	backend.cmd_draw(cmd)
 	stats_count_draw(engine)
 }

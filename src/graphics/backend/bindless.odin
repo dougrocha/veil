@@ -34,10 +34,11 @@ BindlessBinding :: enum u32 {
 
 @(private)
 BindlessTable :: struct {
-	desc:   BindlessDesc,
-	layout: vk.DescriptorSetLayout,
-	pool:   vk.DescriptorPool,
-	set:    vk.DescriptorSet,
+	desc:            BindlessDesc,
+	layout:          vk.DescriptorSetLayout,
+	pool:            vk.DescriptorPool,
+	set:             vk.DescriptorSet,
+	pipeline_layout: vk.PipelineLayout, // shared by every pipeline: this set + the push constant block
 }
 
 bindless_init :: proc(ctx: ^Context, desc: BindlessDesc) {
@@ -103,11 +104,25 @@ bindless_init :: proc(ctx: ^Context, desc: BindlessDesc) {
 		pSetLayouts        = &table.layout,
 	}
 	vk_check(vk.AllocateDescriptorSets(ctx.device, &alloc_info, &table.set))
+
+	push_range := vk.PushConstantRange {
+		stageFlags = PUSH_CONSTANT_STAGES,
+		size       = PUSH_CONSTANT_SIZE,
+	}
+	pipeline_layout_info := vk.PipelineLayoutCreateInfo {
+		sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
+		setLayoutCount         = 1,
+		pSetLayouts            = &table.layout,
+		pushConstantRangeCount = 1,
+		pPushConstantRanges    = &push_range,
+	}
+	vk_check(vk.CreatePipelineLayout(ctx.device, &pipeline_layout_info, nil, &table.pipeline_layout))
 }
 
 @(private)
 bindless_destroy :: proc(ctx: ^Context) {
 	if ctx.bindless.layout == 0 do return
+	vk.DestroyPipelineLayout(ctx.device, ctx.bindless.pipeline_layout, nil)
 	vk.DestroyDescriptorPool(ctx.device, ctx.bindless.pool, nil)
 	vk.DestroyDescriptorSetLayout(ctx.device, ctx.bindless.layout, nil)
 	ctx.bindless = {}

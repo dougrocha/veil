@@ -124,7 +124,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		}
 		pc.src_texel_size = {1 / f32(src_size.x), 1 / f32(src_size.y)}
 		backend.image_barrier(encoder, bloom, .General, color, base_mip_level = i)
-		backend.pipeline_push_compute(encoder, down, &pc)
+		backend.pipeline_push_compute(encoder, &pc)
 		dispatch_post(encoder, mip_extent(bloom_desc, i))
 	}
 
@@ -143,7 +143,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			src_texel_size = {1 / f32(src_size.x), 1 / f32(src_size.y)},
 			radius         = BLOOM_UPSAMPLE_RADIUS,
 		}
-		backend.pipeline_push_compute(encoder, up, &pc)
+		backend.pipeline_push_compute(encoder, &pc)
 		dispatch_post(encoder, mip_extent(bloom_desc, dst))
 	}
 
@@ -169,7 +169,7 @@ dispatch_tonemap :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
 	backend.pipeline_bind_compute(encoder, pipeline)
-	backend.pipeline_push_compute(encoder, pipeline, &pc)
+	backend.pipeline_push_compute(encoder, &pc)
 	dispatch_post(encoder, {engine.swapchain.extent.width, engine.swapchain.extent.height})
 	backend.end_compute_pass(encoder)
 }

@@ -77,7 +77,7 @@ ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 			atlas_texture = atlas_texture,
 		}
 		backend.pipeline_bind(cmd, pipeline)
-		backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc, index = 1)
+		backend.pipeline_push(cmd, &pc)
 		backend.cmd_draw(cmd, u32(len(batch.vertices)))
 		stats_count_draw(engine)
 

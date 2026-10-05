@@ -35,21 +35,22 @@ LineRenderer :: struct {
 line_renderer_create :: proc(engine: ^Engine) -> (ok: bool) {
 	lr := &engine.line_renderer
 
-	config := backend.pipeline_default_config()
-	backend.pipeline_config_set_no_cull(&config)
-	backend.pipeline_config_set_layout(&config, main_pass_layout(&engine.vk_ctx, &engine.render_targets))
-	backend.pipeline_config_set_push_constant(&config, size_of(LinePushConstants), {.Vertex, .Fragment})
+	desc := backend.GraphicsPipelineDesc {
+		attachments = main_pass_layout(&engine.vk_ctx, &engine.render_targets),
+		cull = .None,
+		depth = {test = true, write = true, compare = .Less},
+	}
 
 	shader_handle := shader_load(engine, "line", GRAPHICS_ENTRIES) or_return
-	pipeline_register(engine, .Debug_Line, shader_handle, config)
+	pipeline_register(engine, .Debug_Line, shader_handle, desc)
 
 	// overlay variant: same shader, no depth test (drawn last, on top of everything)
-	overlay_config := config
-	backend.pipeline_config_disable_depth(&overlay_config)
-	backend.pipeline_config_set_blend(&overlay_config, .Alpha)
-	pipeline_register(engine, .Debug_Line_Overlay, shader_handle, overlay_config)
+	overlay := desc
+	overlay.depth = {}
+	overlay.blend = .Alpha
+	pipeline_register(engine, .Debug_Line_Overlay, shader_handle, overlay)
 	sector_shader := shader_load(engine, "sector", GRAPHICS_ENTRIES) or_return
-	pipeline_register(engine, .Debug_Sector, sector_shader, overlay_config)
+	pipeline_register(engine, .Debug_Sector, sector_shader, overlay)
 
 	batch_create(engine, &lr.tested)
 	batch_create(engine, &lr.sector)
@@ -148,7 +149,7 @@ flush_batch :: proc(
 		thickness     = LINE_THICKNESS_PX,
 	}
 	backend.pipeline_bind(cmd, pipeline)
-	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc)
+	backend.pipeline_push(cmd, &pc)
 	// Line segments expand to six vertices; sector triangles use their three stored vertices.
 	backend.cmd_draw(cmd, u32(len(batch.vertices)) * vertex_multiplier)
 	stats_count_draw(engine)

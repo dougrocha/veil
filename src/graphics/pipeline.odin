@@ -21,9 +21,17 @@ PipelineKind :: enum u8 {
 	Debug_Sector,
 }
 
+// Compute pipelines have nothing to configure; the marker only tells rebuild which create to call.
+ComputePipelineDesc :: struct {}
+
+PipelineDesc :: union {
+	backend.GraphicsPipelineDesc,
+	ComputePipelineDesc,
+}
+
 PipelineRegistry :: struct {
 	pipelines: [PipelineKind]backend.Pipeline,
-	configs:   [PipelineKind]backend.PipelineConfig, // nil (no case matched) for unregistered kinds
+	descs:     [PipelineKind]PipelineDesc, // nil for unregistered kinds
 	shaders:   [PipelineKind]backend.Shader,
 }
 
@@ -41,25 +49,20 @@ pipeline_register :: proc(
 	self: ^Engine,
 	kind: PipelineKind,
 	shader: backend.Shader,
-	config: backend.GraphicsPipelineConfig,
+	desc: backend.GraphicsPipelineDesc,
 ) {
-	config := config
 	stages := default_graphics_stages(shader)
-	self.pipeline_registry.pipelines[kind] = backend.pipeline_create(&self.vk_ctx, &config, stages[:])
-	self.pipeline_registry.configs[kind] = config
+	self.pipeline_registry.pipelines[kind] = backend.pipeline_create(&self.vk_ctx, desc, stages[:])
+	self.pipeline_registry.descs[kind] = desc
 	self.pipeline_registry.shaders[kind] = shader
 }
 
-pipeline_register_compute :: proc(
-	self: ^Engine,
-	kind: PipelineKind,
-	shader: backend.Shader,
-	config: backend.ComputePipelineConfig,
-) {
-	config := config
-	stage := default_compute_stage(shader)
-	self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(&self.vk_ctx, &config, stage)
-	self.pipeline_registry.configs[kind] = config
+pipeline_register_compute :: proc(self: ^Engine, kind: PipelineKind, shader: backend.Shader) {
+	self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(
+		&self.vk_ctx,
+		default_compute_stage(shader),
+	)
+	self.pipeline_registry.descs[kind] = ComputePipelineDesc{}
 	self.pipeline_registry.shaders[kind] = shader
 }
 
@@ -68,9 +71,9 @@ get_pipeline :: #force_inline proc(reg: ^PipelineRegistry, kind: PipelineKind) -
 }
 
 pipeline_rebuild :: proc(self: ^Engine, kind: PipelineKind) {
-	config := self.pipeline_registry.configs[kind]
-	if config == nil {
-		log.errorf("pipeline_rebuild '%v': no config registered", kind)
+	desc := self.pipeline_registry.descs[kind]
+	if desc == nil {
+		log.errorf("pipeline_rebuild '%v': no desc registered", kind)
 		return
 	}
 
@@ -80,17 +83,15 @@ pipeline_rebuild :: proc(self: ^Engine, kind: PipelineKind) {
 	backend.device_wait_idle(&self.vk_ctx)
 	backend.pipeline_destroy(&self.vk_ctx, old_pipeline)
 
-	switch &cfg in config {
-	case backend.GraphicsPipelineConfig:
+	switch d in desc {
+	case backend.GraphicsPipelineDesc:
 		stages := default_graphics_stages(shader)
-		self.pipeline_registry.pipelines[kind] = backend.pipeline_create(&self.vk_ctx, &cfg, stages[:])
-	case backend.ComputePipelineConfig:
+		self.pipeline_registry.pipelines[kind] = backend.pipeline_create(&self.vk_ctx, d, stages[:])
+	case ComputePipelineDesc:
 		self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(
 			&self.vk_ctx,
-			&cfg,
 			default_compute_stage(shader),
 		)
-	case nil:
 	}
 	log.infof("Rebuilt pipeline: %v", kind)
 }
@@ -101,93 +102,75 @@ destroy_pipeline_registry :: proc(ctx: ^backend.Context, reg: ^PipelineRegistry)
 	}
 }
 
-make_shadow_config :: proc(engine: ^Engine) -> backend.GraphicsPipelineConfig {
-	config := backend.pipeline_default_config()
-	backend.pipeline_config_set_no_cull(&config)
-	backend.pipeline_config_enable_depth_bias(&config)
-	backend.pipeline_config_set_depth_compare(&config, .LessOrEqual)
-	backend.pipeline_config_set_layout(&config, shadow_pass_layout())
-	backend.pipeline_config_set_push_constant(&config, size_of(ShadowPushConstants), {.Vertex, .Fragment})
-	return config
+shadow_desc :: proc() -> backend.GraphicsPipelineDesc {
+	return {
+		attachments = shadow_pass_layout(),
+		cull = .None,
+		depth = {test = true, write = true, bias = true, compare = .LessOrEqual},
+	}
 }
 
 register_shadow_pipelines :: proc(engine: ^Engine, shadow_handle: backend.Shader) {
-	pipeline_register(engine, .Shadow, shadow_handle, make_shadow_config(engine))
+	pipeline_register(engine, .Shadow, shadow_handle, shadow_desc())
 
 	// Cascades only cover a slice of the scene along the light direction, so casters between the
 	// light and a cascade's near plane would be clipped; depth clamp flattens them onto it instead.
-	directional_config := make_shadow_config(engine)
-	backend.pipeline_config_enable_depth_clamp(&directional_config)
-	pipeline_register(engine, .Shadow_Directional, shadow_handle, directional_config)
+	directional := shadow_desc()
+	directional.depth.clamp = true
+	pipeline_register(engine, .Shadow_Directional, shadow_handle, directional)
 }
 
 register_ui_pipeline :: proc(engine: ^Engine, ui_handle: backend.Shader) {
-	config := backend.pipeline_default_config()
-	backend.pipeline_config_set_no_cull(&config)
-	backend.pipeline_config_disable_depth(&config)
-	backend.pipeline_config_set_layout(&config, overlay_pass_layout(&engine.vk_ctx, &engine.render_targets))
-	backend.pipeline_config_set_blend(&config, .Alpha)
-	backend.pipeline_config_set_push_constant(&config, size_of(UIPushConstants), {.Vertex, .Fragment})
-	pipeline_register(engine, .UI, ui_handle, config)
+	desc := backend.GraphicsPipelineDesc {
+		attachments = overlay_pass_layout(&engine.vk_ctx, &engine.render_targets),
+		cull        = .None,
+		blend       = .Alpha,
+	}
+	pipeline_register(engine, .UI, ui_handle, desc)
 }
 
 register_mesh_pipeline :: proc(engine: ^Engine, mesh_handle: backend.Shader) {
-	config := backend.pipeline_default_config()
-	backend.pipeline_config_set_layout(&config, main_pass_layout(&engine.vk_ctx, &engine.render_targets))
-	backend.pipeline_config_set_depth_dynamic(&config)
-	backend.pipeline_config_set_blend(&config, .Alpha)
-	backend.pipeline_config_set_push_constant(&config, size_of(PushConstants), {.Vertex, .Fragment})
-	pipeline_register(engine, .Mesh, mesh_handle, config)
+	desc := backend.GraphicsPipelineDesc {
+		attachments = main_pass_layout(&engine.vk_ctx, &engine.render_targets),
+		blend = .Alpha,
+		depth = {test = true, write = true, compare = .Less},
+	}
+	pipeline_register(engine, .Mesh, mesh_handle, desc)
 }
 
 register_particle_pipelines :: proc(engine: ^Engine, particle_handle: backend.Shader) {
-	draw_config := backend.pipeline_default_config()
-	backend.pipeline_config_set_topology_points(&draw_config)
-	backend.pipeline_config_set_no_cull(&draw_config)
-	backend.pipeline_config_set_layout(&draw_config, main_pass_layout(&engine.vk_ctx, &engine.render_targets))
-	backend.pipeline_config_disable_depth(&draw_config)
-	backend.pipeline_config_set_blend(&draw_config, .Alpha)
-	backend.pipeline_config_set_push_constant(&draw_config, size_of(ParticlePushConstants), {.Vertex, .Fragment})
-	pipeline_register(engine, .Particle_Draw, particle_handle, draw_config)
-
-	compute_config: backend.ComputePipelineConfig
-	backend.pipeline_config_set_push_constant_compute(&compute_config, size_of(ParticlePushConstants), {.Compute})
-	pipeline_register_compute(engine, .Particle_Compute, particle_handle, compute_config)
-}
-
-// Compute post passes: set 0 = bindless textures, set 1 = bindless storage images.
-make_post_compute_config :: proc(engine: ^Engine, push_constant_size: int) -> backend.ComputePipelineConfig {
-	config: backend.ComputePipelineConfig
-	backend.pipeline_config_set_push_constant_compute(&config, push_constant_size, {.Compute})
-	return config
+	draw := backend.GraphicsPipelineDesc {
+		attachments = main_pass_layout(&engine.vk_ctx, &engine.render_targets),
+		topology    = .Points,
+		cull        = .None,
+		blend       = .Alpha,
+	}
+	pipeline_register(engine, .Particle_Draw, particle_handle, draw)
+	pipeline_register_compute(engine, .Particle_Compute, particle_handle)
 }
 
 register_tonemap_pipeline :: proc(engine: ^Engine, tonemap_handle: backend.Shader) {
-	config := make_post_compute_config(engine, size_of(TonemapPushConstants))
-	pipeline_register_compute(engine, .Tonemap_Compute, tonemap_handle, config)
+	pipeline_register_compute(engine, .Tonemap_Compute, tonemap_handle)
 }
 
 register_bloom_pipelines :: proc(engine: ^Engine, down_handle, up_handle: backend.Shader) {
-	config := make_post_compute_config(engine, size_of(BloomPushConstants))
-	pipeline_register_compute(engine, .Bloom_Down_Compute, down_handle, config)
-	pipeline_register_compute(engine, .Bloom_Up_Compute, up_handle, config)
+	pipeline_register_compute(engine, .Bloom_Down_Compute, down_handle)
+	pipeline_register_compute(engine, .Bloom_Up_Compute, up_handle)
 }
 
 register_skybox_pipeline :: proc(engine: ^Engine, skybox_handle: backend.Shader) {
-	config := backend.pipeline_default_config()
-	backend.pipeline_config_set_no_cull(&config)
-	backend.pipeline_config_set_depth_write_default(&config, false)
-	backend.pipeline_config_set_depth_compare(&config, .LessOrEqual)
-	backend.pipeline_config_set_layout(&config, main_pass_layout(&engine.vk_ctx, &engine.render_targets))
-	backend.pipeline_config_set_push_constant(&config, size_of(SkyboxPushConstants), {.Vertex, .Fragment})
-	pipeline_register(engine, .Skybox, skybox_handle, config)
+	desc := backend.GraphicsPipelineDesc {
+		attachments = main_pass_layout(&engine.vk_ctx, &engine.render_targets),
+		cull = .None,
+		depth = {test = true, compare = .LessOrEqual},
+	}
+	pipeline_register(engine, .Skybox, skybox_handle, desc)
 }
 
 register_debug_view_pipeline :: proc(engine: ^Engine, debug_view_handle: backend.Shader) {
-	config := backend.pipeline_default_config()
-	backend.pipeline_config_set_no_cull(&config)
-	backend.pipeline_config_disable_depth(&config)
-	backend.pipeline_config_set_layout(&config, overlay_pass_layout(&engine.vk_ctx, &engine.render_targets))
-	backend.pipeline_config_set_push_constant(&config, size_of(DebugViewPushConstants), {.Fragment})
-	pipeline_register(engine, .Debug_View, debug_view_handle, config)
+	desc := backend.GraphicsPipelineDesc {
+		attachments = overlay_pass_layout(&engine.vk_ctx, &engine.render_targets),
+		cull        = .None,
+	}
+	pipeline_register(engine, .Debug_View, debug_view_handle, desc)
 }
