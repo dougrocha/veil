@@ -41,8 +41,6 @@ PassUse :: struct {
 	state:    backend.ImageStateKind,
 }
 
-MAX_PASS_USES :: 5
-
 PassSpec :: struct {
 	name:    string, // timing scope
 	enabled: proc(engine: ^Engine) -> bool, // nil = always
@@ -90,15 +88,6 @@ PASSES := [PassKind]PassSpec {
 	},
 }
 
-// One whole-image barrier the executor will issue.
-PlannedTransition :: struct {
-	image:  backend.Image,
-	state:  backend.ImageStateKind,
-	aspect: backend.ImageAspectFlags,
-	levels: u32,
-	layers: u32,
-}
-
 frame_resource_image :: proc(engine: ^Engine, resource: FrameResource) -> backend.Image {
 	targets := &engine.render_targets
 	switch resource {
@@ -120,31 +109,25 @@ frame_resource_image :: proc(engine: ^Engine, resource: FrameResource) -> backen
 	unreachable()
 }
 
-// The transitions that bring a pass's resources into its entry states. The barrier takes each
-// subresource from its tracked state, and skips the ones already in a read-only target state.
-pass_plan :: proc(engine: ^Engine, spec: PassSpec, out: ^[MAX_PASS_USES]PlannedTransition) -> []PlannedTransition {
-	assert(len(spec.uses) <= MAX_PASS_USES)
-	for use, i in spec.uses {
-		image := frame_resource_image(engine, use.resource)
-		desc := backend.image_desc(&engine.vk_ctx, image)
-		out[i] = {
-			image  = image,
-			state  = use.state,
-			aspect = FRAME_RESOURCE_ASPECT[use.resource],
-			levels = desc.mip_levels,
-			layers = desc.array_layers,
-		}
-	}
-	return out[:len(spec.uses)]
-}
-
+// Brings each enabled pass's frame resources into its entry states, then records it inside a
+// timing scope. The barrier takes each subresource from its tracked state, and skips the ones
+// already in a read-only target state.
 run_passes :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	for spec in PASSES {
 		if spec.enabled != nil && !spec.enabled(engine) do continue
 
-		plan_storage: [MAX_PASS_USES]PlannedTransition
-		for t in pass_plan(engine, spec, &plan_storage) {
-			backend.image_barrier(cmd, t.image, t.state, t.aspect, level_count = t.levels, layer_count = t.layers)
+		for use in spec.uses {
+			image := frame_resource_image(engine, use.resource)
+			desc := backend.image_desc(&engine.vk_ctx, image)
+			aspect := FRAME_RESOURCE_ASPECT[use.resource]
+			backend.image_barrier(
+				cmd,
+				image,
+				use.state,
+				aspect,
+				level_count = desc.mip_levels,
+				layer_count = desc.array_layers,
+			)
 		}
 
 		scope := gpu_scope_begin(engine, cmd, spec.name)
