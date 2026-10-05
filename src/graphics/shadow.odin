@@ -19,6 +19,17 @@ ShadowCascadeData :: struct {
 	bias:  Vec4,
 }
 
+CUBE_FACE_DIRS := [6]struct {
+	target, up: Vec3,
+} {
+	{{1, 0, 0}, {0, -1, 0}},
+	{{-1, 0, 0}, {0, -1, 0}},
+	{{0, 1, 0}, {0, 0, 1}},
+	{{0, -1, 0}, {0, 0, -1}},
+	{{0, 0, 1}, {0, -1, 0}},
+	{{0, 0, -1}, {0, -1, 0}},
+}
+
 compute_point_light_view_proj :: proc(light: PointLight) -> [6]Mat4x4 {
 	light_proj := matrix4_perspective_z0_f32(
 		linalg.to_radians(f32(90.0)),

@@ -9,6 +9,10 @@ import "backend"
 
 import stbi "vendor:stb/image"
 
+TextureFilter :: backend.TextureFilter
+TextureRepeat :: backend.TextureRepeat
+TextureFormat :: backend.TextureFormat
+
 DEFAULT_TEXTURE_NAME :: "default"
 DEFAULT_METALLIC_ROUGHNESS_TEXTURE_NAME :: "default_roughness"
 DEFAULT_NORMAL_TEXTURE_NAME :: "default_normal"

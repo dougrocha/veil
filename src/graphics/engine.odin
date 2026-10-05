@@ -258,17 +258,6 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	stats_count_draw(engine)
 }
 
-CUBE_FACE_DIRS := [6]struct {
-	target, up: Vec3,
-} {
-	{{1, 0, 0}, {0, -1, 0}},
-	{{-1, 0, 0}, {0, -1, 0}},
-	{{0, 1, 0}, {0, 0, 1}},
-	{{0, -1, 0}, {0, 0, -1}},
-	{{0, 0, 1}, {0, -1, 0}},
-	{{0, 0, -1}, {0, -1, 0}},
-}
-
 update_transforms_buffer :: proc(engine: ^Engine) {
 	transforms := (^GpuTransform)(backend.buffer_mapped_ptr(current_frame_data(engine).transforms_buffer))
 	for &instance, i in engine.scene.instances.values {

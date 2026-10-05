@@ -34,6 +34,7 @@ frame_data_destroy :: proc(engine: ^Engine) {
 	}
 }
 
+// TODO: This code is half engine/game code, needs ot be looked at
 create_particle_buffer :: proc(ctx: ^backend.Context, extent: Rect2D) -> backend.GpuBuffer(Particle) {
 	particles := make([]Particle, PARTICLE_COUNT, context.temp_allocator)
 
