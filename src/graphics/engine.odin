@@ -130,6 +130,7 @@ engine_destroy :: proc(self: ^Engine) {
 engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	context.temp_allocator = virtual.arena_allocator(&engine.frame_arena)
 	defer free_all(context.temp_allocator)
+	defer stats_memory_sample(engine) // deferred later, so it runs before free_all
 	// Batches are filled every tick; drain them even when this frame isn't drawn, or they overflow.
 	defer {
 		line_renderer_clear(engine)

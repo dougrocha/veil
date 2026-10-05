@@ -366,6 +366,22 @@ vma_init :: proc(ctx: ^Context) {
 	vk_check(vma.create_allocator(create_info, &ctx.vma_allocator))
 }
 
+// GPU memory in use and the budget, summed over device-local heaps. Cheap enough per frame.
+// VK_EXT_memory_budget isn't enabled, so these are VMA's estimates: usage is what VMA allocated
+// (not other processes), budget is ~80% of the heap size.
+memory_budget :: proc(ctx: ^Context) -> (usage, budget: u64) {
+	props: vk.PhysicalDeviceMemoryProperties
+	vk.GetPhysicalDeviceMemoryProperties(ctx.physical_device, &props)
+	budgets: [vk.MAX_MEMORY_HEAPS]vma.Budget
+	vma.get_heap_budgets(ctx.vma_allocator, &budgets[0])
+	for heap, i in props.memoryHeaps[:props.memoryHeapCount] {
+		if .DEVICE_LOCAL not_in heap.flags do continue
+		usage += u64(budgets[i].usage)
+		budget += u64(budgets[i].budget)
+	}
+	return
+}
+
 vk_messenger_callback :: proc "system" (
 	messageSeverity: vk.DebugUtilsMessageSeverityFlagsEXT,
 	messageTypes: vk.DebugUtilsMessageTypeFlagsEXT,

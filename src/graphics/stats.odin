@@ -1,8 +1,11 @@
 package graphics
 
 import "core:fmt"
+import "core:mem"
 import "core:strings"
 import "core:time"
+
+import "backend"
 
 // Timings are averaged over this window so the overlay is readable.
 STATS_WINDOW_SECONDS :: 0.5
@@ -51,6 +54,44 @@ Stats :: struct {
 	fps:          f64,
 	gpu:          [MAX_GPU_SCOPES]GpuScopeStat, // in first-seen order
 	gpu_count:    int,
+	memory:       MemoryStats,
+	heap:         ^mem.Tracking_Allocator, // set by stats_track_heap; nil = no heap stats
+	heap_prev:    struct {
+		count: i64,
+		bytes: i64,
+	},
+}
+
+// Sampled once per frame (last frame's values), not averaged.
+MemoryStats :: struct {
+	heap_allocs: i64, // heap allocations since the previous frame (whole loop, game + engine)
+	heap_bytes:  i64,
+	heap_live:   i64, // bytes currently allocated on the tracked heap
+	arena_used:  uint, // engine frame arena (temp allocator) at the end of the frame
+	arena_peak:  uint,
+	vram_used:   u64, // device-local heaps, VMA estimate
+	vram_budget: u64,
+}
+
+// Reads heap stats from the app's tracking allocator. The engine only reads it.
+stats_track_heap :: proc(engine: ^Engine, tracker: ^mem.Tracking_Allocator) {
+	engine.stats.heap = tracker
+	engine.stats.heap_prev = {tracker.total_allocation_count, tracker.total_memory_allocated}
+}
+
+// Call at the end of engine_render, before the frame arena is freed.
+stats_memory_sample :: proc(engine: ^Engine) {
+	m := &engine.stats.memory
+	if t := engine.stats.heap; t != nil {
+		prev := &engine.stats.heap_prev
+		m.heap_allocs = t.total_allocation_count - prev.count
+		m.heap_bytes = t.total_memory_allocated - prev.bytes
+		m.heap_live = t.current_memory_allocated
+		prev^ = {t.total_allocation_count, t.total_memory_allocated}
+	}
+	m.arena_used = engine.frame_arena.total_used
+	m.arena_peak = max(m.arena_peak, m.arena_used)
+	m.vram_used, m.vram_budget = backend.memory_budget(&engine.vk_ctx)
 }
 
 stats_record_begin :: proc(engine: ^Engine) {
@@ -151,11 +192,43 @@ stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32) {
 		gpu_line = strings.to_string(b)
 	}
 
-	all_lines := [?]string{lines[0], lines[1], gpu_line, lines[2], post_control_line(engine)}
+	m := &s.memory
+	heap_line := "heap untracked"
+	if s.heap != nil {
+		heap_line = fmt.tprintf(
+			"heap %d allocs %s/frame (%s live)",
+			m.heap_allocs,
+			fmt_bytes(m.heap_bytes),
+			fmt_bytes(m.heap_live),
+		)
+	}
+	mem_line := fmt.tprintf(
+		"mem  %s  arena %s (peak %s)  vram %s / %s est.",
+		heap_line,
+		fmt_bytes(i64(m.arena_used)),
+		fmt_bytes(i64(m.arena_peak)),
+		fmt_bytes(i64(m.vram_used)),
+		fmt_bytes(i64(m.vram_budget)),
+	)
+
+	all_lines := [?]string{lines[0], lines[1], gpu_line, lines[2], mem_line, post_control_line(engine)}
 	for line, i in all_lines {
 		ly := y + f32(i) * line_height
 		// drop shadow keeps it readable over bright and dark scenes
 		ui_draw_text(engine, font, line, x + 1, ly + 1, {0, 0, 0, 255})
 		ui_draw_text(engine, font, line, x, ly, {255, 255, 255, 255})
 	}
+}
+
+@(private = "file")
+fmt_bytes :: proc(n: i64) -> string {
+	switch {
+	case n >= 1 << 30:
+		return fmt.tprintf("%.2f GB", f64(n) / (1 << 30))
+	case n >= 1 << 20:
+		return fmt.tprintf("%.1f MB", f64(n) / (1 << 20))
+	case n >= 1 << 10:
+		return fmt.tprintf("%.1f KB", f64(n) / (1 << 10))
+	}
+	return fmt.tprintf("%d B", n)
 }

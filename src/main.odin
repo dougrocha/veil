@@ -1,8 +1,10 @@
 package main
 
 import "core:c"
+import "core:fmt"
 import "core:log"
 import "core:math/linalg"
+import "core:mem"
 import "core:time"
 
 import sdl "vendor:sdl3"
@@ -19,6 +21,21 @@ App :: struct {
 }
 
 main :: proc() {
+	// Tracks every heap allocation for the stats overlay and reports leaks at exit. Set up
+	// before anything allocates, so every free goes back through it.
+	// Debug builds only (`just debug`): every allocation pays for a map insert.
+	when ODIN_DEBUG {
+		heap_tracker: mem.Tracking_Allocator
+		mem.tracking_allocator_init(&heap_tracker, context.allocator)
+		context.allocator = mem.tracking_allocator(&heap_tracker)
+		defer {
+			for _, leak in heap_tracker.allocation_map {
+				fmt.eprintfln("leak: %d bytes at %v", leak.size, leak.location)
+			}
+			mem.tracking_allocator_destroy(&heap_tracker)
+		}
+	}
+
 	context.logger = log.create_console_logger()
 	defer log.destroy_console_logger(context.logger)
 
@@ -50,6 +67,7 @@ main :: proc() {
 		log.errorf("Failed to initialize the engine")
 		return
 	}
+	when ODIN_DEBUG do gfx.stats_track_heap(&app.engine, &heap_tracker)
 	defer gfx.engine_destroy(&app.engine)
 
 	ui_font, font_ok := gfx.font_load_default_system(&app.engine, 20)
