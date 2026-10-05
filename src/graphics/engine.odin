@@ -39,20 +39,6 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_textures_per_stage - BINDLESS_CUBE_COUNT - 2)
 
 	shader_system_create(engine, max_bindless_textures) or_return
-	shadow_handle := shader_load(engine, "shadow", GRAPHICS_ENTRIES) or_return
-	ui_handle := shader_load(engine, "ui", GRAPHICS_ENTRIES) or_return
-	mesh_handle := shader_load(engine, "mesh", GRAPHICS_ENTRIES) or_return
-	particle_handle := shader_load(
-		engine,
-		"particle",
-		{{VERTEX_ENTRY, .Vertex}, {FRAGMENT_MAIN, .Fragment}, {COMPUTE_MAIN, .Compute}},
-	) or_return
-	skybox_handle := shader_load(engine, "skybox", GRAPHICS_ENTRIES) or_return
-	debug_view_handle := shader_load(engine, "debug_view", GRAPHICS_ENTRIES) or_return
-	tonemap_handle := shader_load(engine, "tonemap", COMPUTE_ENTRIES) or_return
-	bloom_down_handle := shader_load(engine, "bloom_down", COMPUTE_ENTRIES) or_return
-	bloom_up_handle := shader_load(engine, "bloom_up", COMPUTE_ENTRIES) or_return
-
 	texture_system_create(engine, {max_textures_count = max_bindless_textures})
 	material_system_create(engine, {max_material_count = MAX_MATERIALS})
 	model_system_create(engine)
@@ -63,14 +49,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	gpu_profiler_create(engine)
 	shadow_cache_create(engine)
 
-	register_shadow_pipelines(engine, shadow_handle)
-	register_ui_pipeline(engine, ui_handle)
-	register_mesh_pipeline(engine, mesh_handle)
-	register_particle_pipelines(engine, particle_handle)
-	register_skybox_pipeline(engine, skybox_handle)
-	register_debug_view_pipeline(engine, debug_view_handle)
-	register_tonemap_pipeline(engine, tonemap_handle)
-	register_bloom_pipelines(engine, bloom_down_handle, bloom_up_handle)
+	pipelines_create(engine) or_return
 
 	line_renderer_create(engine) or_return
 	ui_renderer_create(engine)
@@ -101,7 +80,7 @@ engine_destroy :: proc(self: ^Engine) {
 
 	ui_renderer_destroy(self)
 	line_renderer_destroy(self)
-	pipeline_registry_destroy(&self.vk_ctx, &self.pipeline_registry)
+	pipelines_destroy(self)
 
 	shadow_cache_destroy(self)
 	gpu_profiler_destroy(self)
@@ -154,6 +133,7 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	update_transforms_buffer(engine)
 	shadow_cache_update(engine)
 	shader_poll_hotreload(engine)
+	pipelines_collect_retired(engine)
 
 	instance_ids_reset(engine)
 	record_frame(engine, cmd)
@@ -191,7 +171,7 @@ current_frame_data :: #force_inline proc(engine: ^Engine) -> ^FrameData {
 }
 
 dispatch_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	pipeline := get_pipeline(&engine.pipeline_registry, .Particle_Compute)
+	pipeline := compute_pipeline(engine, .Particle)
 
 	frame_res_index := backend.frame_slot(&engine.vk_ctx)
 	last_frame := (frame_res_index + backend.MAX_FRAMES_IN_FLIGHT - 1) % backend.MAX_FRAMES_IN_FLIGHT
@@ -213,7 +193,7 @@ dispatch_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 }
 
 draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	pipeline := get_pipeline(&engine.pipeline_registry, .Particle_Draw)
+	pipeline := graphics_pipeline(engine, .Particle)
 
 	frame_res_index := backend.frame_slot(&engine.vk_ctx)
 	particle_pc := ParticlePushConstants {
@@ -250,7 +230,7 @@ draw_shadow :: proc(
 	view_proj: Mat4x4,
 ) {
 	directional := light_type == .Directional
-	shadow_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow_Directional if directional else .Shadow)
+	shadow_pipeline := graphics_pipeline(engine, .Shadow_Directional if directional else .Shadow)
 
 	backend.pipeline_bind(cmd, shadow_pipeline)
 	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
@@ -282,7 +262,7 @@ draw_shadow :: proc(
 }
 
 draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	mesh_pipeline := get_pipeline(&engine.pipeline_registry, .Mesh)
+	mesh_pipeline := graphics_pipeline(engine, .Mesh)
 
 	backend.pipeline_bind(cmd, mesh_pipeline)
 
@@ -414,7 +394,7 @@ shadow_pass :: proc(
 }
 
 draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	pipeline := get_pipeline(&engine.pipeline_registry, .Skybox)
+	pipeline := graphics_pipeline(engine, .Skybox)
 	backend.pipeline_bind(cmd, pipeline)
 	pc := SkyboxPushConstants {
 		scene_data = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
@@ -425,7 +405,7 @@ draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 }
 
 draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	pipeline := get_pipeline(&engine.pipeline_registry, .UI)
+	pipeline := graphics_pipeline(engine, .UI)
 	backend.pipeline_bind(cmd, pipeline)
 	ui_renderer_flush(engine, cmd)
 }

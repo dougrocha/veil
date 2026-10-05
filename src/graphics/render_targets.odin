@@ -121,20 +121,6 @@ render_targets_images_destroy :: proc(ctx: ^backend.Context, targets: ^RenderTar
 	backend.image_destroy(ctx, targets.bloom)
 }
 
-// Main scene pass: MSAA color (resolved into hdr) + depth. Meshes, skybox, particles, lines.
-main_pass_layout :: proc(ctx: ^backend.Context, targets: ^RenderTargets) -> backend.AttachmentLayout {
-	color := backend.image_desc(ctx, targets.color)
-	depth := backend.image_desc(ctx, targets.depth)
-	assert(color.samples == depth.samples)
-	return {color = {0 = color.format}, color_count = 1, depth = depth.format, samples = color.samples}
-}
-
-// Overlay passes drawn straight into draw after the tonemap: UI, debug view. No depth.
-overlay_pass_layout :: proc(ctx: ^backend.Context, targets: ^RenderTargets) -> backend.AttachmentLayout {
-	draw := backend.image_desc(ctx, targets.draw)
-	return {color = {0 = draw.format}, color_count = 1, depth = .Undefined, samples = draw.samples}
-}
-
 @(private = "file")
 bloom_target_create :: proc(ctx: ^backend.Context, extent: backend.Extent2D) -> backend.Image {
 	half := backend.Extent3D{max(extent.width / 2, 1), max(extent.height / 2, 1), 1}

@@ -267,11 +267,6 @@ shader_poll_hotreload :: proc(self: ^Engine) {
 			log.errorf("Shader reload '%s' failed, keeping old pipelines", module_name)
 			continue
 		}
-		for kind in PipelineKind {
-			if self.pipeline_registry.shaders[kind] == loaded.shader {
-				pipeline_rebuild(self, kind)
-				if kind == .Shadow do shadow_cache_invalidate(self)
-			}
-		}
+		if pipelines_rebuild_for_shader(self, loaded.shader) do shadow_cache_invalidate(self)
 	}
 }

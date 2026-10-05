@@ -57,7 +57,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
 	defer backend.end_compute_pass(encoder)
 
-	down := get_pipeline(&engine.pipeline_registry, .Bloom_Down_Compute)
+	down := compute_pipeline(engine, .Bloom_Down)
 	backend.pipeline_bind_compute(encoder, down)
 	for i in 0 ..< levels {
 		src_size: [2]u32
@@ -79,7 +79,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		dispatch_post(encoder, mip_extent(bloom_desc, i))
 	}
 
-	up := get_pipeline(&engine.pipeline_registry, .Bloom_Up_Compute)
+	up := compute_pipeline(engine, .Bloom_Up)
 	backend.pipeline_bind_compute(encoder, up)
 	for i := int(levels) - 2; i >= 0; i -= 1 {
 		dst := u32(i)
@@ -109,7 +109,7 @@ dispatch_tonemap :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	backend.image_barrier(cmd, targets.hdr, .Shader_Read, backend.ImageAspectFlags{.Color})
 	backend.image_barrier(cmd, targets.draw, .General, backend.ImageAspectFlags{.Color})
 
-	pipeline := get_pipeline(&engine.pipeline_registry, .Tonemap_Compute)
+	pipeline := compute_pipeline(engine, .Tonemap)
 	pc := TonemapPushConstants {
 		hdr_texture    = u32(targets.hdr_texture.index),
 		out_storage    = STORAGE_SLOT_DRAW,

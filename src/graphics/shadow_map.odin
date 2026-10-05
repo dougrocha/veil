@@ -49,9 +49,3 @@ shadow_atlas_transition :: proc(
 ) {
 	backend.image_barrier(cmd, atlas.image, state, backend.ImageAspectFlags{.Depth}, layer_count = layer_count)
 }
-
-// Depth only. The atlases are created after the pipelines are registered, so this reads the
-// shared format constant rather than the images.
-shadow_pass_layout :: proc() -> backend.AttachmentLayout {
-	return {depth = SHADOW_DEPTH_FORMAT, samples = 1}
-}

@@ -35,23 +35,6 @@ LineRenderer :: struct {
 line_renderer_create :: proc(engine: ^Engine) -> (ok: bool) {
 	lr := &engine.line_renderer
 
-	desc := backend.GraphicsPipelineDesc {
-		attachments = main_pass_layout(&engine.vk_ctx, &engine.render_targets),
-		cull = .None,
-		depth = {test = true, write = true, compare = .Less},
-	}
-
-	shader_handle := shader_load(engine, "line", GRAPHICS_ENTRIES) or_return
-	pipeline_register(engine, .Debug_Line, shader_handle, desc)
-
-	// overlay variant: same shader, no depth test (drawn last, on top of everything)
-	overlay := desc
-	overlay.depth = {}
-	overlay.blend = .Alpha
-	pipeline_register(engine, .Debug_Line_Overlay, shader_handle, overlay)
-	sector_shader := shader_load(engine, "sector", GRAPHICS_ENTRIES) or_return
-	pipeline_register(engine, .Debug_Sector, sector_shader, overlay)
-
 	batch_create(engine, &lr.tested)
 	batch_create(engine, &lr.sector)
 	batch_create(engine, &lr.overlay)
@@ -127,7 +110,7 @@ flush_batch :: proc(
 	engine: ^Engine,
 	cmd: backend.RenderEncoder,
 	batch: ^LineBatch,
-	kind: PipelineKind,
+	kind: GraphicsPipelineKind,
 	vertex_multiplier: u32 = 3,
 ) {
 	if len(batch.vertices) == 0 do return
@@ -141,7 +124,7 @@ flush_batch :: proc(
 		len(batch.vertices) * size_of(LineVertex),
 	)
 
-	pipeline := get_pipeline(&engine.pipeline_registry, kind)
+	pipeline := graphics_pipeline(engine, kind)
 	pc := LinePushConstants {
 		scene_data    = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
 		vertex_buffer = backend.buffer_address(&engine.vk_ctx, buffer^),

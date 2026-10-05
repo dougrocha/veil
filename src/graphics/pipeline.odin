@@ -4,173 +4,143 @@ import "core:log"
 
 import "backend"
 
-PipelineKind :: enum u8 {
+GraphicsPipelineKind :: enum u8 {
 	Shadow, // spot + point lights
 	Shadow_Directional, // directional cascades, depth-clamped
 	Mesh,
 	Skybox,
 	UI,
-	Particle_Draw,
-	Particle_Compute,
-	Tonemap_Compute,
-	Bloom_Down_Compute,
-	Bloom_Up_Compute,
+	Particle,
 	Debug_View,
 	Debug_Line,
 	Debug_Line_Overlay,
 	Debug_Sector,
 }
 
-// Compute pipelines have nothing to configure; the marker only tells rebuild which create to call.
-ComputePipelineDesc :: struct {}
+ComputePipelineKind :: enum u8 {
+	Particle,
+	Tonemap,
+	Bloom_Down,
+	Bloom_Up,
+}
 
-PipelineDesc :: union {
-	backend.GraphicsPipelineDesc,
-	ComputePipelineDesc,
+// A pipeline replaced by a hot reload, kept alive until no frame in flight can still use it.
+RetiredPipeline :: struct {
+	pipeline:    backend.Pipeline,
+	frame_index: u64, // ctx.frame_index when it was replaced
 }
 
 PipelineRegistry :: struct {
-	pipelines: [PipelineKind]backend.Pipeline,
-	descs:     [PipelineKind]PipelineDesc, // nil for unregistered kinds
-	shaders:   [PipelineKind]backend.Shader,
+	graphics:         [GraphicsPipelineKind]backend.Pipeline,
+	compute:          [ComputePipelineKind]backend.Pipeline,
+	graphics_shaders: [GraphicsPipelineKind]backend.Shader,
+	compute_shaders:  [ComputePipelineKind]backend.Shader,
+	retired:          [dynamic]RetiredPipeline,
 }
 
-// Every pipeline uses one shader with the default entry point per stage;
-// register/rebuild derive the stage descs from the shader instead of taking them.
-default_graphics_stages :: proc(shader: backend.Shader) -> [2]backend.ShaderStageDesc {
-	return {{shader = shader, entry = VERTEX_ENTRY}, {shader = shader, entry = FRAGMENT_MAIN}}
-}
+// Loads every shader module the tables name (once each, with the entry points its pipelines need)
+// and creates every pipeline. Depends only on the device: layouts come from format constants.
+pipelines_create :: proc(engine: ^Engine) -> (ok: bool) {
+	reg := &engine.pipeline_registry
 
-default_compute_stage :: proc(shader: backend.Shader) -> backend.ShaderStageDesc {
-	return {shader = shader, entry = COMPUTE_MAIN}
-}
-
-pipeline_register :: proc(
-	self: ^Engine,
-	kind: PipelineKind,
-	shader: backend.Shader,
-	desc: backend.GraphicsPipelineDesc,
-) {
-	stages := default_graphics_stages(shader)
-	self.pipeline_registry.pipelines[kind] = backend.pipeline_create(&self.vk_ctx, desc, stages[:])
-	self.pipeline_registry.descs[kind] = desc
-	self.pipeline_registry.shaders[kind] = shader
-}
-
-pipeline_register_compute :: proc(self: ^Engine, kind: PipelineKind, shader: backend.Shader) {
-	self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(
-		&self.vk_ctx,
-		default_compute_stage(shader),
-	)
-	self.pipeline_registry.descs[kind] = ComputePipelineDesc{}
-	self.pipeline_registry.shaders[kind] = shader
-}
-
-get_pipeline :: #force_inline proc(reg: ^PipelineRegistry, kind: PipelineKind) -> backend.Pipeline {
-	return reg.pipelines[kind]
-}
-
-pipeline_rebuild :: proc(self: ^Engine, kind: PipelineKind) {
-	desc := self.pipeline_registry.descs[kind]
-	if desc == nil {
-		log.errorf("pipeline_rebuild '%v': no desc registered", kind)
-		return
+	// Entry points per module: graphics pipelines need vertex + fragment, compute ones need compute.
+	ModuleUse :: struct {
+		graphics, compute: bool,
+	}
+	uses := make(map[string]ModuleUse, context.temp_allocator)
+	for spec in GRAPHICS_PIPELINES {
+		use := uses[spec.shader]
+		use.graphics = true
+		uses[spec.shader] = use
+	}
+	for spec in COMPUTE_PIPELINES {
+		use := uses[spec.shader]
+		use.compute = true
+		uses[spec.shader] = use
 	}
 
-	shader := self.pipeline_registry.shaders[kind]
-	old_pipeline := self.pipeline_registry.pipelines[kind]
-
-	backend.device_wait_idle(&self.vk_ctx)
-	backend.pipeline_destroy(&self.vk_ctx, old_pipeline)
-
-	switch d in desc {
-	case backend.GraphicsPipelineDesc:
-		stages := default_graphics_stages(shader)
-		self.pipeline_registry.pipelines[kind] = backend.pipeline_create(&self.vk_ctx, d, stages[:])
-	case ComputePipelineDesc:
-		self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(
-			&self.vk_ctx,
-			default_compute_stage(shader),
-		)
+	shaders := make(map[string]backend.Shader, context.temp_allocator)
+	for name, use in uses {
+		entries := make([dynamic]backend.ShaderEntryPoint, context.temp_allocator)
+		if use.graphics do append(&entries, ..GRAPHICS_ENTRIES)
+		if use.compute do append(&entries, ..COMPUTE_ENTRIES)
+		shaders[name] = shader_load(engine, name, entries[:]) or_return
 	}
-	log.infof("Rebuilt pipeline: %v", kind)
+
+	for spec, kind in GRAPHICS_PIPELINES {
+		reg.graphics_shaders[kind] = shaders[spec.shader]
+		reg.graphics[kind] = graphics_pipeline_create(engine, kind)
+	}
+	for spec, kind in COMPUTE_PIPELINES {
+		reg.compute_shaders[kind] = shaders[spec.shader]
+		reg.compute[kind] = compute_pipeline_create(engine, kind)
+	}
+	return true
 }
 
-pipeline_registry_destroy :: proc(ctx: ^backend.Context, reg: ^PipelineRegistry) {
-	for pipeline in reg.pipelines {
-		backend.pipeline_destroy(ctx, pipeline)
+@(private = "file")
+graphics_pipeline_create :: proc(engine: ^Engine, kind: GraphicsPipelineKind) -> backend.Pipeline {
+	shader := engine.pipeline_registry.graphics_shaders[kind]
+	stages := [2]backend.ShaderStageDesc {
+		{shader = shader, entry = VERTEX_ENTRY},
+		{shader = shader, entry = FRAGMENT_MAIN},
+	}
+	desc := graphics_pipeline_desc(&engine.vk_ctx, GRAPHICS_PIPELINES[kind])
+	return backend.pipeline_create(&engine.vk_ctx, desc, stages[:])
+}
+
+@(private = "file")
+compute_pipeline_create :: proc(engine: ^Engine, kind: ComputePipelineKind) -> backend.Pipeline {
+	shader := engine.pipeline_registry.compute_shaders[kind]
+	return backend.pipeline_create_compute(&engine.vk_ctx, {shader = shader, entry = COMPUTE_MAIN})
+}
+
+graphics_pipeline :: #force_inline proc(engine: ^Engine, kind: GraphicsPipelineKind) -> backend.Pipeline {
+	return engine.pipeline_registry.graphics[kind]
+}
+
+compute_pipeline :: #force_inline proc(engine: ^Engine, kind: ComputePipelineKind) -> backend.Pipeline {
+	return engine.pipeline_registry.compute[kind]
+}
+
+// Recreates every pipeline that uses shader (after it was reloaded). The old ones are retired, not
+// destroyed: frames in flight may still be using them. Returns whether any shadow pipeline was
+// rebuilt, since cached shadow maps then need re-rendering.
+pipelines_rebuild_for_shader :: proc(engine: ^Engine, shader: backend.Shader) -> (shadow_rebuilt: bool) {
+	reg := &engine.pipeline_registry
+	frame := engine.vk_ctx.frame_index
+	for kind in GraphicsPipelineKind {
+		if reg.graphics_shaders[kind] != shader do continue
+		append(&reg.retired, RetiredPipeline{pipeline = reg.graphics[kind], frame_index = frame})
+		reg.graphics[kind] = graphics_pipeline_create(engine, kind)
+		if kind == .Shadow || kind == .Shadow_Directional do shadow_rebuilt = true
+		log.infof("Rebuilt graphics pipeline: %v", kind)
+	}
+	for kind in ComputePipelineKind {
+		if reg.compute_shaders[kind] != shader do continue
+		append(&reg.retired, RetiredPipeline{pipeline = reg.compute[kind], frame_index = frame})
+		reg.compute[kind] = compute_pipeline_create(engine, kind)
+		log.infof("Rebuilt compute pipeline: %v", kind)
+	}
+	return
+}
+
+// Destroys retired pipelines that every frame in flight has finished with. Call after frame_begin.
+pipelines_collect_retired :: proc(engine: ^Engine) {
+	reg := &engine.pipeline_registry
+	#reverse for retired, i in reg.retired {
+		if engine.vk_ctx.frame_index >= retired.frame_index + backend.MAX_FRAMES_IN_FLIGHT {
+			backend.pipeline_destroy(&engine.vk_ctx, retired.pipeline)
+			unordered_remove(&reg.retired, i)
+		}
 	}
 }
 
-shadow_desc :: proc() -> backend.GraphicsPipelineDesc {
-	return {
-		attachments = shadow_pass_layout(),
-		cull = .None,
-		depth = {test = true, write = true, bias = true, compare = .LessOrEqual},
-	}
-}
-
-register_shadow_pipelines :: proc(engine: ^Engine, shadow_handle: backend.Shader) {
-	pipeline_register(engine, .Shadow, shadow_handle, shadow_desc())
-
-	// Cascades only cover a slice of the scene along the light direction, so casters between the
-	// light and a cascade's near plane would be clipped; depth clamp flattens them onto it instead.
-	directional := shadow_desc()
-	directional.depth.clamp = true
-	pipeline_register(engine, .Shadow_Directional, shadow_handle, directional)
-}
-
-register_ui_pipeline :: proc(engine: ^Engine, ui_handle: backend.Shader) {
-	desc := backend.GraphicsPipelineDesc {
-		attachments = overlay_pass_layout(&engine.vk_ctx, &engine.render_targets),
-		cull        = .None,
-		blend       = .Alpha,
-	}
-	pipeline_register(engine, .UI, ui_handle, desc)
-}
-
-register_mesh_pipeline :: proc(engine: ^Engine, mesh_handle: backend.Shader) {
-	desc := backend.GraphicsPipelineDesc {
-		attachments = main_pass_layout(&engine.vk_ctx, &engine.render_targets),
-		blend = .Alpha,
-		depth = {test = true, write = true, compare = .Less},
-	}
-	pipeline_register(engine, .Mesh, mesh_handle, desc)
-}
-
-register_particle_pipelines :: proc(engine: ^Engine, particle_handle: backend.Shader) {
-	draw := backend.GraphicsPipelineDesc {
-		attachments = main_pass_layout(&engine.vk_ctx, &engine.render_targets),
-		topology    = .Points,
-		cull        = .None,
-		blend       = .Alpha,
-	}
-	pipeline_register(engine, .Particle_Draw, particle_handle, draw)
-	pipeline_register_compute(engine, .Particle_Compute, particle_handle)
-}
-
-register_tonemap_pipeline :: proc(engine: ^Engine, tonemap_handle: backend.Shader) {
-	pipeline_register_compute(engine, .Tonemap_Compute, tonemap_handle)
-}
-
-register_bloom_pipelines :: proc(engine: ^Engine, down_handle, up_handle: backend.Shader) {
-	pipeline_register_compute(engine, .Bloom_Down_Compute, down_handle)
-	pipeline_register_compute(engine, .Bloom_Up_Compute, up_handle)
-}
-
-register_skybox_pipeline :: proc(engine: ^Engine, skybox_handle: backend.Shader) {
-	desc := backend.GraphicsPipelineDesc {
-		attachments = main_pass_layout(&engine.vk_ctx, &engine.render_targets),
-		cull = .None,
-		depth = {test = true, compare = .LessOrEqual},
-	}
-	pipeline_register(engine, .Skybox, skybox_handle, desc)
-}
-
-register_debug_view_pipeline :: proc(engine: ^Engine, debug_view_handle: backend.Shader) {
-	desc := backend.GraphicsPipelineDesc {
-		attachments = overlay_pass_layout(&engine.vk_ctx, &engine.render_targets),
-		cull        = .None,
-	}
-	pipeline_register(engine, .Debug_View, debug_view_handle, desc)
+// Expects the device to be idle.
+pipelines_destroy :: proc(engine: ^Engine) {
+	reg := &engine.pipeline_registry
+	for retired in reg.retired do backend.pipeline_destroy(&engine.vk_ctx, retired.pipeline)
+	delete(reg.retired)
+	for pipeline in reg.graphics do backend.pipeline_destroy(&engine.vk_ctx, pipeline)
+	for pipeline in reg.compute do backend.pipeline_destroy(&engine.vk_ctx, pipeline)
 }
