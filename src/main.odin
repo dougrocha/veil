@@ -1,7 +1,6 @@
 package main
 
 import "core:c"
-import "core:fmt"
 import "core:log"
 import "core:math/linalg"
 import "core:time"

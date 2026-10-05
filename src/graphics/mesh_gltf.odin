@@ -340,6 +340,16 @@ gltf_extract_material :: proc(
 		pbr.base_color_factor[2],
 		pbr.base_color_factor[3],
 	}
+	// HDR emission = emissiveFactor * KHR_materials_emissive_strength. Emissive textures aren't
+	// supported yet, and in glTF the factor multiplies the texture (usually a factor of 1 with the
+	// pattern in the texture), so a textured material would glow uniformly. Skip those instead.
+	emissive: Vec3
+	if mat.emissive_texture.texture != nil {
+		log.warnf("Material \"%s\": emissive textures are not supported; ignoring emission", name)
+	} else {
+		strength := mat.emissive_strength.emissive_strength if mat.has_emissive_strength else 1
+		emissive = Vec3{mat.emissive_factor[0], mat.emissive_factor[1], mat.emissive_factor[2]} * strength
+	}
 	alpha_mode: AlphaMode
 	switch mat.alpha_mode {
 	case .opaque:
@@ -362,5 +372,6 @@ gltf_extract_material :: proc(
 		occlusion_texture = occlusion_tex,
 		alpha_mode = alpha_mode,
 		alpha_cutoff = mat.alpha_cutoff,
+		emissive = emissive,
 	)
 }

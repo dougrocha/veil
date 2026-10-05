@@ -171,7 +171,12 @@ load_bloom_test :: proc(engine: ^gfx.Engine) {
 		)
 	}
 
-	floor_mat := gfx.material_create(engine, "bloom_floor", base_color = {0.5, 0.5, 0.5, 1}, perceptual_roughness = 0.8)
+	floor_mat := gfx.material_create(
+		engine,
+		"bloom_floor",
+		base_color = {0.5, 0.5, 0.5, 1},
+		perceptual_roughness = 0.8,
+	)
 	floor := gfx.primitive_plane(engine, "bloom_floor", floor_mat, half_size = {12, 12})
 	gfx.instance_spawn(engine, floor, gfx.transform_create())
 
