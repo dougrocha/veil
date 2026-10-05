@@ -6,6 +6,7 @@ import "backend"
 // costs 6 faces. Memory: 8 lights x 6 x 1024^2 x D32 = 192 MiB, 12 slots x 2048^2 x D32 = 192 MiB.
 SHADOW_MAP_SIZE :: 2048
 POINT_SHADOW_MAP_SIZE :: 1024
+SHADOW_DEPTH_FORMAT :: backend.TextureFormat.D32_Sfloat
 
 // First spot-light layer in the 2D shadow atlas; directional cascades occupy the layers before it.
 SPOT_SHADOW_SLOT_BASE :: MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT
@@ -20,7 +21,7 @@ shadow_atlas_create :: proc(ctx: ^backend.Context, size: u32, layers: u32, cube:
 
 	desc := backend.image_desc_default(
 		backend.extent3d(size, size, 1),
-		backend.texture_format_to_backend(.D32_Sfloat),
+		backend.texture_format_to_backend(SHADOW_DEPTH_FORMAT),
 		{.DepthStencilAttachment, .Sampled},
 	)
 	desc.array_layers = layers
@@ -50,4 +51,10 @@ shadow_atlas_transition :: proc(
 	layer_count: u32,
 ) {
 	backend.image_barrier(cmd, &atlas.gpu, state, backend.ImageAspectFlags{.Depth}, layer_count = layer_count)
+}
+
+// Depth only. The atlases are created after the pipelines are registered, so this reads the
+// shared format constant rather than the images.
+shadow_pass_layout :: proc() -> backend.AttachmentLayout {
+	return {depth = backend.texture_format_to_backend(SHADOW_DEPTH_FORMAT), samples = {._1}}
 }

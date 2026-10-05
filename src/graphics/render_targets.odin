@@ -50,6 +50,22 @@ render_targets_destroy :: proc(ctx: ^backend.Context, targets: ^RenderTargets) {
 	backend.image_destroy(ctx, targets.bloom)
 }
 
+// Main scene pass: MSAA color (resolved into hdr) + depth. Meshes, skybox, particles, lines.
+main_pass_layout :: proc(targets: ^RenderTargets) -> backend.AttachmentLayout {
+	assert(targets.color.samples == targets.depth.samples)
+	return {
+		color = {0 = targets.color.format},
+		color_count = 1,
+		depth = targets.depth.format,
+		samples = targets.color.samples,
+	}
+}
+
+// Overlay passes drawn straight into draw after the tonemap: UI, debug view. No depth.
+overlay_pass_layout :: proc(targets: ^RenderTargets) -> backend.AttachmentLayout {
+	return {color = {0 = targets.draw.format}, color_count = 1, depth = .UNDEFINED, samples = targets.draw.samples}
+}
+
 @(private = "file")
 bloom_target_create :: proc(ctx: ^backend.Context, extent: vk.Extent2D) -> backend.GpuImage {
 	half := vk.Extent3D{max(extent.width / 2, 1), max(extent.height / 2, 1), 1}

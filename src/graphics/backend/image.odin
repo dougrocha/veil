@@ -30,6 +30,7 @@ GpuImage :: struct {
 	format:       vk.Format,
 	mip_levels:   u32,
 	array_layers: u32,
+	samples:      vk.SampleCountFlags,
 	layout:       []vk.ImageLayout, // one per (mip, layer); index with image_layout_index
 	usage:        ImageUsageFlags,
 }
@@ -99,6 +100,7 @@ image_create :: proc(ctx: ^Context, desc: ImageDesc) -> GpuImage {
 		format       = desc.format,
 		mip_levels   = desc.mip_levels,
 		array_layers = desc.array_layers,
+		samples      = desc.samples,
 		usage        = desc.image_usage_flags,
 	}
 

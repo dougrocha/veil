@@ -150,21 +150,8 @@ pipeline_config_set_depth_dynamic :: proc(config: ^GraphicsPipelineConfig) {
 	config.dynamic_state_count += 1
 }
 
-pipeline_config_disable_color_attachment :: proc(config: ^GraphicsPipelineConfig) {
-	config.color_attachment_count = 0
-	config.rendering_info.colorAttachmentCount = 0
-}
-
-pipeline_config_set_no_depth_attachment :: proc(config: ^GraphicsPipelineConfig) {
-	config.rendering_info.depthAttachmentFormat = .UNDEFINED
-}
-
 pipeline_config_set_topology_points :: proc(config: ^GraphicsPipelineConfig) {
 	config.input_assembly.topology = .POINT_LIST
-}
-
-pipeline_config_set_msaa :: proc(config: ^GraphicsPipelineConfig, ctx: ^Context) {
-	config.multi_sample.rasterizationSamples = ctx.msaa_samples
 }
 
 shader_stages_to_vk :: proc(stages: bit_set[ShaderStage]) -> vk.ShaderStageFlags {
@@ -194,22 +181,35 @@ pipeline_config_set_push_constant_compute :: proc(
 }
 
 
+MAX_COLOR_ATTACHMENTS :: 8
+
+// What a graphics pipeline renders into. The owner of the images builds it from their formats,
+// so a pipeline can't disagree with the pass it draws in. depth = .UNDEFINED means no depth.
+AttachmentLayout :: struct {
+	color:       [MAX_COLOR_ATTACHMENTS]vk.Format,
+	color_count: u32,
+	depth:       vk.Format,
+	samples:     vk.SampleCountFlags,
+}
+
+pipeline_config_set_layout :: proc(config: ^GraphicsPipelineConfig, layout: AttachmentLayout) {
+	config.attachments = layout
+}
+
 GraphicsPipelineConfig :: struct {
-	viewport:                 vk.PipelineViewportStateCreateInfo,
-	input_assembly:           vk.PipelineInputAssemblyStateCreateInfo,
-	rasterization:            vk.PipelineRasterizationStateCreateInfo,
-	multi_sample:             vk.PipelineMultisampleStateCreateInfo,
-	color_blend_attachment:   vk.PipelineColorBlendAttachmentState,
-	color_blend:              vk.PipelineColorBlendStateCreateInfo,
-	depth_stencil:            vk.PipelineDepthStencilStateCreateInfo,
-	dynamic_states:           [4]vk.DynamicState,
-	dynamic_state_count:      u32,
-	color_attachment_formats: [8]vk.Format,
-	color_attachment_count:   u32,
-	rendering_info:           vk.PipelineRenderingCreateInfo,
-	descriptor_layouts:       [8]vk.DescriptorSetLayout,
-	descriptor_layout_count:  u32,
-	push_constant_range:      vk.PushConstantRange,
+	viewport:                vk.PipelineViewportStateCreateInfo,
+	input_assembly:          vk.PipelineInputAssemblyStateCreateInfo,
+	rasterization:           vk.PipelineRasterizationStateCreateInfo,
+	multi_sample:            vk.PipelineMultisampleStateCreateInfo,
+	color_blend_attachment:  vk.PipelineColorBlendAttachmentState,
+	color_blend:             vk.PipelineColorBlendStateCreateInfo,
+	depth_stencil:           vk.PipelineDepthStencilStateCreateInfo,
+	dynamic_states:          [4]vk.DynamicState,
+	dynamic_state_count:     u32,
+	attachments:             AttachmentLayout,
+	descriptor_layouts:      [8]vk.DescriptorSetLayout,
+	descriptor_layout_count: u32,
+	push_constant_range:     vk.PushConstantRange,
 }
 
 ComputePipelineConfig :: struct {
@@ -296,19 +296,17 @@ pipeline_default_config :: proc() -> (config: GraphicsPipelineConfig) {
 		front                 = {},
 		back                  = {},
 	}
-
-	config.color_attachment_formats[0] = vk.Format(DRAW_FORMAT)
-	config.color_attachment_count = 1
-	config.rendering_info = {
-		sType                 = .PIPELINE_RENDERING_CREATE_INFO,
-		colorAttachmentCount  = config.color_attachment_count,
-		depthAttachmentFormat = DEPTH_FORMAT,
-	}
 	return
 }
 
 pipeline_create :: proc(ctx: ^Context, config: ^GraphicsPipelineConfig, stages: []ShaderStageDesc) -> Pipeline {
 	device := ctx.device
+	attachments := &config.attachments
+	assert(
+		attachments.color_count > 0 || attachments.depth != .UNDEFINED,
+		"pipeline_create: no attachment layout set (pipeline_config_set_layout)",
+	)
+	assert(attachments.samples != {}, "pipeline_create: attachment layout has no sample count")
 	layout_info := pipeline_build_layout_info(
 		&config.descriptor_layouts,
 		config.descriptor_layout_count,
@@ -333,11 +331,24 @@ pipeline_create :: proc(ctx: ^Context, config: ^GraphicsPipelineConfig, stages: 
 		pDynamicStates    = raw_data(&config.dynamic_states),
 	}
 
+	// Every color attachment shares the one blend state.
+	blend_attachments: [MAX_COLOR_ATTACHMENTS]vk.PipelineColorBlendAttachmentState
+	for i in 0 ..< attachments.color_count {
+		blend_attachments[i] = config.color_blend_attachment
+	}
 	color_blend := config.color_blend
-	color_blend.pAttachments = &config.color_blend_attachment
+	color_blend.attachmentCount = attachments.color_count
+	color_blend.pAttachments = &blend_attachments[0]
 
-	rendering_info := config.rendering_info
-	rendering_info.pColorAttachmentFormats = &config.color_attachment_formats[0]
+	multi_sample := config.multi_sample
+	multi_sample.rasterizationSamples = attachments.samples
+
+	rendering_info := vk.PipelineRenderingCreateInfo {
+		sType                   = .PIPELINE_RENDERING_CREATE_INFO,
+		colorAttachmentCount    = attachments.color_count,
+		pColorAttachmentFormats = &attachments.color[0],
+		depthAttachmentFormat   = attachments.depth,
+	}
 
 	graphics_pipeline := vk.GraphicsPipelineCreateInfo {
 		sType               = .GRAPHICS_PIPELINE_CREATE_INFO,
@@ -349,7 +360,7 @@ pipeline_create :: proc(ctx: ^Context, config: ^GraphicsPipelineConfig, stages: 
 		// pTessellationState:  ^PipelineTessellationStateCreateInfo,
 		pViewportState      = &config.viewport,
 		pRasterizationState = &config.rasterization,
-		pMultisampleState   = &config.multi_sample,
+		pMultisampleState   = &multi_sample,
 		pDepthStencilState  = &config.depth_stencil,
 		pColorBlendState    = &color_blend,
 		pDynamicState       = &dynamic_state_info,
