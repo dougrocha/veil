@@ -92,18 +92,6 @@ swapchain_destroy :: proc(ctx: ^Context, swapchain: ^Swapchain) {
 	vk.DestroySwapchainKHR(ctx.device, swapchain.handle, nil)
 }
 
-render_target_create :: proc(
-	ctx: ^Context,
-	extent: Extent3D,
-	format: Format,
-	usage: ImageUsageFlags,
-	samples: u32 = 1,
-) -> Image {
-	desc := image_desc_default(extent, format, usage)
-	desc.samples = samples
-	return image_create(ctx, desc)
-}
-
 swapchain_acquire_next_image :: proc(
 	ctx: ^Context,
 	swapchain: ^Swapchain,

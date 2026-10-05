@@ -2,6 +2,7 @@ package backend
 
 import vk "vendor:vulkan"
 
+@(private)
 begin_immediate_submit :: proc(ctx: ^Context) -> vk.CommandBuffer {
 	alloc_info := vk.CommandBufferAllocateInfo {
 		sType              = .COMMAND_BUFFER_ALLOCATE_INFO,
@@ -20,6 +21,7 @@ begin_immediate_submit :: proc(ctx: ^Context) -> vk.CommandBuffer {
 	return cmd
 }
 
+@(private)
 end_immediate_submit :: proc(ctx: ^Context, cmd: CommandBuffer) {
 	cmd := cmd.handle
 	vk_check(vk.EndCommandBuffer(cmd))

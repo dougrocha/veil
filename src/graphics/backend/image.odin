@@ -158,6 +158,18 @@ image_create :: proc(ctx: ^Context, desc: ImageDesc) -> Image {
 	return handles.pool_alloc(&ctx.images, slot)
 }
 
+render_target_create :: proc(
+	ctx: ^Context,
+	extent: Extent3D,
+	format: Format,
+	usage: ImageUsageFlags,
+	samples: u32 = 1,
+) -> Image {
+	desc := image_desc_default(extent, format, usage)
+	desc.samples = samples
+	return image_create(ctx, desc)
+}
+
 device_max_anisotropy :: proc(ctx: ^Context) -> f32 {
 	return vk_get_physical_device_properties(ctx).limits.maxSamplerAnisotropy
 }
