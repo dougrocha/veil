@@ -85,6 +85,7 @@ LightMask :: enum u32 {
 DebugSettings :: struct {
 	show_cascades, disable_shadows, light_mask: u32,
 	particles:                                  bool, // CPU-only; not uploaded to the GPU
+	show_lights:                                bool, // CPU-only; debug_lights_draw
 	// CPU-only bloom controls; max levels is clamped to what the bloom target was allocated with
 	bloom_max_levels:                           u32,
 	bloom_strength:                             f32,

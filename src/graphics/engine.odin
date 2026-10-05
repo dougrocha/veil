@@ -134,6 +134,7 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	scene_data_buffer_update(engine)
 	update_transforms_buffer(engine)
 
+	debug_lights_draw(engine)
 	instance_ids_reset(engine)
 	record_frame(engine, cmd)
 	record_ms := tick_ms(record_start)
