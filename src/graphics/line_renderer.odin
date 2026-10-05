@@ -1,7 +1,5 @@
 package graphics
 
-import "core:mem"
-
 import "backend"
 
 MAX_LINE_VERTICES :: 65536
@@ -21,32 +19,27 @@ LinePushConstants :: struct {
 	thickness:     f32,
 }
 
-LineBatch :: struct {
-	vertices: [dynamic]LineVertex,
-	buffers:  [backend.MAX_FRAMES_IN_FLIGHT]backend.Buffer(LineVertex),
-}
-
 LineRenderer :: struct {
-	tested:  LineBatch,
-	sector:  LineBatch,
-	overlay: LineBatch,
+	tested:  TransientBatch(LineVertex),
+	sector:  TransientBatch(LineVertex),
+	overlay: TransientBatch(LineVertex),
 }
 
 line_renderer_create :: proc(engine: ^Engine) -> (ok: bool) {
 	lr := &engine.line_renderer
 
-	batch_create(engine, &lr.tested)
-	batch_create(engine, &lr.sector)
-	batch_create(engine, &lr.overlay)
+	transient_batch_create(&engine.vk_ctx, &lr.tested, MAX_LINE_VERTICES)
+	transient_batch_create(&engine.vk_ctx, &lr.sector, MAX_LINE_VERTICES)
+	transient_batch_create(&engine.vk_ctx, &lr.overlay, MAX_LINE_VERTICES)
 
 	return true
 }
 
 line_renderer_destroy :: proc(engine: ^Engine) {
 	lr := &engine.line_renderer
-	batch_destroy(engine, &lr.tested)
-	batch_destroy(engine, &lr.sector)
-	batch_destroy(engine, &lr.overlay)
+	transient_batch_destroy(&engine.vk_ctx, &lr.tested)
+	transient_batch_destroy(&engine.vk_ctx, &lr.sector)
+	transient_batch_destroy(&engine.vk_ctx, &lr.overlay)
 }
 
 line_renderer_push :: proc(lr: ^LineRenderer, from, to: Vec3, color: Vec4, overlay := false) {
@@ -62,13 +55,13 @@ line_renderer_push :: proc(lr: ^LineRenderer, from, to: Vec3, color: Vec4, overl
 		color    = color,
 	}
 
-	append(&batch.vertices, from)
-	append(&batch.vertices, to)
+	append(&batch.items, from)
+	append(&batch.items, to)
 }
 
 line_renderer_push_sector_triangle :: proc(lr: ^LineRenderer, a, b, c: Vec3, color: Vec4) {
 	append(
-		&lr.sector.vertices,
+		&lr.sector.items,
 		LineVertex{position = a, color = color},
 		LineVertex{position = b, color = color},
 		LineVertex{position = c, color = color},
@@ -77,9 +70,9 @@ line_renderer_push_sector_triangle :: proc(lr: ^LineRenderer, a, b, c: Vec3, col
 
 line_renderer_clear :: proc(engine: ^Engine) {
 	lr := &engine.line_renderer
-	clear(&lr.tested.vertices)
-	clear(&lr.sector.vertices)
-	clear(&lr.overlay.vertices)
+	clear(&lr.tested.items)
+	clear(&lr.sector.items)
+	clear(&lr.overlay.items)
 }
 
 line_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
@@ -90,52 +83,26 @@ line_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 }
 
 @(private = "file")
-batch_create :: proc(engine: ^Engine, batch: ^LineBatch) {
-	for i in 0 ..< backend.MAX_FRAMES_IN_FLIGHT {
-		batch.buffers[i] = backend.buffer_create(LineVertex, &engine.vk_ctx, MAX_LINE_VERTICES, {.Storage}, .Shared)
-	}
-	reserve(&batch.vertices, MAX_LINE_VERTICES)
-}
-
-@(private = "file")
-batch_destroy :: proc(engine: ^Engine, batch: ^LineBatch) {
-	delete(batch.vertices)
-	for i in 0 ..< backend.MAX_FRAMES_IN_FLIGHT {
-		backend.buffer_destroy(&engine.vk_ctx, batch.buffers[i])
-	}
-}
-
-@(private = "file")
 flush_batch :: proc(
 	engine: ^Engine,
 	cmd: backend.RenderEncoder,
-	batch: ^LineBatch,
+	batch: ^TransientBatch(LineVertex),
 	kind: GraphicsPipelineKind,
 	vertex_multiplier: u32 = 3,
 ) {
-	if len(batch.vertices) == 0 do return
-	assert(len(batch.vertices) <= MAX_LINE_VERTICES)
-
-	frame_res_index := backend.frame_slot(&engine.vk_ctx)
-	buffer := &batch.buffers[frame_res_index]
-	mem.copy(
-		backend.buffer_contents(&engine.vk_ctx, buffer^),
-		raw_data(batch.vertices),
-		len(batch.vertices) * size_of(LineVertex),
-	)
+	vertices, count := transient_batch_upload(&engine.vk_ctx, batch)
+	if count == 0 do return
 
 	pipeline := graphics_pipeline(engine, kind)
 	pc := LinePushConstants {
 		scene_data    = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
-		vertex_buffer = backend.buffer_address(&engine.vk_ctx, buffer^),
+		vertex_buffer = vertices,
 		screen_size   = render_viewport(engine),
 		thickness     = LINE_THICKNESS_PX,
 	}
 	backend.pipeline_bind(cmd, pipeline)
 	backend.pipeline_push(cmd, &pc)
 	// Line segments expand to six vertices; sector triangles use their three stored vertices.
-	backend.cmd_draw(cmd, u32(len(batch.vertices)) * vertex_multiplier)
+	backend.cmd_draw(cmd, count * vertex_multiplier)
 	stats_count_draw(engine)
-
-	clear(&batch.vertices)
 }

@@ -173,6 +173,6 @@ ui_draw_text :: proc(engine: ^Engine, font: ^Baked_Font, text: string, x, y: f32
 			color    = color,
 		}
 
-		append(&batch.vertices, top_left, top_right, bottom_right, top_left, bottom_right, bottom_left)
+		append(&batch.items, top_left, top_right, bottom_right, top_left, bottom_right, bottom_left)
 	}
 }
