@@ -1,41 +1,55 @@
-out_base := "odin-vulkan"
-slang_rpath := if os() == "macos" { "@executable_path/shared/odin-slang/slang/lib" } else { "$ORIGIN/shared/odin-slang/slang/lib" }
+out_base := "build/veil"
+# binaries live in build/, so the rpath climbs one level back to the repo root
+slang_rpath := if os() == "macos" { "@executable_path/../shared/odin-slang/slang/lib" } else { "$ORIGIN/../shared/odin-slang/slang/lib" }
 
-# build src -> odin-vulkan.out
+# build src -> build/veil
 build: gpu-types vma slang-glslang
-    odin build src -collection:shared=shared -out:{{out_base}}.out \
+    @mkdir -p build
+    odin build src -collection:shared=shared -out:{{out_base}} \
         -extra-linker-flags:'-rpath {{slang_rpath}}'
 
-# build with debug info and address sanitizer -> odin-vulkan-debug.out
-debug: gpu-types vma slang-glslang
-    odin build src -collection:shared=shared -out:{{out_base}}-debug.out \
+# build with debug info and address sanitizer -> build/veil-debug
+build-debug: gpu-types vma slang-glslang
+    @mkdir -p build
+    odin build src -collection:shared=shared -out:{{out_base}}-debug \
         -extra-linker-flags:'-rpath {{slang_rpath}}' \
         -debug -sanitize:address
 
-# optimized, no validation layers -> odin-vulkan-release.out
+# optimized, no validation layers -> build/veil-release
 build-release: gpu-types vma slang-glslang
-    odin build src -collection:shared=shared -out:{{out_base}}-release.out \
+    @mkdir -p build
+    odin build src -collection:shared=shared -out:{{out_base}}-release \
         -extra-linker-flags:'-rpath {{slang_rpath}}' \
         -o:speed -define:VEIL_VALIDATION=false
 
 # build, then run
 run: build
-    ./{{out_base}}.out
+    ./{{out_base}}
 
 # release build, then run
 release: build-release
-    ./{{out_base}}-release.out
+    ./{{out_base}}-release
 
 # debug build, then run
-run-debug: debug
-    ./{{out_base}}-debug.out
+debug: build-debug
+    ./{{out_base}}-debug
 
 # format odin sources (skips shared/ and generated files)
 format:
     #!/usr/bin/env bash
     git ls-files 'src/*.odin' 'tools/*.odin' | grep -v '_generated\.odin$' | xargs -n1 odinfmt -w
 
+# regenerate shaders/types.slang only when its inputs are newer than it
 gpu-types:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=shaders/types.slang
+    inputs=(src/graphics/gpu_types.odin tools/generate-gpu-types.sh tools/gpu_types_gen/*.odin)
+    if [ -f "$out" ]; then
+        stale=0
+        for f in "${inputs[@]}"; do [ "$f" -nt "$out" ] && stale=1; done
+        [ "$stale" = 0 ] && exit 0
+    fi
     ./tools/generate-gpu-types.sh
 
 # fetch libslang-glslang (spirv-opt) once; the odin-slang submodule only vendors libslang

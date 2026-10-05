@@ -5,10 +5,10 @@ Vulkan 1.4 renderer in Odin with SDL3 and Slang. macOS runs through MoltenVK.
 ## Build
 
 - Always build through `just`. Do not call `odin build` or `odin check` directly. The justfile sets `-collection:shared=shared` and the Slang rpath.
-  - `just build` builds `odin-vulkan.out`.
-  - `just debug` builds with `-debug -sanitize:address`.
-  - `just run` and `just run-debug` build, then run.
-  - `just build-release` builds `odin-vulkan-release.out` with `-o:speed` and validation layers off (`-define:VEIL_VALIDATION=false`). `just release` builds it, then runs.
+  - `just build` builds `build/veil`. `just build-debug` and `just build-release` write `build/veil-debug` and `build/veil-release`.
+  - `just build-debug` builds with `-debug -sanitize:address`.
+  - `just run`, `just debug` and `just release` build their binary, then run it.
+  - `just build-release` builds with `-o:speed` and validation layers off (`-define:VEIL_VALIDATION=false`).
 - There are no tests and no linter. Check your work by building, and by running when behavior changes.
 - On first build, Linux compiles VMA in `shared/odin-vma`. This needs `premake5` and `make`.
 - On first build, `just` downloads `libslang-glslang` (spirv-opt) into `shared/odin-slang/slang/lib`, from the Slang release that matches the vendored `libslang`. The `odin-slang` submodule does not ship it.
@@ -17,7 +17,7 @@ Vulkan 1.4 renderer in Odin with SDL3 and Slang. macOS runs through MoltenVK.
 
 - `src/graphics/gpu_types.odin` is the source of truth for structs and constants that the CPU and GPU share.
 - `shaders/types.slang` is generated from it. Do not edit it by hand.
-- After you change `gpu_types.odin`, run `./tools/generate-gpu-types.sh` (`just build` also runs it). Use `--check` to verify that the generated file is current.
+- After you change `gpu_types.odin`, run `./tools/generate-gpu-types.sh` (`just build` also runs it, skipping it when `gpu_types.odin` and the generator are older than `types.slang`). Use `--check` to verify that the generated file is current.
 
 ## Architecture notes
 
