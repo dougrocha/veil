@@ -262,10 +262,6 @@ draw_shadow :: proc(
 }
 
 draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	mesh_pipeline := graphics_pipeline(engine, .Mesh)
-
-	backend.pipeline_bind(cmd, mesh_pipeline)
-
 	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	frustum := frustum_create_from_camera(active_camera, render_aspect(engine))
 
@@ -290,13 +286,14 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	engine.stats.counters.instances_drawn += list.instances_visible
 	engine.stats.counters.meshes_culled += list.meshes_culled
 
+	backend.pipeline_bind(cmd, graphics_pipeline(engine, .Mesh))
 	for batch in draw_runs_upload(engine, list.opaque) {
 		draw_batch(engine, cmd, batch)
 	}
 
-	// blended: back to front, one draw per mesh so the order holds
-	backend.cmd_set_depth_write(cmd, false)
-	for item in list.blended {
+	// transparent: back to front, one draw per mesh so the order holds
+	backend.pipeline_bind(cmd, graphics_pipeline(engine, .Mesh_Transparent))
+	for item in list.transparent {
 		batch := single_draw_batch(engine, item) or_break
 		draw_batch(engine, cmd, batch)
 	}

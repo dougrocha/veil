@@ -7,7 +7,8 @@ import "backend"
 GraphicsPipelineKind :: enum u8 {
 	Shadow, // spot + point lights
 	Shadow_Directional, // directional cascades, depth-clamped
-	Mesh,
+	Mesh, // opaque and mask
+	Mesh_Transparent, // alpha blended, no depth write
 	Skybox,
 	UI,
 	Particle,

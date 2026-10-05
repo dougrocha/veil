@@ -10,8 +10,7 @@ PUSH_CONSTANT_SIZE :: 128
 PUSH_CONSTANT_STAGES :: vk.ShaderStageFlags{.VERTEX, .FRAGMENT, .COMPUTE}
 
 Pipeline :: struct {
-	pipeline:    vk.Pipeline,
-	depth_write: bool, // graphics only: restored by pipeline_bind, overridable with cmd_set_depth_write
+	pipeline: vk.Pipeline,
 }
 
 MAX_COLOR_ATTACHMENTS :: 8
@@ -61,7 +60,7 @@ GraphicsPipelineDesc :: struct {
 	depth:       DepthState,
 }
 
-// Binds the pipeline and the bindless table (set 0), and restores the desc's depth write.
+// Binds the pipeline and the bindless table (set 0).
 pipeline_bind :: proc(cmd: RenderEncoder, pipeline: Pipeline) {
 	vk.CmdBindPipeline(cmd.handle, .GRAPHICS, pipeline.pipeline)
 	vk.CmdBindDescriptorSets(
@@ -74,7 +73,6 @@ pipeline_bind :: proc(cmd: RenderEncoder, pipeline: Pipeline) {
 		0,
 		nil,
 	)
-	vk.CmdSetDepthWriteEnable(cmd.handle, b32(pipeline.depth_write))
 }
 
 pipeline_push :: proc(cmd: RenderEncoder, data: ^$T) {
@@ -100,11 +98,6 @@ pipeline_set_scissor :: proc(cmd: RenderEncoder, width: u32, height: u32, offset
 		extent = {width, height},
 	}
 	vk.CmdSetScissor(cmd.handle, 0, 1, &scissor)
-}
-
-// Overrides the bound pipeline's depth write until the next pipeline_bind.
-cmd_set_depth_write :: proc(cmd: RenderEncoder, enabled: bool) {
-	vk.CmdSetDepthWriteEnable(cmd.handle, b32(enabled))
 }
 
 pipeline_create :: proc(ctx: ^Context, desc: GraphicsPipelineDesc, stages: []ShaderStageDesc) -> Pipeline {
@@ -178,7 +171,7 @@ pipeline_create :: proc(ctx: ^Context, desc: GraphicsPipelineDesc, stages: []Sha
 	}
 
 	// The backend decides what is dynamic: what Metal treats as encoder state.
-	dynamic_states := [?]vk.DynamicState{.VIEWPORT, .SCISSOR, .DEPTH_BIAS, .DEPTH_WRITE_ENABLE}
+	dynamic_states := [?]vk.DynamicState{.VIEWPORT, .SCISSOR, .DEPTH_BIAS}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo {
 		sType             = .PIPELINE_DYNAMIC_STATE_CREATE_INFO,
 		dynamicStateCount = len(dynamic_states),
@@ -214,7 +207,7 @@ pipeline_create :: proc(ctx: ^Context, desc: GraphicsPipelineDesc, stages: []Sha
 
 	pipeline: vk.Pipeline
 	vk_check(vk.CreateGraphicsPipelines(ctx.device, 0, 1, &info, nil, &pipeline))
-	return Pipeline{pipeline = pipeline, depth_write = depth.write}
+	return Pipeline{pipeline = pipeline}
 }
 
 pipeline_create_compute :: proc(ctx: ^Context, stage: ShaderStageDesc) -> Pipeline {

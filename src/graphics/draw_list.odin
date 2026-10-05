@@ -11,8 +11,8 @@ SceneView :: struct {
 }
 
 DrawListKind :: enum {
-	View, // camera: every instance; opaque/mask meshes batched, blended meshes back to front
-	Shadow, // shadow casters only, no blended meshes
+	View, // camera: every instance; opaque/mask meshes batched, transparent meshes back to front
+	Shadow, // shadow casters only, no transparent meshes
 	Shadow_Directional, // as Shadow, but casters in front of the near plane are kept (depth-clamped)
 }
 
@@ -31,7 +31,7 @@ DrawRun :: struct {
 
 DrawList :: struct {
 	opaque:            []DrawRun, // one run per mesh, any order
-	blended:           []DrawItem, // back to front; drawn one by one, in this order
+	transparent:       []DrawItem, // back to front; drawn one by one, in this order
 	instances_visible: u32, // instances whose bounding volume passed the frustum test
 	meshes_culled:     u32, // meshes of visible instances whose AABB failed the frustum test
 }
@@ -44,21 +44,21 @@ DrawList :: struct {
 // - Cull each instance by its model's bounding volume (volume_is_on_frustum), then each mesh by its
 //   AABB (aabb_is_on_frustum). Shadow_Directional passes skip_near = true to both.
 // - Opaque and mask meshes go to opaque, grouped with draw_runs_from_items.
-// - Shadow kinds drop blended meshes. View sorts its visible blended meshes back to front across all
+// - Shadow kinds drop transparent meshes. View sorts its visible transparent meshes back to front across all
 //   instances, by distance from camera_pos to each mesh's world-space AABB center.
-// - Count instances_visible and meshes_culled (opaque and blended AABB misses both count).
+// - Count instances_visible and meshes_culled (opaque and transparent AABB misses both count).
 build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, camera_pos: Vec3) -> DrawList {
 	skip_near := kind == .Shadow_Directional
 
 	opaque_items := make([dynamic]DrawItem, context.temp_allocator)
-	blended_items := make([dynamic]DrawItem, context.temp_allocator)
+	transparent_items := make([dynamic]DrawItem, context.temp_allocator)
 	instances_viewed, culled: u32
 
-	BlendedMesh :: struct {
+	TransparentMesh :: struct {
 		item:  DrawItem,
 		dist2: f32,
 	}
-	blended_meshes := make([dynamic]BlendedMesh, context.temp_allocator)
+	transparent_meshes := make([dynamic]TransparentMesh, context.temp_allocator)
 
 	for instance, slot_i in view.instances.values {
 		if !pool_is_alive(view.instances, Index(slot_i)) do continue
@@ -71,8 +71,8 @@ build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, c
 		for &mesh in model.meshes {
 			material := pool_get(view.materials, mesh.material)
 
-			blended := material.alpha_mode == .Blend
-			if blended && kind != .View do continue
+			transparent := material.alpha_mode == .Blend
+			if transparent && kind != .View do continue
 			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform, skip_near) {
 				culled += 1
 				continue
@@ -81,9 +81,9 @@ build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, c
 				mesh     = &mesh,
 				instance = u32(slot_i),
 			}
-			if blended {
+			if transparent {
 				dist2 := linalg.length2(transform_point(instance.transform, mesh.bounds.center) - camera_pos)
-				append(&blended_meshes, BlendedMesh{item = item, dist2 = dist2})
+				append(&transparent_meshes, TransparentMesh{item = item, dist2 = dist2})
 			} else {
 				append(&opaque_items, item)
 			}
@@ -93,12 +93,12 @@ build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, c
 	}
 
 	// Back to front by each mesh's world-space AABB center, across instances.
-	slice.sort_by(blended_meshes[:], proc(a, b: BlendedMesh) -> bool {return a.dist2 > b.dist2})
-	for blended in blended_meshes do append(&blended_items, blended.item)
+	slice.sort_by(transparent_meshes[:], proc(a, b: TransparentMesh) -> bool {return a.dist2 > b.dist2})
+	for transparent in transparent_meshes do append(&transparent_items, transparent.item)
 
 	return {
 		opaque = draw_runs_from_items(opaque_items[:]),
-		blended = blended_items[:],
+		transparent = transparent_items[:],
 		instances_visible = instances_viewed,
 		meshes_culled = culled,
 	}

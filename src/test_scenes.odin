@@ -186,3 +186,70 @@ load_bloom_test :: proc(engine: ^gfx.Engine) {
 		brightness = 0.05,
 	}
 }
+
+// Transparent meshes in front of opaque ones, overlapping each other at different depths, so the
+// back-to-front order and the depth test against opaque geometry are both visible.
+load_transparency_test :: proc(engine: ^gfx.Engine) {
+	floor_mat := gfx.material_create(
+		engine,
+		"transparency_floor",
+		base_color = {0.5, 0.5, 0.5, 1},
+		perceptual_roughness = 0.8,
+	)
+	floor := gfx.primitive_plane(engine, "transparency_floor", floor_mat, half_size = {12, 12})
+	gfx.instance_spawn(engine, floor, gfx.transform_create())
+
+	// Opaque shapes behind the glass.
+	solid_mat := gfx.material_create(
+		engine,
+		"transparency_solid",
+		base_color = {0.8, 0.8, 0.8, 1},
+		perceptual_roughness = 0.5,
+	)
+	solid := gfx.primitive_cube(engine, "transparency_solid", solid_mat, half_size = {0.5, 0.5, 0.5})
+	for x in ([?]f32{-3, 0, 3}) {
+		gfx.instance_spawn(engine, solid, gfx.transform_create(translation = {x, 0.5, -4}))
+	}
+
+	Glass :: struct {
+		name:  string,
+		color: gfx.Vec4,
+		pos:   gfx.Vec3,
+		cube:  bool,
+	}
+	glasses := [?]Glass {
+		{"glass_red", {1.0, 0.1, 0.1, 0.4}, {-1.5, 0.8, -2.5}, true},
+		{"glass_green", {0.1, 1.0, 0.2, 0.5}, {-0.8, 0.9, -1.5}, false},
+		{"glass_blue", {0.1, 0.3, 1.0, 0.3}, {0.0, 0.8, -0.5}, true},
+		{"glass_yellow", {1.0, 0.9, 0.1, 0.6}, {0.8, 0.9, -2.0}, false},
+		{"glass_cyan", {0.1, 1.0, 1.0, 0.4}, {1.6, 0.8, -1.0}, true},
+	}
+	for glass in glasses {
+		mat := gfx.material_create(
+			engine,
+			glass.name,
+			base_color = glass.color,
+			perceptual_roughness = 0.1,
+			alpha_mode = .Blend,
+		)
+		model :=
+			gfx.primitive_cube(engine, glass.name, mat, half_size = {0.6, 0.6, 0.6}) if glass.cube else gfx.primitive_sphere(engine, glass.name, mat, radius = 0.7)
+		gfx.instance_spawn(engine, model, gfx.transform_create(translation = glass.pos))
+	}
+
+	gfx.spawn_directional_light(
+		engine,
+		gfx.DirectionalLight {
+			direction = linalg.normalize(gfx.Vec3{-0.4, -1, -0.3}),
+			color = {1, 1, 1},
+			diffuse_intensity = 1.5,
+			specular_intensity = 1,
+			shadow_maximum_distance = 15,
+		},
+	)
+	engine.camera_system.default_camera = gfx.camera_create({0, 2.0, 4}, yaw = -90, pitch = -12)
+	engine.scene.ambient_light = gfx.AmbientLight {
+		color      = {1, 1, 1, 1},
+		brightness = 0.15,
+	}
+}

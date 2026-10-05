@@ -35,12 +35,18 @@ GRAPHICS_PIPELINES := [GraphicsPipelineKind]GraphicsPipelineSpec {
 		cull = .None,
 		depth = {test = true, write = true, bias = true, clamp = true, compare = .LessOrEqual},
 	},
-	.Mesh = {shader = "mesh", targets = .Main, blend = .Alpha, depth = {test = true, write = true, compare = .Less}},
+	.Mesh = {shader = "mesh", targets = .Main, depth = {test = true, write = true, compare = .Less}},
+	.Mesh_Transparent = {shader = "mesh", targets = .Main, blend = .Alpha, depth = {test = true, compare = .Less}},
 	.Skybox = {shader = "skybox", targets = .Main, cull = .None, depth = {test = true, compare = .LessOrEqual}},
 	.UI = {shader = "ui", targets = .Overlay, cull = .None, blend = .Alpha},
 	.Particle = {shader = "particle", targets = .Main, topology = .Points, cull = .None, blend = .Alpha},
 	.Debug_View = {shader = "debug_view", targets = .Overlay, cull = .None},
-	.Debug_Line = {shader = "line", targets = .Main, cull = .None, depth = {test = true, write = true, compare = .Less}},
+	.Debug_Line = {
+		shader = "line",
+		targets = .Main,
+		cull = .None,
+		depth = {test = true, write = true, compare = .Less},
+	},
 	// Drawn last, on top of everything: no depth test.
 	.Debug_Line_Overlay = {shader = "line", targets = .Main, cull = .None, blend = .Alpha},
 	.Debug_Sector = {shader = "sector", targets = .Main, cull = .None, blend = .Alpha},
@@ -52,10 +58,10 @@ ComputePipelineSpec :: struct {
 
 @(rodata)
 COMPUTE_PIPELINES := [ComputePipelineKind]ComputePipelineSpec {
-	.Particle   = {shader = "particle"},
-	.Tonemap    = {shader = "tonemap"},
+	.Particle = {shader = "particle"},
+	.Tonemap = {shader = "tonemap"},
 	.Bloom_Down = {shader = "bloom_down"},
-	.Bloom_Up   = {shader = "bloom_up"},
+	.Bloom_Up = {shader = "bloom_up"},
 }
 
 // Built from the same format constants the targets are created with, so pipelines don't depend
