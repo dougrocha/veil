@@ -9,46 +9,16 @@ AttachmentInfo :: struct {
 }
 
 PassConfig :: struct {
-	color:                 AttachmentInfo,
-	resolve:               AttachmentInfo, // no image = no MSAA resolve
-	depth:                 AttachmentInfo, // no image = no depth attachment
-	clear_color:           [4]f32,
-	load_op:               LoadOp,
-	store_depth:           bool,
-	skip_depth_transition: bool, // caller manages depth layout transitions
+	color:       AttachmentInfo,
+	resolve:     AttachmentInfo, // no image = no MSAA resolve
+	depth:       AttachmentInfo, // no image = no depth attachment
+	clear_color: [4]f32,
+	load_op:     LoadOp,
+	store_depth: bool,
 }
 
+// Attachments must already be in their attachment states; the pass executor owns frame-resource layouts.
 begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig) -> RenderEncoder {
-	if config.color.image != {} {
-		image_barrier(
-			cmd,
-			config.color.image,
-			.Color_Write,
-			ImageAspectFlags{.Color},
-			base_array_layer = config.color.layer,
-		)
-	}
-
-	if config.resolve.image != {} && config.load_op != .Load {
-		image_barrier(
-			cmd,
-			config.resolve.image,
-			.Color_Write,
-			ImageAspectFlags{.Color},
-			base_array_layer = config.resolve.layer,
-		)
-	}
-
-	if config.depth.image != {} && !config.skip_depth_transition {
-		image_barrier(
-			cmd,
-			config.depth.image,
-			.Depth_Write,
-			ImageAspectFlags{.Depth},
-			base_array_layer = config.depth.layer,
-		)
-	}
-
 	color_attach_info: vk.RenderingAttachmentInfo
 	if config.color.image != {} {
 		color_attach_info = vk.RenderingAttachmentInfo {

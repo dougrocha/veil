@@ -40,12 +40,3 @@ shadow_atlas_destroy :: proc(ctx: ^backend.Context, atlas: ^ShadowAtlas) {
 	backend.sampler_destroy(ctx, atlas.sampler)
 	backend.image_destroy(ctx, atlas.image)
 }
-
-shadow_atlas_transition :: proc(
-	cmd: backend.CommandBuffer,
-	atlas: ^ShadowAtlas,
-	state: backend.ImageStateKind,
-	layer_count: u32,
-) {
-	backend.image_barrier(cmd, atlas.image, state, backend.ImageAspectFlags{.Depth}, layer_count = layer_count)
-}

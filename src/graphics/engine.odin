@@ -346,13 +346,11 @@ current_scene_data :: proc(engine: ^Engine) -> ^SceneData {
 	return (^SceneData)(backend.buffer_contents(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer))
 }
 
-// 2D atlas: directional cascades first, then spot lights from SPOT_SHADOW_SLOT_BASE. The atlas is
-// transitioned as a whole (all layers, used or not) so later passes sample it in one layout.
+// 2D atlas: directional cascades first, then spot lights from SPOT_SHADOW_SLOT_BASE.
 record_shadow_2d :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	scene_data := current_scene_data(engine)
 	dir_count, spot_count, _ := shadow_counts(engine)
 	atlas_2d := &engine.shadow_2d_atlas
-	shadow_atlas_transition(cmd, atlas_2d, .Depth_Write, MAX_SHADOW_2D_SLOTS)
 	for light_i in 0 ..< dir_count {
 		for cascade in 0 ..< SHADOW_MAP_CASCADE_COUNT {
 			slot := u32(light_i * SHADOW_MAP_CASCADE_COUNT + cascade)
@@ -368,7 +366,6 @@ record_shadow_2d :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		shadow_pass(engine, cmd, atlas_2d, slot, .Spot, u32(light_i), scene_data.shadow_2d_view_proj[slot])
 		shadow_cache_spot_rendered(engine, light_i)
 	}
-	shadow_atlas_transition(cmd, atlas_2d, .Depth_Read, MAX_SHADOW_2D_SLOTS)
 }
 
 // Cube atlas: 6 faces per point light.
@@ -376,7 +373,6 @@ record_shadow_point :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	scene_data := current_scene_data(engine)
 	_, _, point_count := shadow_counts(engine)
 	atlas_cube := &engine.shadow_atlas
-	shadow_atlas_transition(cmd, atlas_cube, .Depth_Write, MAX_POINT_LIGHTS * 6)
 	for light_i in 0 ..< point_count {
 		if shadow_cache_point_fresh(engine, light_i) {
 			engine.stats.counters.shadow_views_cached += 6
@@ -389,10 +385,9 @@ record_shadow_point :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		}
 		shadow_cache_point_rendered(engine, light_i)
 	}
-	shadow_atlas_transition(cmd, atlas_cube, .Depth_Read, MAX_POINT_LIGHTS * 6)
 }
 
-// Renders one atlas layer. The atlas must already be in .Depth_Write (see shadow_atlas_transition).
+// Renders one atlas layer. The executor has already put the atlas in .Depth_Write.
 shadow_pass :: proc(
 	engine: ^Engine,
 	cmd: backend.CommandBuffer,
@@ -405,12 +400,7 @@ shadow_pass :: proc(
 	encoder := backend.begin_render_pass(
 		&engine.vk_ctx,
 		cmd,
-		backend.PassConfig {
-			depth = {image = atlas.image, layer = layer},
-			load_op = .Clear,
-			store_depth = true,
-			skip_depth_transition = true,
-		},
+		backend.PassConfig{depth = {image = atlas.image, layer = layer}, load_op = .Clear, store_depth = true},
 	)
 	engine.stats.counters.shadow_views += 1
 	draw_shadow(engine, encoder, light_type, light_index, view_proj)

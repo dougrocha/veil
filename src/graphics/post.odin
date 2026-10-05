@@ -52,8 +52,6 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	color := backend.ImageAspectFlags{.Color}
 	levels := bloom_levels(engine)
 
-	backend.image_barrier(cmd, targets.hdr, .Shader_Read, color)
-
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
 	defer backend.end_compute_pass(encoder)
 
@@ -106,8 +104,6 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 // afterwards (debug view, UI) skips the tonemap, and present_blit only has to sRGB-encode.
 dispatch_tonemap :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	targets := &engine.render_targets
-	backend.image_barrier(cmd, targets.hdr, .Shader_Read, backend.ImageAspectFlags{.Color})
-	backend.image_barrier(cmd, targets.draw, .General, backend.ImageAspectFlags{.Color})
 
 	pipeline := compute_pipeline(engine, .Tonemap)
 	pc := TonemapPushConstants {
