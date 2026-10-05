@@ -60,6 +60,7 @@ Engine :: struct {
 	stats:             Stats,
 	gpu_profiler:      GpuProfiler,
 	shadow_cache:      ShadowCache,
+	shadow_plan:       ShadowPlan, // this frame's; views live in the frame arena
 
 	// debug capture
 	frame_dump:        FrameDump,

@@ -141,7 +141,6 @@ particles_enabled :: proc(engine: ^Engine) -> bool {
 	return engine.debug_settings.particles
 }
 
-@(private = "file")
 shadows_enabled :: proc(engine: ^Engine) -> bool {
 	return engine.debug_settings.disable_shadows == 0
 }

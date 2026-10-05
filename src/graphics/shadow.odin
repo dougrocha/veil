@@ -3,6 +3,8 @@ package graphics
 import "core:math"
 import "core:math/linalg"
 
+import "backend"
+
 
 ShadowParams :: struct {
 	aspect: f32,
@@ -128,4 +130,40 @@ compute_spot_light_view_proj :: proc(light: SpotLight) -> Mat4x4 {
 	spot_proj := matrix4_perspective_z0_f32(spot_fov, 1.0, light.shadow_near, light.range)
 
 	return spot_proj * spot_view
+}
+
+// Plans this frame's shadow work. Lights of a masked type, or every light when the shadow passes
+// are off, render nothing but still have their cache entries invalidated.
+shadow_plan_update :: proc(engine: ^Engine) {
+	camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
+	mask := engine.debug_settings.light_mask if shadows_enabled(engine) else 0
+	engine.shadow_plan = shadow_plan(&engine.scene, camera^, render_aspect(engine), &engine.shadow_cache, mask)
+}
+
+record_shadow_2d :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+	record_shadow_views(engine, cmd, .Atlas_2D, &engine.shadow_2d_atlas)
+}
+
+record_shadow_point :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+	record_shadow_views(engine, cmd, .Cube, &engine.shadow_atlas)
+}
+
+@(private = "file")
+record_shadow_views :: proc(engine: ^Engine, cmd: backend.CommandBuffer, kind: ShadowAtlasKind, atlas: ^ShadowAtlas) {
+	for view in engine.shadow_plan.views {
+		if view.atlas != kind do continue
+		// The executor has already put the atlas in .Depth_Write.
+		encoder := backend.begin_render_pass(
+			&engine.vk_ctx,
+			cmd,
+			backend.PassConfig {
+				depth = {image = atlas.image, layer = view.layer},
+				load_op = .Clear,
+				store_depth = true,
+			},
+		)
+		engine.stats.counters.shadow_views += 1
+		draw_shadow(engine, encoder, view.light_type, view.light_index, view.view_proj)
+		backend.end_render_pass(encoder)
+	}
 }

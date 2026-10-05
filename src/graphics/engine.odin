@@ -47,7 +47,6 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	render_targets_create(engine)
 	frame_data_create(engine) // particle spawn area is sized by the render extent
 	gpu_profiler_create(engine)
-	shadow_cache_create(engine)
 
 	pipelines_create(engine) or_return
 
@@ -82,7 +81,6 @@ engine_destroy :: proc(self: ^Engine) {
 	line_renderer_destroy(self)
 	pipelines_destroy(self)
 
-	shadow_cache_destroy(self)
 	gpu_profiler_destroy(self)
 	frame_data_destroy(self)
 	render_targets_destroy(self)
@@ -129,11 +127,12 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	wait_ms := tick_ms(wait_start)
 	record_start := time.tick_now()
 
-	scene_data_buffer_update(engine)
-	update_transforms_buffer(engine)
-	shadow_cache_update(engine)
+	// Reload first: a shadow shader reload invalidates the cache, and the plan must see it.
 	shader_poll_hotreload(engine)
 	pipelines_collect_retired(engine)
+	shadow_plan_update(engine)
+	scene_data_buffer_update(engine)
+	update_transforms_buffer(engine)
 
 	instance_ids_reset(engine)
 	record_frame(engine, cmd)
@@ -141,7 +140,10 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	submit_start := time.tick_now()
 
 	backend.frame_end(&engine.vk_ctx, &engine.swapchain, cmd, engine.render_targets.draw)
-	// Cleared once per recorded frame. Skipped frames return early above, so their changes carry over.
+	// Once per recorded frame, shadow passes on or off. Skipped frames return early above, so their
+	// changes carry over.
+	shadow_cache_commit(&engine.shadow_cache, &engine.shadow_plan, &engine.scene)
+	engine.shadow_plan.views = nil // frame arena memory, freed when engine_render returns
 	clear(&engine.scene.instance_changes)
 	stats_add_timings(
 		engine,
@@ -329,86 +331,6 @@ set_skybox_texture :: proc(engine: ^Engine, handle: TextureHandle) {
 	engine.skybox_cube = texture_cube_slot(engine, handle)
 }
 
-// Shadow views each atlas renders this frame. Masked-off lights aren't sampled, so they're
-// skipped. Cached maps stay valid and are re-checked when the light is enabled again.
-@(private = "file")
-shadow_counts :: proc(engine: ^Engine) -> (dir_count, spot_count, point_count: int) {
-	dir_count = min(int(engine.scene.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
-	spot_count = min(int(engine.scene.spot_light_count), MAX_SPOT_LIGHTS)
-	point_count = min(int(engine.scene.point_light_count), MAX_POINT_LIGHTS)
-	mask := engine.debug_settings.light_mask
-	if mask & u32(LightMask.Directional) == 0 do dir_count = 0
-	if mask & u32(LightMask.Spot) == 0 do spot_count = 0
-	if mask & u32(LightMask.Point) == 0 do point_count = 0
-	return
-}
-
-@(private = "file")
-current_scene_data :: proc(engine: ^Engine) -> ^SceneData {
-	return (^SceneData)(backend.buffer_contents(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer))
-}
-
-// 2D atlas: directional cascades first, then spot lights from SPOT_SHADOW_SLOT_BASE.
-record_shadow_2d :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	scene_data := current_scene_data(engine)
-	dir_count, spot_count, _ := shadow_counts(engine)
-	atlas_2d := &engine.shadow_2d_atlas
-	for light_i in 0 ..< dir_count {
-		for cascade in 0 ..< SHADOW_MAP_CASCADE_COUNT {
-			slot := u32(light_i * SHADOW_MAP_CASCADE_COUNT + cascade)
-			shadow_pass(engine, cmd, atlas_2d, slot, .Directional, u32(light_i), scene_data.shadow_2d_view_proj[slot])
-		}
-	}
-	for light_i in 0 ..< spot_count {
-		if shadow_cache_spot_fresh(engine, light_i) {
-			engine.stats.counters.shadow_views_cached += 1
-			continue
-		}
-		slot := SPOT_SHADOW_SLOT_BASE + u32(light_i)
-		shadow_pass(engine, cmd, atlas_2d, slot, .Spot, u32(light_i), scene_data.shadow_2d_view_proj[slot])
-		shadow_cache_spot_rendered(engine, light_i)
-	}
-}
-
-// Cube atlas: 6 faces per point light.
-record_shadow_point :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	scene_data := current_scene_data(engine)
-	_, _, point_count := shadow_counts(engine)
-	atlas_cube := &engine.shadow_atlas
-	for light_i in 0 ..< point_count {
-		if shadow_cache_point_fresh(engine, light_i) {
-			engine.stats.counters.shadow_views_cached += 6
-			continue
-		}
-		for face_i in 0 ..< 6 {
-			layer := u32(light_i * 6 + face_i)
-			view_proj := scene_data.point_light_view_proj[light_i][face_i]
-			shadow_pass(engine, cmd, atlas_cube, layer, .Point, u32(light_i), view_proj)
-		}
-		shadow_cache_point_rendered(engine, light_i)
-	}
-}
-
-// Renders one atlas layer. The executor has already put the atlas in .Depth_Write.
-shadow_pass :: proc(
-	engine: ^Engine,
-	cmd: backend.CommandBuffer,
-	atlas: ^ShadowAtlas,
-	layer: u32,
-	light_type: ShadowLightType,
-	light_index: u32,
-	view_proj: Mat4x4,
-) {
-	encoder := backend.begin_render_pass(
-		&engine.vk_ctx,
-		cmd,
-		backend.PassConfig{depth = {image = atlas.image, layer = layer}, load_op = .Clear, store_depth = true},
-	)
-	engine.stats.counters.shadow_views += 1
-	draw_shadow(engine, encoder, light_type, light_index, view_proj)
-	backend.end_render_pass(encoder)
-}
-
 draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	pipeline := graphics_pipeline(engine, .Skybox)
 	backend.pipeline_bind(cmd, pipeline)
@@ -429,6 +351,7 @@ draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 record_frame :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	stats_record_begin(engine)
 	defer stats_record_end(engine)
+	engine.stats.counters.shadow_views_cached = engine.shadow_plan.views_cached
 	gpu_profiler_reset(engine, cmd)
 
 	frame_scope := gpu_scope_begin(engine, cmd, "frame")
