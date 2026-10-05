@@ -7,7 +7,7 @@ import "backend"
 // Fixed slots in the bindless storage array (storage_descriptor, set 1 of compute post passes).
 STORAGE_SLOT_DRAW :: 0
 STORAGE_SLOT_BLOOM :: 1 // bloom mip i is at STORAGE_SLOT_BLOOM + i
-#assert(STORAGE_SLOT_BLOOM + backend.BLOOM_MAX_MIPS <= BINDLESS_STORAGE_IMAGE_COUNT)
+#assert(STORAGE_SLOT_BLOOM + BLOOM_MAX_MIPS <= BINDLESS_STORAGE_IMAGE_COUNT)
 
 TONEMAP_EXPOSURE :: 1.0 // default for debug_settings.exposure
 // Keep in sync with numthreads in tonemap.slang, bloom_down.slang and bloom_up.slang.
@@ -25,7 +25,7 @@ post_targets_create :: proc(engine: ^Engine) {
 		&engine.vk_ctx,
 		BINDLESS_STORAGE_IMAGE_COUNT,
 	)
-	targets := &engine.swapchain.render_targets
+	targets := &engine.render_targets
 	engine.hdr_texture = texture_register_external(engine, &targets.hdr)
 	for &handle, i in engine.bloom_textures {
 		handle = texture_register_external(engine, &targets.bloom, bloom_slot_mip(&targets.bloom, u32(i)))
@@ -33,10 +33,10 @@ post_targets_create :: proc(engine: ^Engine) {
 	storage_images_write(engine)
 }
 
-// Must run after swapchain_recreate, which destroys and recreates the render targets and
-// their views. Texture handles and storage slots stay the same; only the descriptors change.
+// Called by engine_resize after it recreates the render targets and their views. Texture
+// handles and storage slots stay the same; only the descriptors change.
 post_targets_update :: proc(engine: ^Engine) {
-	targets := &engine.swapchain.render_targets
+	targets := &engine.render_targets
 	texture_update_external(engine, engine.hdr_texture, &targets.hdr)
 	for handle, i in engine.bloom_textures {
 		texture_update_external(engine, handle, &targets.bloom, bloom_slot_mip(&targets.bloom, u32(i)))
@@ -53,14 +53,14 @@ bloom_slot_mip :: proc(bloom: ^backend.GpuImage, slot: u32) -> u32 {
 
 @(private = "file")
 storage_images_write :: proc(engine: ^Engine) {
-	targets := &engine.swapchain.render_targets
+	targets := &engine.render_targets
 	backend.descriptor_write_bindless_storage(
 		&engine.vk_ctx,
 		&engine.storage_descriptor,
 		STORAGE_SLOT_DRAW,
 		&targets.draw,
 	)
-	for i in 0 ..< u32(backend.BLOOM_MAX_MIPS) {
+	for i in 0 ..< u32(BLOOM_MAX_MIPS) {
 		backend.descriptor_write_bindless_storage(
 			&engine.vk_ctx,
 			&engine.storage_descriptor,
@@ -74,7 +74,7 @@ storage_images_write :: proc(engine: ^Engine) {
 // Active bloom levels: as many as fit before a mip's short side drops below BLOOM_MIN_MIP_SIZE,
 // capped by the debug setting and by what the bloom target was allocated with.
 bloom_levels :: proc(engine: ^Engine) -> u32 {
-	bloom := &engine.swapchain.render_targets.bloom
+	bloom := &engine.render_targets.bloom
 	short_side := min(bloom.extent.width, bloom.extent.height)
 	for_screen: u32 = 1
 	for (short_side >> for_screen) >= BLOOM_MIN_MIP_SIZE do for_screen += 1
@@ -111,7 +111,7 @@ bind_post_sets :: proc(engine: ^Engine, encoder: backend.ComputeEncoder, pipelin
 // then upsamples back up, each step adding the smaller mip into the next larger one. Mip 0 ends
 // up holding every blur radius and is what the tonemap composites.
 dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	targets := &engine.swapchain.render_targets
+	targets := &engine.render_targets
 	bloom := &targets.bloom
 	color := backend.ImageAspectFlags{.Color}
 	levels := bloom_levels(engine)
@@ -169,7 +169,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 // Tonemaps the HDR target (plus bloom) into the LDR draw target. Everything drawn into draw
 // afterwards (debug view, UI) skips the tonemap, and present_blit only has to sRGB-encode.
 dispatch_tonemap :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	targets := &engine.swapchain.render_targets
+	targets := &engine.render_targets
 	backend.image_barrier(cmd, &targets.hdr, .Shader_Read, backend.ImageAspectFlags{.Color})
 	backend.image_barrier(cmd, &targets.draw, .General, backend.ImageAspectFlags{.Color})
 
@@ -208,7 +208,7 @@ post_control_step :: proc(engine: ^Engine, dir: int) {
 	case .Bloom_Strength:
 		s.bloom_strength = max(s.bloom_strength + f32(dir) * BLOOM_STRENGTH_STEP, 0)
 	case .Bloom_Levels:
-		s.bloom_max_levels = u32(clamp(int(s.bloom_max_levels) + dir, 1, backend.BLOOM_MAX_MIPS))
+		s.bloom_max_levels = u32(clamp(int(s.bloom_max_levels) + dir, 1, BLOOM_MAX_MIPS))
 	}
 }
 

@@ -35,6 +35,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	backend.upload_pool_create(vk_ctx)
 
 	engine.swapchain = backend.swapchain_create(vk_ctx, width, height)
+	engine.render_targets = render_targets_create(vk_ctx, engine.swapchain.extent)
 
 	// The 3 global combined image samplers (shadow atlases, skybox) count against the same per-stage limit.
 	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_textures_per_stage - 3)
@@ -129,6 +130,7 @@ engine_destroy :: proc(self: ^Engine) {
 
 	frame_data_destroy(self)
 	backend.frame_sync_destroy(&self.vk_ctx)
+	render_targets_destroy(&self.vk_ctx, &self.render_targets)
 	backend.swapchain_destroy(&self.vk_ctx, &self.swapchain)
 
 	backend.context_destroy(&self.vk_ctx)
@@ -153,9 +155,7 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 	if app.width == 0 || app.height == 0 do return
 
 	if engine.swapchain.require_recreate {
-		backend.device_wait_idle(&engine.vk_ctx)
-		backend.swapchain_recreate(&engine.vk_ctx, &engine.swapchain, app.width, app.height)
-		post_targets_update(engine)
+		engine_resize(engine, app.width, app.height)
 	}
 
 	wait_start := time.tick_now()
@@ -559,9 +559,9 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			&engine.vk_ctx,
 			cmd,
 			backend.PassConfig {
-				color = {image = &engine.swapchain.render_targets.color},
-				resolve = {image = &engine.swapchain.render_targets.hdr},
-				depth = {image = &engine.swapchain.render_targets.depth},
+				color = {image = &engine.render_targets.color},
+				resolve = {image = &engine.render_targets.hdr},
+				depth = {image = &engine.render_targets.depth},
 				clear_color = {0.1, 0.1, 0.1, 1},
 				load_op = .Clear,
 			},
@@ -590,7 +590,7 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		encoder := backend.begin_render_pass(
 			&engine.vk_ctx,
 			cmd,
-			backend.PassConfig{color = {image = &engine.swapchain.render_targets.draw}, load_op = .Load},
+			backend.PassConfig{color = {image = &engine.render_targets.draw}, load_op = .Load},
 		)
 		draw_ui(engine, encoder)
 		backend.end_render_pass(encoder)
@@ -608,7 +608,7 @@ record_command_buffer :: proc(engine: ^Engine) -> backend.CommandBuffer {
 
 	frame_scope := gpu_scope_begin(engine, cmd, "frame")
 	draw_scene(engine, cmd)
-	backend.present_blit(&engine.vk_ctx, cmd, &engine.swapchain)
+	backend.present_blit(&engine.vk_ctx, cmd, &engine.swapchain, &engine.render_targets.draw)
 	gpu_scope_end(engine, cmd, frame_scope)
 
 	backend.cmd_end_recording(cmd)

@@ -23,7 +23,7 @@ GpuImage :: struct {
 	image:        vk.Image,
 	image_view:   vk.ImageView,
 	layer_views:  []vk.ImageView, // one per array layer; only for multi-layer attachment images
-	mip_views:    []vk.ImageView, // one per mip level; only for multi-mip storage (bloom)
+	mip_views:    []vk.ImageView, // one per mip level; only for multi-mip storage images
 	alloc:        vma.Allocation,
 	alloc_info:   vma.Allocation_Info,
 	extent:       vk.Extent3D,

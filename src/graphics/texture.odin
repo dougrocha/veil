@@ -147,7 +147,7 @@ texture_register_external :: proc(engine: ^Engine, img: ^backend.GpuImage, mip: 
 }
 
 // Points an external texture's slot at the recreated image. The caller must make sure no
-// in-flight frame still uses the old one (swapchain_recreate waits for idle). Passing a mip
+// in-flight frame still uses the old one (engine_resize waits for idle). Passing a mip
 // replaces the stored one; nil keeps it.
 texture_update_external :: proc(
 	engine: ^Engine,

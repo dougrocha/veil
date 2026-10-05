@@ -4,16 +4,6 @@ import "core:log"
 
 import vk "vendor:vulkan"
 
-RenderTargets :: struct {
-	color: GpuImage,
-	depth: GpuImage,
-	hdr:   GpuImage, // main pass resolve target, sampled by the tonemap
-	draw:  GpuImage, // tonemapped LDR result; UI draws on top, then it's blitted to the swapchain
-	bloom: GpuImage, // half-res mip chain; mip_levels may be below BLOOM_MAX_MIPS for tiny windows
-}
-
-BLOOM_MAX_MIPS :: 8
-
 Swapchain :: struct {
 	handle:              vk.SwapchainKHR,
 	images:              []vk.Image,
@@ -22,17 +12,16 @@ Swapchain :: struct {
 	present_semaphores:  []vk.Semaphore,
 	require_recreate:    bool,
 	extent:              vk.Extent2D,
-	render_targets:      RenderTargets,
 	current_image_index: u32,
 }
 
-// Creates the swapchain and the render targets sized to it; swapchain_destroy frees both.
+// Creates the swapchain and its images. Render targets are the caller's; size them to swapchain.extent.
 swapchain_create :: proc(ctx: ^Context, width, height: u32) -> Swapchain {
 	return swapchain_build(ctx, width, height, 0)
 }
 
 // Replaces the swapchain, handing the old one to the driver as oldSwapchain so it can reuse
-// resources. The caller must ensure no frame is still using the old swapchain or its targets.
+// resources. The caller must ensure no frame is still using the old swapchain.
 swapchain_recreate :: proc(ctx: ^Context, swapchain: ^Swapchain, width, height: u32) {
 	new_swapchain := swapchain_build(ctx, width, height, swapchain.handle)
 	swapchain_destroy(ctx, swapchain)
@@ -89,12 +78,10 @@ swapchain_build :: proc(ctx: ^Context, width, height: u32, old_handle: vk.Swapch
 		sem = binary_semaphore_create(ctx)
 	}
 
-	swapchain.render_targets = render_targets_create(ctx, swapchain.extent, ctx.msaa_samples)
 	return swapchain
 }
 
 swapchain_destroy :: proc(ctx: ^Context, swapchain: ^Swapchain) {
-	render_targets_destroy(ctx, &swapchain.render_targets)
 	for sem in swapchain.present_semaphores {
 		vk.DestroySemaphore(ctx.device, sem, nil)
 	}
@@ -117,43 +104,6 @@ render_target_create :: proc(
 	view_desc := image_view_desc_default(img)
 	img.image_view = image_view_create(ctx, img, view_desc)
 	return img
-}
-
-bloom_target_create :: proc(ctx: ^Context, extent: vk.Extent2D) -> GpuImage {
-	half := vk.Extent3D{max(extent.width / 2, 1), max(extent.height / 2, 1), 1}
-	// A full chain for the short side has floor(log2(short)) + 1 levels.
-	full_chain: u32 = 1
-	for (min(half.width, half.height) >> full_chain) > 0 do full_chain += 1
-
-	desc := image_desc_default(half, DRAW_FORMAT, {.Storage, .Sampled})
-	desc.mip_levels = min(BLOOM_MAX_MIPS, full_chain)
-	img := image_create(ctx, desc)
-	img.image_view = image_view_create(ctx, img, image_view_desc_default(img))
-	return img
-}
-
-render_targets_create :: proc(ctx: ^Context, extent: vk.Extent2D, msaa: vk.SampleCountFlags) -> RenderTargets {
-	extent_3d := vk.Extent3D{extent.width, extent.height, 1}
-	return RenderTargets {
-		bloom = bloom_target_create(ctx, extent),
-		color = render_target_create(ctx, extent_3d, DRAW_FORMAT, {.Transient, .ColorAttachment}, samples = msaa),
-		depth = render_target_create(ctx, extent_3d, DEPTH_FORMAT, {.DepthStencilAttachment}, samples = msaa),
-		hdr = render_target_create(ctx, extent_3d, DRAW_FORMAT, {.ColorAttachment, .Sampled}),
-		draw = render_target_create(
-			ctx,
-			extent_3d,
-			DRAW_FORMAT,
-			{.ColorAttachment, .TransferSrc, .TransferDst, .Storage},
-		),
-	}
-}
-
-render_targets_destroy :: proc(ctx: ^Context, targets: ^RenderTargets) {
-	image_destroy(ctx, targets.color)
-	image_destroy(ctx, targets.depth)
-	image_destroy(ctx, targets.hdr)
-	image_destroy(ctx, targets.draw)
-	image_destroy(ctx, targets.bloom)
 }
 
 swapchain_acquire_next_image :: proc(
@@ -215,12 +165,13 @@ swapchain_acquire_barrier :: proc(cmd: CommandBuffer, image: vk.Image, dst: Imag
 	vk.CmdPipelineBarrier2(vk.CommandBuffer(cmd), &dep_info)
 }
 
-present_blit :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain) {
-	image_barrier(cmd, &swapchain.render_targets.draw, .Transfer_Src, ImageAspectFlags{.Color})
+// Copies src (same extent as the swapchain) into the acquired image and readies it for present.
+present_blit :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain, src: ^GpuImage) {
+	image_barrier(cmd, src, .Transfer_Src, ImageAspectFlags{.Color})
 	swapchain_acquire_barrier(cmd, swapchain.images[swapchain.current_image_index], .Transfer_Dst)
 	copy_image_to_image(
 		cmd,
-		swapchain.render_targets.draw.image,
+		src.image,
 		swapchain.images[swapchain.current_image_index],
 		swapchain.extent,
 		swapchain.extent,

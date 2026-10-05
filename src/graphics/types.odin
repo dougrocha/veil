@@ -45,6 +45,7 @@ Engine :: struct {
 
 	// swapchain
 	swapchain:          backend.Swapchain,
+	render_targets:     RenderTargets,
 
 	// shaders
 	shader_system:      ShaderSystem,
@@ -71,7 +72,7 @@ Engine :: struct {
 	// bindless storage images for compute post passes; slots are the STORAGE_SLOT_* constants
 	storage_descriptor: backend.DescriptorSet,
 	hdr_texture:        TextureHandle, // external texture for render_targets.hdr; stable across resizes
-	bloom_textures:     [backend.BLOOM_MAX_MIPS]TextureHandle, // one external texture per bloom mip
+	bloom_textures:     [BLOOM_MAX_MIPS]TextureHandle, // one external texture per bloom mip
 	shadow_atlas:       ShadowAtlas,
 	shadow_2d_atlas:    ShadowAtlas,
 

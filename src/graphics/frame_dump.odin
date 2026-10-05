@@ -137,7 +137,7 @@ frame_dump_capture :: proc(engine: ^Engine) -> (done: bool) {
 	fd := &engine.frame_dump
 	if !fd.enabled || fd.remaining <= 0 do return false
 
-	target := &engine.swapchain.render_targets.draw
+	target := &engine.render_targets.draw
 	pixels := backend.image_read_rgba8(&engine.vk_ctx, target)
 	defer delete(pixels)
 
