@@ -12,7 +12,7 @@ SceneView :: struct {
 
 DrawListKind :: enum {
 	View, // camera: every instance; opaque/mask meshes batched, transparent meshes back to front
-	Shadow, // shadow casters only, no transparent meshes
+	Shadow, // shadow casters only; transparent meshes cast solid shadows, batched with the rest
 	Shadow_Directional, // as Shadow, but casters in front of the near plane are kept (depth-clamped)
 }
 
@@ -44,7 +44,8 @@ DrawList :: struct {
 // - Cull each instance by its model's bounding volume (volume_is_on_frustum), then each mesh by its
 //   AABB (aabb_is_on_frustum). Shadow_Directional passes skip_near = true to both.
 // - Opaque and mask meshes go to opaque, grouped with draw_runs_from_items.
-// - Shadow kinds drop transparent meshes. View sorts its visible transparent meshes back to front across all
+// - Shadow kinds treat transparent meshes as opaque: they cast a solid shadow (as in Bevy; opt out per
+//   instance with casts_shadow). View sorts its visible transparent meshes back to front across all
 //   instances, by distance from camera_pos to each mesh's world-space AABB center.
 // - Count instances_visible and meshes_culled (opaque and transparent AABB misses both count).
 build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, camera_pos: Vec3) -> DrawList {
@@ -71,8 +72,7 @@ build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, c
 		for &mesh in model.meshes {
 			material := pool_get(view.materials, mesh.material)
 
-			transparent := material.alpha_mode == .Blend
-			if transparent && kind != .View do continue
+			transparent := kind == .View && material.alpha_mode == .Blend
 			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform, skip_near) {
 				culled += 1
 				continue
