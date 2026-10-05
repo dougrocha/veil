@@ -82,6 +82,7 @@ struct Material {
     uint occlusion_texture;
     uint alpha_mode;
     float alpha_cutoff;
+    float4 emissive;
 };
 
 struct SceneData {

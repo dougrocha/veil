@@ -286,5 +286,7 @@ float4 fragment_main(VSOutput vert) : SV_TARGET {
     // 0 = opaque, 1 = mask, 2 = blend; matches AlphaMode in Odin.
     if (mat.alpha_mode == 1 && tex_color.a < mat.alpha_cutoff) discard;
     float output_alpha = mat.alpha_mode == 2 ? tex_color.a : 1.0;
-    return float4(tex_color.rgb * total_light, output_alpha);
+    // Emission is light the surface gives off itself, so no lighting, shadow, AO or albedo scales it.
+    float3 color = tex_color.rgb * total_light + mat.emissive.rgb;
+    return float4(color, output_alpha);
 }

@@ -7,12 +7,12 @@ STORAGE_SLOT_DRAW :: 0
 STORAGE_SLOT_BLOOM :: 1 // bloom mip i is at STORAGE_SLOT_BLOOM + i
 #assert(STORAGE_SLOT_BLOOM + backend.BLOOM_MAX_MIPS <= BINDLESS_STORAGE_IMAGE_COUNT)
 
-TONEMAP_EXPOSURE :: 1.0
+TONEMAP_EXPOSURE :: 0.5
 // Keep in sync with numthreads in tonemap.slang, bloom_down.slang and bloom_up.slang.
 POST_GROUP_SIZE :: 8
 
 BLOOM_DEFAULT_LEVELS :: 6
-BLOOM_DEFAULT_STRENGTH :: 0.04
+BLOOM_DEFAULT_STRENGTH :: 0.10
 // The chain stops before the smallest mip's short side would drop below this, so the glow keeps
 // roughly the same share of the screen at any resolution and never collapses into a 1x1 haze.
 BLOOM_MIN_MIP_SIZE :: 8

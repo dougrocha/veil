@@ -21,6 +21,7 @@ Material :: struct {
 	occlusion_texture:          TextureHandle,
 	alpha_mode:                 AlphaMode,
 	alpha_cutoff:               f32,
+	emissive:                   Vec3,
 }
 
 MaterialHandle :: Handle(Material)
@@ -64,6 +65,7 @@ material_create :: proc(
 	occlusion_texture: TextureHandle = INVALID_TEXTURE,
 	alpha_mode: AlphaMode = .Opaque,
 	alpha_cutoff: f32 = 0.5,
+	emissive: Vec3 = {0, 0, 0}, // HDR, bake the strength in (e.g. color * 20)
 ) -> MaterialHandle {
 	if handle, ok := engine.material_system.material_map[name]; ok {
 		log.warnf("Material \"%s\" already exists; returning existing material", name)
@@ -100,6 +102,7 @@ material_create :: proc(
 		occlusion_texture          = resolved_occlusion,
 		alpha_mode                 = alpha_mode,
 		alpha_cutoff               = alpha_cutoff,
+		emissive                   = emissive,
 	}
 
 	handle := pool_alloc(&engine.material_system.materials, material)
@@ -117,6 +120,7 @@ material_create :: proc(
 		occlusion_texture          = u32(resolved_occlusion.index),
 		alpha_mode                 = u32(alpha_mode),
 		alpha_cutoff               = alpha_cutoff,
+		emissive                   = {emissive.x, emissive.y, emissive.z, 0},
 	}
 	mem.copy(rawptr(dst), &gpu_mat, size_of(GpuMaterial))
 
