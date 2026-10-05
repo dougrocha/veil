@@ -179,6 +179,14 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	}
 }
 
+scene_view :: proc(engine: ^Engine) -> SceneView {
+	return {
+		instances = &engine.scene.instances,
+		models = &engine.model_system.models,
+		materials = &engine.material_system.materials,
+	}
+}
+
 current_frame_data :: #force_inline proc(engine: ^Engine) -> ^FrameData {
 	return &engine.frame_data[backend.frame_slot(&engine.vk_ctx)]
 }
@@ -251,28 +259,10 @@ draw_shadow :: proc(
 	frame := current_frame_data(engine)
 
 	frustum := frustum_from_view_proj(view_proj)
+	kind := DrawListKind.Shadow_Directional if directional else .Shadow
+	list := build_draw_list(scene_view(engine), frustum, kind, {})
 
-	items := make([dynamic]DrawItem, context.temp_allocator)
-	for &instance, slot_i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, Index(slot_i)) do continue
-		if !instance.casts_shadow do continue
-
-		model := &pool_get(&engine.model_system.models, instance.model)^
-
-		// Directional casters in front of the cascade's near plane are depth-clamped, not clipped.
-		if !volume_is_on_frustum(frustum, model.bounds, instance.transform, skip_near = directional) {
-			continue
-		}
-
-		for &mesh in model.meshes {
-			mat := pool_get(&engine.material_system.materials, mesh.material)
-			if mat.alpha_mode == .Blend do continue
-			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform, skip_near = directional) do continue
-			append(&items, DrawItem{mesh = &mesh, instance = u32(slot_i)})
-		}
-	}
-
-	for batch in batch_draw_items(engine, items[:]) {
+	for batch in draw_runs_upload(engine, list.opaque) {
 		mesh := batch.mesh
 		pc := ShadowPushConstants {
 			view_proj        = view_proj,
@@ -317,60 +307,19 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 		stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 	}
 
-	TransparentEntry :: struct {
-		index: int,
-		dist:  f32,
-	}
-	transparent := make([dynamic]TransparentEntry, context.temp_allocator)
-	opaque := make([dynamic]DrawItem, context.temp_allocator)
+	list := build_draw_list(scene_view(engine), frustum, .View, active_camera.position)
+	engine.stats.counters.instances_drawn += list.instances_visible
+	engine.stats.counters.meshes_culled += list.meshes_culled
 
-	// Cull per instance by bounding sphere, then per mesh by AABB. Opaque/mask meshes are batched
-	// by mesh; instances with blended meshes are queued for the back-to-front pass.
-	for &instance, i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
-		model := pool_get(&engine.model_system.models, instance.model)
-		if !volume_is_on_frustum(frustum, model.bounds, instance.transform) do continue
-		engine.stats.counters.instances_drawn += 1
-
-		has_blend: bool
-		for &mesh in model.meshes {
-			mat := pool_get(&engine.material_system.materials, mesh.material)
-			if mat.alpha_mode == .Blend {
-				has_blend = true
-				continue
-			}
-			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform) {
-				engine.stats.counters.meshes_culled += 1
-				continue
-			}
-			append(&opaque, DrawItem{mesh = &mesh, instance = u32(i)})
-		}
-		if has_blend {
-			dist := linalg.length(instance.transform.translation - active_camera.position)
-			append(&transparent, TransparentEntry{index = i, dist = dist})
-		}
-	}
-
-	for batch in batch_draw_items(engine, opaque[:]) {
+	for batch in draw_runs_upload(engine, list.opaque) {
 		draw_batch(engine, cmd, batch)
 	}
 
-	// transparent: back-to-front, one draw per mesh so the order holds
-	slice.sort_by(transparent[:], proc(a, b: TransparentEntry) -> bool {return a.dist > b.dist})
+	// blended: back to front, one draw per mesh so the order holds
 	backend.cmd_set_depth_write(cmd, false)
-	for entry in transparent {
-		instance := &engine.scene.instances.values[entry.index]
-		model := pool_get(&engine.model_system.models, instance.model)
-		for &mesh in model.meshes {
-			mat := pool_get(&engine.material_system.materials, mesh.material)
-			if mat.alpha_mode != .Blend do continue
-			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform) {
-				engine.stats.counters.meshes_culled += 1
-				continue
-			}
-			batch := single_draw_batch(engine, {mesh = &mesh, instance = u32(entry.index)}) or_break
-			draw_batch(engine, cmd, batch)
-		}
+	for item in list.blended {
+		batch := single_draw_batch(engine, item) or_break
+		draw_batch(engine, cmd, batch)
 	}
 }
 
