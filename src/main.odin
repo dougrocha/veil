@@ -9,6 +9,15 @@ import sdl "vendor:sdl3"
 
 import gfx "graphics"
 
+// Game-side state shared by the main loop and its helpers.
+App :: struct {
+	window:          ^sdl.Window,
+	width:           u32,
+	height:          u32,
+	engine:          gfx.Engine,
+	last_frame_time: time.Time,
+}
+
 main :: proc() {
 	context.logger = log.create_console_logger()
 	defer log.destroy_console_logger(context.logger)
@@ -20,7 +29,7 @@ main :: proc() {
 	}
 	defer sdl.Quit()
 
-	app := gfx.App {
+	app := App {
 		width  = 1280,
 		height = 720,
 	}

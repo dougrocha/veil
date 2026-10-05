@@ -2,9 +2,6 @@ package graphics
 
 import "core:math/linalg"
 import "core:mem/virtual"
-import "core:time"
-
-import sdl "vendor:sdl3"
 
 import "backend"
 
@@ -31,14 +28,6 @@ Extent2D :: struct {
 }
 
 vec3_splat :: proc(v: f32) -> Vec3 {return {v, v, v}}
-
-App :: struct {
-	window:          ^sdl.Window,
-	width:           u32,
-	height:          u32,
-	engine:          Engine,
-	last_frame_time: time.Time,
-}
 
 Engine :: struct {
 	vk_ctx:             backend.Context,
