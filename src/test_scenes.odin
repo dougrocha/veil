@@ -68,6 +68,8 @@ load_pbr_showcase :: proc(engine: ^gfx.Engine) {
 }
 
 load_sponza :: proc(engine: ^gfx.Engine) {
+	gfx.set_skybox_texture(engine, gfx.texture_load_cubemap(engine, "assets/textures/StandardCubeMap.png"))
+
 	// The file is one mesh with a primitive per material, so splitting primitives is the only way to
 	// get separately pickable pieces. The root node's 0.008 scale brings it to meters.
 	sponza := gfx.model_load_parts(engine, "assets/models/sponza-gltf-pbr/sponza.glb", split_primitives = true)
@@ -150,12 +152,12 @@ load_bloom_test :: proc(engine: ^gfx.Engine) {
 			model = gfx.primitive_cube(engine, neon.name, mat, half_size = {0.35, 0.35, 0.35})
 		}
 		pos := gfx.Vec3{xs[i], 0.8, -2}
-		gfx.instance_spawn(engine, model, gfx.transform_create(translation = pos))
+		shape := gfx.instance_spawn(engine, model, gfx.transform_create(translation = pos))
 
 		if !neon.lit do continue
 		// shadow_near is past the shape's extent (cube corner ~0.61) so it clips out of its own
 		// shadow map instead of blocking its light.
-		gfx.light_spawn_point(
+		light := gfx.light_spawn_point(
 			engine,
 			gfx.PointLight {
 				pos = pos,
@@ -169,6 +171,8 @@ load_bloom_test :: proc(engine: ^gfx.Engine) {
 				specular_intensity = 1.0,
 			},
 		)
+		// The light moves with its shape.
+		gfx.light_attach_point(engine, light, shape)
 	}
 
 	floor_mat := gfx.material_create(
@@ -252,5 +256,115 @@ load_transparency_test :: proc(engine: ^gfx.Engine) {
 	engine.scene.ambient_light = gfx.AmbientLight {
 		color      = {1, 1, 1, 1},
 		brightness = 0.15,
+	}
+}
+
+// A cube, a sphere and a tall box on a floor, lit by one point light inside the sphere,
+// so each shadow's shape is easy to read. Drag objects with the gizmo to check the shadow cache.
+load_shadow_test :: proc(engine: ^gfx.Engine) {
+	floor_mat := gfx.material_create(
+		engine,
+		"shadow_floor",
+		base_color = {0.6, 0.6, 0.6, 1},
+		perceptual_roughness = 0.8,
+	)
+	floor := gfx.primitive_plane(engine, "shadow_floor", floor_mat, half_size = {12, 12})
+	gfx.instance_spawn(engine, floor, gfx.transform_create())
+
+	solid_mat := gfx.material_create(
+		engine,
+		"shadow_solid",
+		base_color = {0.8, 0.8, 0.8, 1},
+		perceptual_roughness = 0.5,
+	)
+	cube := gfx.primitive_cube(engine, "shadow_cube", solid_mat, half_size = {0.5, 0.5, 0.5})
+	sphere := gfx.primitive_sphere(engine, "shadow_sphere", solid_mat, radius = 0.5)
+	pillar := gfx.primitive_cube(engine, "shadow_pillar", solid_mat, half_size = {0.25, 1, 0.25})
+	gfx.instance_spawn(engine, cube, gfx.transform_create(translation = {-2, 0.5, 0}))
+	gfx.instance_spawn(engine, sphere, gfx.transform_create(translation = {0, 0.5, 0}))
+	gfx.instance_spawn(engine, pillar, gfx.transform_create(translation = {2, 1, 0}))
+
+	gfx.light_spawn_point(
+		engine,
+		gfx.PointLight {
+			pos                = {0, 0.5, 0}, // sphere center
+			range              = 12,
+			shadow_near        = 0.6, // past the sphere radius (0.5), so the sphere clips out of its own map
+			color              = {1, 1, 1},
+			constant           = 1,
+			linear             = 0.09,
+			quadratic          = 0.032,
+			diffuse_intensity  = 2,
+			specular_intensity = 0.5,
+		},
+	)
+
+	engine.camera_system.default_camera = gfx.camera_create({0, 4, 7}, yaw = -90, pitch = -30)
+	engine.scene.ambient_light = gfx.AmbientLight {
+		color      = {1, 1, 1, 1},
+		brightness = 0.05,
+	}
+}
+
+// Cornell box, ported from 3DWorld (cornell_box/coll_objs_box.txt). 3DWorld is Z-up; positions are
+// converted as (x, y, z) -> (x, z + 0.9, -y), so the floor top is at y = 0. The front wall is left
+// out so the camera can see in, and the glass sphere is opaque. One spot light under the ceiling
+// points down.
+load_cornell_box :: proc(engine: ^gfx.Engine) {
+	Wall :: struct {
+		name:         string,
+		center, half: gfx.Vec3,
+		color:        gfx.Vec3,
+	}
+	walls := [?]Wall {
+		{"cornell_top", {0, 1.0, 0}, {1, 0.1, 1}, {1, 1, 1}},
+		{"cornell_bottom", {0, -0.05, 0}, {1, 0.05, 1}, {1, 1, 1}},
+		{"cornell_back", {0, 0.45, -0.95}, {1, 0.55, 0.05}, {1, 1, 1}},
+		{"cornell_left", {-0.95, 0.45, 0}, {0.05, 0.45, 0.9}, {1, 0, 0}},
+		{"cornell_right", {0.95, 0.45, 0}, {0.05, 0.45, 0.9}, {0, 1, 0}},
+		{"cornell_box", {-0.25, 0.31, 0.25}, {0.15, 0.29, 0.15}, {1, 1, 1}},
+	}
+	for wall in walls {
+		mat := gfx.material_create(
+			engine,
+			wall.name,
+			base_color = {wall.color.r, wall.color.g, wall.color.b, 1} * 0.8,
+			perceptual_roughness = 0.9,
+		)
+		cube := gfx.primitive_cube(engine, wall.name, mat, half_size = wall.half)
+		gfx.instance_spawn(engine, cube, gfx.transform_create(translation = wall.center))
+	}
+
+	sphere_mat := gfx.material_create(
+		engine,
+		"cornell_sphere",
+		base_color = {0.8, 0.8, 0.8, 1},
+		perceptual_roughness = 0.1,
+	)
+	sphere := gfx.primitive_sphere(engine, "cornell_sphere", sphere_mat, radius = 0.25)
+	gfx.instance_spawn(engine, sphere, gfx.transform_create(translation = {0.4, 0.3, -0.3}))
+
+	gfx.spawn_spot_light(
+		engine,
+		gfx.SpotLight {
+			pos = {0, 0.8, 0},
+			direction = {0, -1, 0},
+			range = 3,
+			shadow_near = 0.05,
+			inner_cutoff = linalg.cos(linalg.to_radians(f32(60))),
+			outer_cutoff = linalg.cos(linalg.to_radians(f32(75))),
+			constant = 1,
+			linear = 0.7,
+			quadratic = 1.8,
+			color = {1, 1, 1},
+			diffuse_intensity = 3,
+			specular_intensity = 0.5,
+		},
+	)
+
+	engine.camera_system.default_camera = gfx.camera_create({0, 0.45, 2.4}, yaw = -90, pitch = 0)
+	engine.scene.ambient_light = gfx.AmbientLight {
+		color      = {1, 1, 1, 1},
+		brightness = 0.03,
 	}
 }

@@ -137,8 +137,21 @@ float4 sample_occlusion(uint index, float2 uv) {
     return gpu_texture(index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
 }
 
+// Normal offset bias: move the lookup point along the geometric normal by about one shadow texel,
+// measured in world units at the fragment's distance. A fixed depth bias can't cover a texel that
+// grows with distance and view angle, which shows as stripes (acne) on lit faces.
+static const float NORMAL_OFFSET_TEXELS = 1.5;
+
+float3 normal_offset(float3 frag_pos, float3 geo_normal, float3 to_light, float texel_world) {
+    float slope = saturate(1.0 - dot(geo_normal, to_light)); // grazing light needs more
+    return frag_pos + geo_normal * texel_world * NORMAL_OFFSET_TEXELS * (0.5 + slope);
+}
+
 float calc_point_shadow_factor(PointLight light, uint light_index, float3 frag_pos, float3 normal) {
     float3 light_pos = light.position_range.xyz;
+    // A 90 degree cube face: one texel spans 2 * distance / face size.
+    float texel_world = 2.0 * length(frag_pos - light_pos) / POINT_SHADOW_MAP_SIZE;
+    frag_pos = normal_offset(frag_pos, normal, normalize(light_pos - frag_pos), texel_world);
     float3 light_to_frag = frag_pos - light_pos;
     float current_depth = length(light_to_frag) / light.position_range.w;
 
@@ -213,7 +226,12 @@ uint spot_shadow_slot(uint light_index) {
     return (MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + light_index;
 }
 
-float calc_spot_shadow_factor(SpotLight light, uint slot, float3 frag_pos, float3 normal, float3 to_light) {
+float calc_spot_shadow_factor(SpotLight light, uint slot, float3 frag_pos, float3 normal, float3 geo_normal, float3 to_light) {
+    // The view spans 2 * tan(half angle) * distance; color_outer.w is cos(half angle).
+    float cos_outer = clamp(light.color_outer.w, 0.01, 0.9999);
+    float tan_outer = sqrt(1.0 - cos_outer * cos_outer) / cos_outer;
+    float texel_world = 2.0 * tan_outer * length(frag_pos - light.position_range.xyz) / pc.scene_data.cam_pos_shadow_map_size.w;
+    frag_pos = normal_offset(frag_pos, geo_normal, to_light, texel_world);
     float4 light_space_pos = mul(pc.scene_data.shadow_2d_view_proj[slot], float4(frag_pos, 1.0));
     float3 proj_coords = light_space_pos.xyz / light_space_pos.w;
     float2 uv = shadow_uv_from_ndc(proj_coords.xy);
@@ -284,7 +302,7 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
 
     for (uint i = 0; i < ((light_mask & LIGHT_MASK_SPOT) != 0 ? pc.scene_data.spot_light_count : 0); i++) {
         float3 to_light = normalize(pc.scene_data.spot_lights[i].position_range.xyz - vert.frag_pos);
-        float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, to_light);
+        float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, normalize(vert.frag_normal), to_light);
         total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
     }
 

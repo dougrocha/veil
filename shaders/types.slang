@@ -4,6 +4,7 @@ static const uint MAX_POINT_LIGHTS = 8;
 static const uint MAX_DIRECTIONAL_LIGHTS = 2;
 static const uint MAX_SPOT_LIGHTS = 4;
 static const uint SHADOW_MAP_CASCADE_COUNT = 4;
+static const uint POINT_SHADOW_MAP_SIZE = 1024;
 static const uint MAX_SHADOW_2D_SLOTS = (((MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT)) + MAX_SPOT_LIGHTS);
 static const uint LIGHT_MASK_POINT = 1;
 static const uint LIGHT_MASK_DIRECTIONAL = 2;

@@ -77,10 +77,12 @@ main :: proc() {
 
 	app.last_frame_time = time.now()
 
-	load_sponza(&app.engine)
-
-	space_skybox_tex := gfx.texture_load_cubemap(&app.engine, "assets/textures/StandardCubeMap.png")
-	gfx.set_skybox_texture(&app.engine, space_skybox_tex)
+	// load_sponza(&app.engine)
+	// load_transparency_test(&app.engine)
+	// load_bloom_test(&app.engine)
+	// load_pbr_showcase(&app.engine)
+	// load_shadow_test(&app.engine)
+	load_cornell_box(&app.engine)
 
 	gizmo: gfx.GizmoController
 	show_stats := true
@@ -108,6 +110,8 @@ main :: proc() {
 					gfx.gizmo_set_mode(&gizmo, .Rotate)
 				case .L:
 					gfx.gizmo_toggle_space(&gizmo)
+				case .H:
+					app.engine.debug_settings.show_lights = !app.engine.debug_settings.show_lights
 				case ._1:
 					active_cam.near = 0.1
 					active_cam.far = 100.0
