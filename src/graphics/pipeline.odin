@@ -9,6 +9,8 @@ GraphicsPipelineKind :: enum u8 {
 	Shadow_Directional, // directional cascades, depth-clamped
 	Mesh, // opaque and mask
 	Mesh_Transparent, // alpha blended, no depth write
+	Mesh_Double_Sided, // Mesh without back-face culling
+	Mesh_Transparent_Double_Sided,
 	Skybox,
 	UI,
 	Particle,

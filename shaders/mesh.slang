@@ -227,19 +227,22 @@ float calc_spot_shadow_factor(SpotLight light, uint slot, float3 frag_pos, float
 }
 
 [shader("fragment")]
-float4 fragment_main(VSOutput vert) : SV_TARGET {
+float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET {
     let mat = pc.material_buffer[pc.material_index];
+
+    // Double-sided back faces are lit as if they faced the viewer (only those pipelines skip culling).
+    float3 geo_normal = (mat.double_sided != 0 && !is_front) ? -vert.frag_normal : vert.frag_normal;
 
     float4 tex_color = sample_base_color(mat.base_color_texture, vert.frag_uv) * mat.base_color;
 
     float3 normal;
     if (length(vert.frag_tangent) > 0.001) {
-        float3x3 TBN = float3x3(vert.frag_tangent, vert.frag_bitangent, vert.frag_normal);
+        float3x3 TBN = float3x3(vert.frag_tangent, vert.frag_bitangent, geo_normal);
         float3 normal_sample = sample_normal_map(mat.normal_map_texture, vert.frag_uv).rgb;
         normal_sample.g = 1.0 - normal_sample.g; // convert OpenGL (nor_gl) to Vulkan/DX convention
         normal = normalize(mul(normal_sample * 2.0 - 1.0, TBN));
     } else {
-        normal = normalize(vert.frag_normal);
+        normal = normalize(geo_normal);
     }
 
     float4 arm = sample_metallic_roughness(mat.metallic_roughness_texture, vert.frag_uv);

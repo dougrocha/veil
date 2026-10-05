@@ -272,8 +272,13 @@ view_draw_list :: proc(engine: ^Engine) -> DrawList {
 }
 
 draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
-	backend.pipeline_bind(cmd, graphics_pipeline(engine, .Mesh))
+	bound: Maybe(GraphicsPipelineKind)
 	for batch in draw_runs_upload(engine, list.opaque) {
+		kind: GraphicsPipelineKind = .Mesh_Double_Sided if mesh_double_sided(engine, batch.mesh) else .Mesh
+		if bound != kind {
+			backend.pipeline_bind(cmd, graphics_pipeline(engine, kind))
+			bound = kind
+		}
 		mesh_draw_batch(engine, cmd, batch)
 	}
 }
@@ -281,11 +286,22 @@ draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: Dr
 // Back to front, one draw per mesh so the order holds. Draw after everything opaque, skybox
 // included: these don't write depth, so anything drawn later would cover them.
 draw_meshes_transparent :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
-	backend.pipeline_bind(cmd, graphics_pipeline(engine, .Mesh_Transparent))
+	bound: Maybe(GraphicsPipelineKind)
 	for item in list.transparent {
+		kind: GraphicsPipelineKind =
+			.Mesh_Transparent_Double_Sided if mesh_double_sided(engine, item.mesh) else .Mesh_Transparent
+		if bound != kind {
+			backend.pipeline_bind(cmd, graphics_pipeline(engine, kind))
+			bound = kind
+		}
 		batch := single_draw_batch(engine, item) or_break
 		mesh_draw_batch(engine, cmd, batch)
 	}
+}
+
+@(private = "file")
+mesh_double_sided :: proc(engine: ^Engine, mesh: ^Mesh) -> bool {
+	return pool_get(&engine.material_system.materials, mesh.material).double_sided
 }
 
 @(private = "file")

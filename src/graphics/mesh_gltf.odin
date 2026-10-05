@@ -373,5 +373,6 @@ gltf_extract_material :: proc(
 		alpha_mode = alpha_mode,
 		alpha_cutoff = mat.alpha_cutoff,
 		emissive = emissive,
+		double_sided = bool(mat.double_sided),
 	)
 }

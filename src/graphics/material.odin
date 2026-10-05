@@ -22,6 +22,7 @@ Material :: struct {
 	alpha_mode:                 AlphaMode,
 	alpha_cutoff:               f32,
 	emissive:                   Vec3,
+	double_sided:               bool, // no back-face culling; back faces lit with the normal flipped
 }
 
 MaterialHandle :: Handle(Material)
@@ -67,6 +68,7 @@ material_create :: proc(
 	alpha_mode: AlphaMode = .Opaque,
 	alpha_cutoff: f32 = 0.5,
 	emissive: Vec3 = {0, 0, 0}, // HDR, bake the strength in (e.g. color * 20)
+	double_sided := false,
 ) -> MaterialHandle {
 	if handle, ok := engine.material_system.material_map[name]; ok {
 		log.warnf("Material \"%s\" already exists; returning existing material", name)
@@ -104,6 +106,7 @@ material_create :: proc(
 		alpha_mode                 = alpha_mode,
 		alpha_cutoff               = alpha_cutoff,
 		emissive                   = emissive,
+		double_sided               = double_sided,
 	}
 
 	handle := pool_alloc(&engine.material_system.materials, material)
@@ -121,6 +124,7 @@ material_create :: proc(
 		occlusion_texture          = u32(resolved_occlusion.index),
 		alpha_mode                 = u32(alpha_mode),
 		alpha_cutoff               = alpha_cutoff,
+		double_sided               = u32(double_sided),
 		emissive                   = {emissive.x, emissive.y, emissive.z, 0},
 	}
 	mem.copy(rawptr(dst), &gpu_mat, size_of(GpuMaterial))

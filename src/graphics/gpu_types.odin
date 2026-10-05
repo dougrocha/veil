@@ -85,6 +85,7 @@ GpuMaterial :: struct #max_field_align(16) {
 	occlusion_texture:          u32,
 	alpha_mode:                 u32,
 	alpha_cutoff:               f32,
+	double_sided:               u32, // back faces are drawn and lit with the normal flipped
 	emissive:                   Vec4, // rgb: unbounded HDR emitted color, added after lighting; w unused
 }
 

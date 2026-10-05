@@ -195,6 +195,7 @@ load_transparency_test :: proc(engine: ^gfx.Engine) {
 		"transparency_floor",
 		base_color = {0.5, 0.5, 0.5, 1},
 		perceptual_roughness = 0.8,
+		double_sided = true,
 	)
 	floor := gfx.primitive_plane(engine, "transparency_floor", floor_mat, half_size = {12, 12})
 	gfx.instance_spawn(engine, floor, gfx.transform_create())

@@ -83,6 +83,7 @@ struct Material {
     uint occlusion_texture;
     uint alpha_mode;
     float alpha_cutoff;
+    uint double_sided;
     float4 emissive;
 };
 
