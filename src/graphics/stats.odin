@@ -151,7 +151,7 @@ stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32) {
 		gpu_line = strings.to_string(b)
 	}
 
-	all_lines := [?]string{lines[0], lines[1], gpu_line, lines[2]}
+	all_lines := [?]string{lines[0], lines[1], gpu_line, lines[2], post_control_line(engine)}
 	for line, i in all_lines {
 		ly := y + f32(i) * line_height
 		// drop shadow keeps it readable over bright and dark scenes

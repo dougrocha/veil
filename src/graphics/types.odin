@@ -108,6 +108,14 @@ DebugSettings :: struct {
 	// CPU-only bloom controls; max levels is clamped to what the bloom target was allocated with
 	bloom_max_levels:                           u32,
 	bloom_strength:                             f32,
+	exposure:                                   f32, // CPU-only; tonemap push constant
+	post_control:                               PostControl, // which value the arrow keys adjust
+}
+
+PostControl :: enum {
+	Exposure,
+	Bloom_Strength,
+	Bloom_Levels,
 }
 
 TimeInfo :: struct {

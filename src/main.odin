@@ -108,6 +108,14 @@ main :: proc() {
 				case .J:
 					app.engine.debug_settings.light_mask ~= u32(gfx.LightMask.Directional)
 					log.infof("light mask: 0b%b", app.engine.debug_settings.light_mask)
+				case .LEFT:
+					gfx.post_control_cycle(&app.engine, -1)
+				case .RIGHT:
+					gfx.post_control_cycle(&app.engine, 1)
+				case .UP:
+					gfx.post_control_step(&app.engine, 1)
+				case .DOWN:
+					gfx.post_control_step(&app.engine, -1)
 				case .X:
 					app.engine.debug_settings.particles = !app.engine.debug_settings.particles
 					log.infof("particles: %v", app.engine.debug_settings.particles)

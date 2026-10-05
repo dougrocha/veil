@@ -22,6 +22,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	engine.debug_settings.light_mask = LIGHT_MASK_ALL
 	engine.debug_settings.bloom_max_levels = BLOOM_DEFAULT_LEVELS
 	engine.debug_settings.bloom_strength = BLOOM_DEFAULT_STRENGTH
+	engine.debug_settings.exposure = TONEMAP_EXPOSURE
 	frame_dump_init(engine)
 	debug_env_init(engine)
 	engine.scene.ambient_light = AmbientLight {

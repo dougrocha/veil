@@ -1,5 +1,7 @@
 package graphics
 
+import "core:fmt"
+
 import "backend"
 
 // Fixed slots in the bindless storage array (storage_descriptor, set 1 of compute post passes).
@@ -7,7 +9,7 @@ STORAGE_SLOT_DRAW :: 0
 STORAGE_SLOT_BLOOM :: 1 // bloom mip i is at STORAGE_SLOT_BLOOM + i
 #assert(STORAGE_SLOT_BLOOM + backend.BLOOM_MAX_MIPS <= BINDLESS_STORAGE_IMAGE_COUNT)
 
-TONEMAP_EXPOSURE :: 1.0
+TONEMAP_EXPOSURE :: 1.0 // default for debug_settings.exposure
 // Keep in sync with numthreads in tonemap.slang, bloom_down.slang and bloom_up.slang.
 POST_GROUP_SIZE :: 8
 
@@ -175,7 +177,7 @@ dispatch_tonemap :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	pc := TonemapPushConstants {
 		hdr_texture    = u32(engine.hdr_texture.index),
 		out_storage    = STORAGE_SLOT_DRAW,
-		exposure       = TONEMAP_EXPOSURE,
+		exposure       = engine.debug_settings.exposure,
 		bloom_texture  = u32(engine.bloom_textures[0].index),
 		bloom_strength = engine.debug_settings.bloom_strength / f32(bloom_levels(engine)),
 	}
@@ -185,4 +187,46 @@ dispatch_tonemap :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	backend.pipeline_push_compute(encoder, pipeline, &pc)
 	dispatch_post(encoder, {engine.swapchain.extent.width, engine.swapchain.extent.height})
 	backend.end_compute_pass(encoder)
+}
+
+EXPOSURE_STEP :: 0.25
+BLOOM_STRENGTH_STEP :: 0.05
+
+// Left/Right: selects the next or previous post value (dir = +1 / -1), wrapping around.
+post_control_cycle :: proc(engine: ^Engine, dir: int) {
+	n := len(PostControl)
+	s := &engine.debug_settings
+	s.post_control = PostControl((int(s.post_control) + dir + n) % n)
+}
+
+// Up/Down: steps the selected post value (dir = +1 / -1), clamped to its valid range.
+post_control_step :: proc(engine: ^Engine, dir: int) {
+	s := &engine.debug_settings
+	switch s.post_control {
+	case .Exposure:
+		s.exposure = max(s.exposure + f32(dir) * EXPOSURE_STEP, 0)
+	case .Bloom_Strength:
+		s.bloom_strength = max(s.bloom_strength + f32(dir) * BLOOM_STRENGTH_STEP, 0)
+	case .Bloom_Levels:
+		s.bloom_max_levels = u32(clamp(int(s.bloom_max_levels) + dir, 1, backend.BLOOM_MAX_MIPS))
+	}
+}
+
+// Stats line for the post values; ">" marks the one the arrow keys adjust. Levels shows the
+// setting and what actually runs after the resolution clamp.
+post_control_line :: proc(engine: ^Engine) -> string {
+	s := &engine.debug_settings
+	mark :: proc(s: ^DebugSettings, c: PostControl) -> string {
+		return ">" if s.post_control == c else " "
+	}
+	return fmt.tprintf(
+		"post %sexposure %.2f  %sbloom %.2f  %slevels %d/%d",
+		mark(s, .Exposure),
+		s.exposure,
+		mark(s, .Bloom_Strength),
+		s.bloom_strength,
+		mark(s, .Bloom_Levels),
+		s.bloom_max_levels,
+		bloom_levels(engine),
+	)
 }
