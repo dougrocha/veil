@@ -46,7 +46,8 @@ main :: proc() {
 
 	init_ok := gfx.engine_create(&app.engine, app.window, app.width, app.height)
 	if !init_ok {
-		log.errorf("Failed to initialize Vulkan")
+		// Fatal by design: no engine_destroy, the process exit reclaims everything.
+		log.errorf("Failed to initialize the engine")
 		return
 	}
 	defer gfx.engine_destroy(&app.engine)

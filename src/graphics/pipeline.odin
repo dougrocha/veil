@@ -96,7 +96,7 @@ pipeline_rebuild :: proc(self: ^Engine, kind: PipelineKind) {
 	log.infof("Rebuilt pipeline: %v", kind)
 }
 
-destroy_pipeline_registry :: proc(ctx: ^backend.Context, reg: ^PipelineRegistry) {
+pipeline_registry_destroy :: proc(ctx: ^backend.Context, reg: ^PipelineRegistry) {
 	for pipeline in reg.pipelines {
 		backend.pipeline_destroy(ctx, pipeline)
 	}

@@ -11,7 +11,8 @@ import sdl "vendor:sdl3"
 
 import "backend"
 
-// eventually move this from init vulkan and actually make it like a init engine
+// Init failure is fatal: on false the caller exits without engine_destroy and the OS and
+// driver reclaim whatever was created. Don't retry or keep running after a failed create.
 engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) -> (ok: bool) {
 	if err := virtual.arena_init_growing(&engine.frame_arena); err != nil {
 		log.errorf("Failed to create engine frame arena: %v", err)
@@ -31,8 +32,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	}
 
 	vk_ctx := &engine.vk_ctx
-	backend.context_init(vk_ctx, window)
-	backend.upload_pool_create(vk_ctx)
+	backend.context_init(vk_ctx, window) or_return
 
 	engine.swapchain = backend.swapchain_create(vk_ctx, width, height)
 	engine.render_targets = render_targets_create(vk_ctx, engine.swapchain.extent)
@@ -55,12 +55,11 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	bloom_down_handle := shader_load(engine, "bloom_down", COMPUTE_ENTRIES) or_return
 	bloom_up_handle := shader_load(engine, "bloom_up", COMPUTE_ENTRIES) or_return
 
-	backend.frame_sync_create(vk_ctx)
 	frame_data_create(engine)
 
 	texture_system_create(engine, {max_textures_count = max_bindless_textures})
 	material_system_create(engine, {max_material_count = MAX_MATERIALS})
-	create_model_system(engine)
+	model_system_create(engine)
 
 	global_resources_create(engine)
 	post_targets_create(engine)
@@ -94,33 +93,36 @@ global_resources_create :: proc(engine: ^Engine) {
 	set_skybox_texture(engine, engine.texture_system.defaults[.Black_Cube])
 }
 
+global_resources_destroy :: proc(engine: ^Engine) {
+	shadow_atlas_destroy(&engine.vk_ctx, &engine.shadow_2d_atlas)
+	shadow_atlas_destroy(&engine.vk_ctx, &engine.shadow_atlas)
+}
+
+// Exact reverse of engine_create.
 engine_destroy :: proc(self: ^Engine) {
 	backend.device_wait_idle(&self.vk_ctx)
 
-	camera_system_destroy(&self.camera_system)
-	frame_dump_destroy(self)
-	texture_system_destroy(self)
-	destroy_model_system(self)
-	material_system_destroy(self)
-
-	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_atlas)
-	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_2d_atlas)
-
-	gpu_profiler_destroy(self)
-	shadow_cache_destroy(self)
-	line_renderer_destroy(self)
 	ui_renderer_destroy(self)
+	line_renderer_destroy(self)
+	pipeline_registry_destroy(&self.vk_ctx, &self.pipeline_registry)
 
-	destroy_pipeline_registry(&self.vk_ctx, &self.pipeline_registry)
+	shadow_cache_destroy(self)
+	gpu_profiler_destroy(self)
+	// post_targets_create only registers external textures; texture_system_destroy frees them.
+	global_resources_destroy(self)
 
+	model_system_destroy(self)
+	material_system_destroy(self)
+	texture_system_destroy(self)
+	frame_data_destroy(self)
 	shader_system_destroy(self)
 
-	frame_data_destroy(self)
-	backend.frame_sync_destroy(&self.vk_ctx)
 	render_targets_destroy(&self.vk_ctx, &self.render_targets)
 	backend.swapchain_destroy(&self.vk_ctx, &self.swapchain)
-
 	backend.context_destroy(&self.vk_ctx)
+
+	frame_dump_destroy(self)
+	camera_system_destroy(&self.camera_system)
 	virtual.arena_destroy(&self.frame_arena)
 }
 

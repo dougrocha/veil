@@ -55,14 +55,14 @@ ModelSystem :: struct {
 	parts_map: map[string][]ModelPart,
 }
 
-create_model_system :: proc(engine: ^Engine) {
+model_system_create :: proc(engine: ^Engine) {
 	engine.model_system.models = pool_init(1024, Model)
 	engine.model_system.model_map = make(map[string]ModelHandle)
 	engine.model_system.parts_map = make(map[string][]ModelPart)
 	engine.scene.instances = pool_init(MAX_MODEL_INSTANCES, Instance)
 }
 
-destroy_model_system :: proc(engine: ^Engine) {
+model_system_destroy :: proc(engine: ^Engine) {
 	ms := &engine.model_system
 	for &model, i in ms.models.values {
 		if pool_is_alive(&ms.models, Index(i)) {
