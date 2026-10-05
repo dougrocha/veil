@@ -5,8 +5,6 @@ import "core:log"
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
-Extent3D :: vk.Extent3D
-
 extent3d :: proc(width, height, depth: u32) -> Extent3D {
 	return {width, height, depth}
 }
@@ -26,11 +24,11 @@ GpuImage :: struct {
 	mip_views:    []vk.ImageView, // one per mip level; only for multi-mip storage images
 	alloc:        vma.Allocation,
 	alloc_info:   vma.Allocation_Info,
-	extent:       vk.Extent3D,
-	format:       vk.Format,
+	extent:       Extent3D,
+	format:       Format,
 	mip_levels:   u32,
 	array_layers: u32,
-	samples:      vk.SampleCountFlags,
+	samples:      u32,
 	layout:       []vk.ImageLayout, // one per (mip, layer); index with image_layout_index
 	usage:        ImageUsageFlags,
 }
@@ -51,48 +49,35 @@ image_layout_index :: proc(img: ^GpuImage, mip, layer: u32) -> u32 {
 	return mip * img.array_layers + layer
 }
 
+// Backend-neutral description of an image; image_create takes it as-is.
 ImageDesc :: struct {
-	extent:            vk.Extent3D,
-	format:            vk.Format,
-	image_usage_flags: ImageUsageFlags,
-	mip_levels:        u32,
-	array_layers:      u32,
-	samples:           vk.SampleCountFlags,
-	tiling:            vk.ImageTiling,
-	image_type:        vk.ImageType,
-	image_flags:       vk.ImageCreateFlags,
-	alloc_flags:       vma.Allocation_Create_Flags,
+	extent:       Extent3D,
+	format:       Format,
+	usage:        ImageUsageFlags,
+	mip_levels:   u32,
+	array_layers: u32,
+	samples:      u32,
+	cube:         bool, // layers are cube faces (array_layers a multiple of 6)
 }
 
-image_desc_default :: proc(extent: vk.Extent3D, format: vk.Format, image_usage_flags: ImageUsageFlags) -> ImageDesc {
-	return ImageDesc {
-		extent = extent,
-		format = format,
-		image_usage_flags = image_usage_flags,
-		mip_levels = 1,
-		array_layers = 1,
-		samples = {._1},
-		tiling = .OPTIMAL,
-		image_type = .D2,
-		image_flags = {},
-		alloc_flags = {},
-	}
+image_desc_default :: proc(extent: Extent3D, format: Format, usage: ImageUsageFlags) -> ImageDesc {
+	return ImageDesc{extent = extent, format = format, usage = usage, mip_levels = 1, array_layers = 1, samples = 1}
 }
 
 image_create :: proc(ctx: ^Context, desc: ImageDesc) -> GpuImage {
 	image_info := vk.ImageCreateInfo {
 		sType         = .IMAGE_CREATE_INFO,
-		imageType     = desc.image_type,
-		format        = desc.format,
-		extent        = desc.extent,
+		imageType     = .D2,
+		format        = format_to_vk(desc.format),
+		extent        = {desc.extent.width, desc.extent.height, desc.extent.depth},
 		mipLevels     = desc.mip_levels,
 		arrayLayers   = desc.array_layers,
-		samples       = desc.samples,
-		tiling        = desc.tiling,
-		usage         = image_usage_to_vk(desc.image_usage_flags),
+		samples       = samples_to_vk(desc.samples),
+		tiling        = .OPTIMAL,
+		usage         = image_usage_to_vk(desc.usage),
 		sharingMode   = .EXCLUSIVE,
 		initialLayout = .UNDEFINED,
-		flags         = desc.image_flags,
+		flags         = {.CUBE_COMPATIBLE} if desc.cube else {},
 	}
 
 	gpu_img := GpuImage {
@@ -101,7 +86,7 @@ image_create :: proc(ctx: ^Context, desc: ImageDesc) -> GpuImage {
 		mip_levels   = desc.mip_levels,
 		array_layers = desc.array_layers,
 		samples      = desc.samples,
-		usage        = desc.image_usage_flags,
+		usage        = desc.usage,
 	}
 
 	gpu_img.layout = make([]vk.ImageLayout, desc.mip_levels * desc.array_layers)
@@ -113,14 +98,14 @@ image_create :: proc(ctx: ^Context, desc: ImageDesc) -> GpuImage {
 		vma.create_image(
 			ctx.vma_allocator,
 			image_info,
-			vma.Allocation_Create_Info{usage = .Auto, required_flags = {.DEVICE_LOCAL}, flags = desc.alloc_flags},
+			vma.Allocation_Create_Info{usage = .Auto, required_flags = {.DEVICE_LOCAL}},
 			&gpu_img.image,
 			&gpu_img.alloc,
 			&gpu_img.alloc_info,
 		),
 	)
 
-	if desc.array_layers > 1 && desc.image_usage_flags & {.ColorAttachment, .DepthStencilAttachment} != {} {
+	if desc.array_layers > 1 && desc.usage & {.ColorAttachment, .DepthStencilAttachment} != {} {
 		gpu_img.layer_views = make([]vk.ImageView, desc.array_layers)
 		for i in 0 ..< desc.array_layers {
 			view_desc := image_view_desc_default(gpu_img)
@@ -131,7 +116,7 @@ image_create :: proc(ctx: ^Context, desc: ImageDesc) -> GpuImage {
 		}
 	}
 
-	if desc.mip_levels > 1 && desc.image_usage_flags & {.Storage} != {} {
+	if desc.mip_levels > 1 && desc.usage & {.Storage} != {} {
 		gpu_img.mip_views = make([]vk.ImageView, desc.mip_levels)
 		for i in 0 ..< desc.mip_levels {
 			view_desc := image_view_desc_default(gpu_img)
@@ -143,10 +128,6 @@ image_create :: proc(ctx: ^Context, desc: ImageDesc) -> GpuImage {
 	}
 
 	return gpu_img
-}
-
-image_desc_set_cube_array :: proc(desc: ^ImageDesc) {
-	desc.image_flags = {.CUBE_COMPATIBLE}
 }
 
 image_create_default_view :: proc(ctx: ^Context, img: ^GpuImage, cube: bool, layers: u32) {
@@ -213,9 +194,9 @@ image_view_create :: proc(ctx: ^Context, img: GpuImage, desc: ImageViewDesc) -> 
 		sType = .IMAGE_VIEW_CREATE_INFO,
 		image = img.image,
 		viewType = desc.view_type,
-		format = img.format,
+		format = format_to_vk(img.format),
 		subresourceRange = {
-			aspectMask = format_aspect_mask(img.format),
+			aspectMask = format_aspect_mask(format_to_vk(img.format)),
 			baseMipLevel = desc.base_mip_level,
 			levelCount = desc.mip_levels,
 			baseArrayLayer = desc.base_array_layer,
@@ -352,7 +333,7 @@ image_barrier_raw :: proc(
 // image helpers
 
 generate_mipmaps :: proc(ctx: ^Context, img: ^GpuImage) {
-	format_props := vk_get_physical_device_format_properties(ctx, img.format)
+	format_props := vk_get_physical_device_format_properties(ctx, format_to_vk(img.format))
 
 	if .SAMPLED_IMAGE_FILTER_LINEAR not_in format_props.optimalTilingFeatures {
 		log.panicf("Texture image format does not support linear blitting")
@@ -403,7 +384,7 @@ generate_mipmaps :: proc(ctx: ^Context, img: ^GpuImage) {
 	}
 }
 
-copy_image_to_image :: proc(cmd: CommandBuffer, src, dst: vk.Image, src_extent, dst_extent: vk.Extent2D) {
+copy_image_to_image :: proc(cmd: CommandBuffer, src, dst: vk.Image, src_extent, dst_extent: Extent2D) {
 	blit_region := vk.ImageBlit2 {
 		sType = .IMAGE_BLIT_2,
 		srcSubresource = {aspectMask = {.COLOR}, layerCount = 1},

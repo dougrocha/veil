@@ -11,7 +11,7 @@ Swapchain :: struct {
 	// flight: the presentation engine can still hold it after that frame's fence has passed.
 	present_semaphores:  []vk.Semaphore,
 	require_recreate:    bool,
-	extent:              vk.Extent2D,
+	extent:              Extent2D,
 	current_image_index: u32,
 }
 
@@ -37,7 +37,7 @@ swapchain_build :: proc(ctx: ^Context, width, height: u32, old_handle: vk.Swapch
 
 	// A defined currentExtent must be used as-is; 0xFFFFFFFF means the surface takes our size.
 	if surface_caps.currentExtent.width != max(u32) {
-		swapchain.extent = surface_caps.currentExtent
+		swapchain.extent = {surface_caps.currentExtent.width, surface_caps.currentExtent.height}
 	} else {
 		swapchain.extent = {
 			clamp(width, surface_caps.minImageExtent.width, surface_caps.maxImageExtent.width),
@@ -56,7 +56,7 @@ swapchain_build :: proc(ctx: ^Context, width, height: u32, old_handle: vk.Swapch
 		minImageCount    = u32(requested_image_count),
 		imageFormat      = SWAPCHAIN_FORMAT,
 		imageColorSpace  = .SRGB_NONLINEAR,
-		imageExtent      = swapchain.extent,
+		imageExtent      = {swapchain.extent.width, swapchain.extent.height},
 		imageArrayLayers = 1,
 		imageUsage       = {.COLOR_ATTACHMENT, .TRANSFER_DST},
 		imageSharingMode = .EXCLUSIVE,
@@ -92,10 +92,10 @@ swapchain_destroy :: proc(ctx: ^Context, swapchain: ^Swapchain) {
 
 render_target_create :: proc(
 	ctx: ^Context,
-	extent: vk.Extent3D,
-	format: vk.Format,
+	extent: Extent3D,
+	format: Format,
 	usage: ImageUsageFlags,
-	samples: vk.SampleCountFlags = {._1},
+	samples: u32 = 1,
 ) -> GpuImage {
 	desc := image_desc_default(extent, format, usage)
 	desc.samples = samples

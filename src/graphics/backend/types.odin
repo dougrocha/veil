@@ -69,8 +69,16 @@ LoadOp :: enum u8 {
 }
 
 SWAPCHAIN_FORMAT :: vk.Format.B8G8R8A8_SRGB
-DEPTH_FORMAT :: vk.Format.D32_SFLOAT
-DRAW_FORMAT :: vk.Format.R16G16B16A16_SFLOAT
+DEPTH_FORMAT :: Format.D32_Sfloat
+DRAW_FORMAT :: Format.Rgba16_Sfloat
+
+Extent2D :: struct {
+	width, height: u32,
+}
+
+Extent3D :: struct {
+	width, height, depth: u32,
+}
 
 CommandBuffer :: distinct vk.CommandBuffer
 RenderEncoder :: CommandBuffer
@@ -99,7 +107,7 @@ Context :: struct {
 	debug_messenger:                 vk.DebugUtilsMessengerEXT,
 	gfx_queue_fam_idx:               u32,
 	graphics_queue:                  vk.Queue,
-	msaa_samples:                    vk.SampleCountFlags,
+	msaa_samples:                    u32, // highest count usable for color + depth
 	upload_pool:                     vk.CommandPool,
 	max_bindless_textures_per_stage: u32,
 	timeline_semaphore:              vk.Semaphore,

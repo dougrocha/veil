@@ -11,7 +11,7 @@ image_read_rgba8 :: proc(ctx: ^Context, img: ^GpuImage, allocator := context.all
 	height := img.extent.height
 	size := int(width) * int(height) * 4
 
-	rgba_img := image_create(ctx, image_desc_default(img.extent, .R8G8B8A8_UNORM, {.TransferDst, .TransferSrc}))
+	rgba_img := image_create(ctx, image_desc_default(img.extent, .Rgba8_Unorm, {.TransferDst, .TransferSrc}))
 	defer image_destroy(ctx, rgba_img)
 
 	staging := buffer_create(u8, ctx, size, .Readback)

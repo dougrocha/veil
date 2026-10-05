@@ -184,12 +184,12 @@ pipeline_config_set_push_constant_compute :: proc(
 MAX_COLOR_ATTACHMENTS :: 8
 
 // What a graphics pipeline renders into. The owner of the images builds it from their formats,
-// so a pipeline can't disagree with the pass it draws in. depth = .UNDEFINED means no depth.
+// so a pipeline can't disagree with the pass it draws in. depth = .Undefined means no depth.
 AttachmentLayout :: struct {
-	color:       [MAX_COLOR_ATTACHMENTS]vk.Format,
+	color:       [MAX_COLOR_ATTACHMENTS]Format,
 	color_count: u32,
-	depth:       vk.Format,
-	samples:     vk.SampleCountFlags,
+	depth:       Format,
+	samples:     u32,
 }
 
 pipeline_config_set_layout :: proc(config: ^GraphicsPipelineConfig, layout: AttachmentLayout) {
@@ -303,10 +303,10 @@ pipeline_create :: proc(ctx: ^Context, config: ^GraphicsPipelineConfig, stages: 
 	device := ctx.device
 	attachments := &config.attachments
 	assert(
-		attachments.color_count > 0 || attachments.depth != .UNDEFINED,
+		attachments.color_count > 0 || attachments.depth != .Undefined,
 		"pipeline_create: no attachment layout set (pipeline_config_set_layout)",
 	)
-	assert(attachments.samples != {}, "pipeline_create: attachment layout has no sample count")
+	assert(attachments.samples > 0, "pipeline_create: attachment layout has no sample count")
 	layout_info := pipeline_build_layout_info(
 		&config.descriptor_layouts,
 		config.descriptor_layout_count,
@@ -341,13 +341,17 @@ pipeline_create :: proc(ctx: ^Context, config: ^GraphicsPipelineConfig, stages: 
 	color_blend.pAttachments = &blend_attachments[0]
 
 	multi_sample := config.multi_sample
-	multi_sample.rasterizationSamples = attachments.samples
+	multi_sample.rasterizationSamples = samples_to_vk(attachments.samples)
 
+	color_formats: [MAX_COLOR_ATTACHMENTS]vk.Format
+	for i in 0 ..< attachments.color_count {
+		color_formats[i] = format_to_vk(attachments.color[i])
+	}
 	rendering_info := vk.PipelineRenderingCreateInfo {
 		sType                   = .PIPELINE_RENDERING_CREATE_INFO,
 		colorAttachmentCount    = attachments.color_count,
-		pColorAttachmentFormats = &attachments.color[0],
-		depthAttachmentFormat   = attachments.depth,
+		pColorAttachmentFormats = &color_formats[0],
+		depthAttachmentFormat   = format_to_vk(attachments.depth),
 	}
 
 	graphics_pipeline := vk.GraphicsPipelineCreateInfo {

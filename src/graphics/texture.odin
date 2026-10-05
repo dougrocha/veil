@@ -11,7 +11,7 @@ import stbi "vendor:stb/image"
 
 TextureFilter :: backend.TextureFilter
 TextureRepeat :: backend.TextureRepeat
-TextureFormat :: backend.TextureFormat
+TextureFormat :: backend.Format
 
 DEFAULT_TEXTURE_NAME :: "default"
 DEFAULT_METALLIC_ROUGHNESS_TEXTURE_NAME :: "default_roughness"
@@ -346,12 +346,11 @@ texture_upload :: proc(
 	defer backend.buffer_destroy(ctx, staging)
 	mem.copy(backend.buffer_mapped_ptr(staging), pixels, int(image_size))
 
-	img_format := backend.texture_format_to_backend(format)
 	mip_levels := u32(math.floor(math.log2(f32(max(w, h)))) + 1)
 
 	desc := backend.image_desc_default(
 		backend.extent3d(w, h, 1),
-		img_format,
+		format,
 		{.TransferSrc, .TransferDst, .Sampled, .ColorAttachment},
 	)
 	desc.mip_levels = mip_levels
@@ -428,13 +427,9 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 cubemap_upload :: proc(ctx: ^backend.Context, staging: backend.GpuBuffer(u8), size: u32) -> Texture {
 	face_size := size * size * 4
 
-	desc := backend.image_desc_default(
-		backend.extent3d(size, size, 1),
-		backend.texture_format_to_backend(.Rgba8_Unorm_Srgb),
-		{.TransferDst, .Sampled},
-	)
+	desc := backend.image_desc_default(backend.extent3d(size, size, 1), .Rgba8_Unorm_Srgb, {.TransferDst, .Sampled})
 	desc.array_layers = 6
-	backend.image_desc_set_cube_array(&desc)
+	desc.cube = true
 	gpu_img := backend.image_create(ctx, desc)
 
 	{

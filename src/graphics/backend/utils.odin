@@ -34,17 +34,17 @@ vk_get_max_bindless_textures_per_stage :: proc(ctx: ^Context) -> u32 {
 	return descriptor_indexing_props.maxPerStageDescriptorUpdateAfterBindSampledImages
 }
 
-vk_get_max_usable_sample_count :: proc(ctx: ^Context) -> vk.SampleCountFlags {
+vk_get_max_usable_sample_count :: proc(ctx: ^Context) -> u32 {
 	properties := vk_get_physical_device_properties(ctx)
 	counts := properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts
 
-	if ._64 in counts {return {._64}}
-	if ._32 in counts {return {._32}}
-	if ._16 in counts {return {._16}}
-	if ._8 in counts {return {._8}}
-	if ._4 in counts {return {._4}}
-	if ._2 in counts {return {._2}}
-	return {._1}
+	if ._64 in counts {return 64}
+	if ._32 in counts {return 32}
+	if ._16 in counts {return 16}
+	if ._8 in counts {return 8}
+	if ._4 in counts {return 4}
+	if ._2 in counts {return 2}
+	return 1
 }
 
 format_aspect_mask :: proc(format: vk.Format) -> vk.ImageAspectFlags {

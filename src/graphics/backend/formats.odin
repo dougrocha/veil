@@ -16,10 +16,12 @@ TextureRepeat :: enum {
 	Clamp_To_Border,
 }
 
-TextureFormat :: enum {
+// Backend-neutral pixel format for every image: textures, render targets, depth.
+Format :: enum {
 	Undefined,
 	Rgba8_Unorm_Srgb,
 	Rgba8_Unorm,
+	Rgba16_Sfloat,
 	D32_Sfloat,
 	R8_Unorm,
 }
@@ -40,7 +42,7 @@ texture_repeat_to_backend :: proc(repeat: TextureRepeat) -> vk.SamplerAddressMod
 	return .REPEAT
 }
 
-texture_format_to_backend :: proc(format: TextureFormat) -> vk.Format {
+format_to_vk :: proc(format: Format) -> vk.Format {
 	switch format {
 	case .Undefined:
 		return .UNDEFINED
@@ -48,6 +50,8 @@ texture_format_to_backend :: proc(format: TextureFormat) -> vk.Format {
 		return .R8G8B8A8_SRGB
 	case .Rgba8_Unorm:
 		return .R8G8B8A8_UNORM
+	case .Rgba16_Sfloat:
+		return .R16G16B16A16_SFLOAT
 	case .D32_Sfloat:
 		return .D32_SFLOAT
 	case .R8_Unorm:
@@ -80,4 +84,23 @@ texture_filter_to_backend :: proc(filter: TextureFilter) -> vk.Filter {
 		log.warnf("cannot handle %v", filter)
 		return vk.Filter.NEAREST
 	}
+}
+
+// Sample counts are plain numbers (1, 2, 4, ...) outside the backend.
+samples_to_vk :: proc(count: u32) -> vk.SampleCountFlags {
+	switch count {
+	case 64:
+		return {._64}
+	case 32:
+		return {._32}
+	case 16:
+		return {._16}
+	case 8:
+		return {._8}
+	case 4:
+		return {._4}
+	case 2:
+		return {._2}
+	}
+	return {._1}
 }

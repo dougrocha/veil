@@ -1,7 +1,5 @@
 package graphics
 
-import vk "vendor:vulkan"
-
 import "backend"
 
 RenderTargets :: struct {
@@ -14,8 +12,8 @@ RenderTargets :: struct {
 
 BLOOM_MAX_MIPS :: 8
 
-render_targets_create :: proc(ctx: ^backend.Context, extent: vk.Extent2D) -> RenderTargets {
-	extent_3d := vk.Extent3D{extent.width, extent.height, 1}
+render_targets_create :: proc(ctx: ^backend.Context, extent: backend.Extent2D) -> RenderTargets {
+	extent_3d := backend.Extent3D{extent.width, extent.height, 1}
 	return RenderTargets {
 		bloom = bloom_target_create(ctx, extent),
 		color = backend.render_target_create(
@@ -63,12 +61,12 @@ main_pass_layout :: proc(targets: ^RenderTargets) -> backend.AttachmentLayout {
 
 // Overlay passes drawn straight into draw after the tonemap: UI, debug view. No depth.
 overlay_pass_layout :: proc(targets: ^RenderTargets) -> backend.AttachmentLayout {
-	return {color = {0 = targets.draw.format}, color_count = 1, depth = .UNDEFINED, samples = targets.draw.samples}
+	return {color = {0 = targets.draw.format}, color_count = 1, depth = .Undefined, samples = targets.draw.samples}
 }
 
 @(private = "file")
-bloom_target_create :: proc(ctx: ^backend.Context, extent: vk.Extent2D) -> backend.GpuImage {
-	half := vk.Extent3D{max(extent.width / 2, 1), max(extent.height / 2, 1), 1}
+bloom_target_create :: proc(ctx: ^backend.Context, extent: backend.Extent2D) -> backend.GpuImage {
+	half := backend.Extent3D{max(extent.width / 2, 1), max(extent.height / 2, 1), 1}
 	// A full chain for the short side has floor(log2(short)) + 1 levels.
 	full_chain: u32 = 1
 	for (min(half.width, half.height) >> full_chain) > 0 do full_chain += 1
