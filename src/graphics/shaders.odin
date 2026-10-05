@@ -130,6 +130,8 @@ shader_system_destroy :: proc(self: ^Engine) {
 	ss.global_session->release()
 }
 
+// TODO: rewrite to learn the Slang API. COM boilerplate, three diagnostics blobs (diagnostics,
+// diag, diag2).
 // Compiles a Slang module to code for the given target. Pure Slang: no GPU objects, so an
 // offline tool or a shader cache can produce the same bytes. The caller owns the result.
 shader_compile :: proc(
@@ -246,6 +248,7 @@ shader_poll_hotreload :: proc(self: ^Engine) {
 
 		filename := filepath.base(ev.path)
 
+		// TODO: strings.trim_suffix instead of manual slicing.
 		// strip ".slang" suffix to get module name
 		module_name: string
 		if len(filename) > 6 && filename[len(filename) - 6:] == ".slang" {

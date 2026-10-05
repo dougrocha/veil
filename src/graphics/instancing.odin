@@ -43,6 +43,7 @@ instance_ids_reset :: proc(engine: ^Engine) {
 	current_frame_data(engine).instance_id_count = 0
 }
 
+// TODO: replace the @(static) warned flag.
 @(private = "file")
 instance_ids_push :: proc(engine: ^Engine, ids: []u32) -> (first: u32, ok: bool) {
 	frame := current_frame_data(engine)

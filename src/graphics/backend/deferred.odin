@@ -3,6 +3,7 @@ package backend
 
 import vk "vendor:vulkan"
 
+// TODO: rewrite to own it (learner design, AI-written): retire values, timeline completion.
 // Vulkan objects whose handle is already freed but which the GPU may still be using.
 Releasable :: union {
 	ImageSlot,

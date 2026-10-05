@@ -1,5 +1,8 @@
 package graphics
 
+// TODO: rewrite. Point/spot procs are near-duplicates, and every instance slot is compared every
+// frame. Revisit the design: dirty flags vs compare-to-last-frame, and who owns change detection.
+
 // Point and spot shadow maps depend only on the light's shadow frustum and the shadow casters, so
 // they are re-rendered only when one of those changes. Directional cascades follow the camera and
 // render every frame. Changes are detected by comparison rather than dirty flags, since game code

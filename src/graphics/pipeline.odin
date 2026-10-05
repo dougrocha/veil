@@ -27,6 +27,8 @@ ComputePipelineKind :: enum u8 {
 	Bloom_Up,
 }
 
+// TODO: rewrite. Duplicates the backend's release_deferred with a different rule (frame_index +
+// MAX_FRAMES_IN_FLIGHT vs the timeline). Make pipeline_destroy defer in the backend, delete this.
 // A pipeline replaced by a hot reload, kept alive until no frame in flight can still use it.
 RetiredPipeline :: struct {
 	pipeline:    backend.Pipeline,
@@ -41,6 +43,8 @@ PipelineRegistry :: struct {
 	retired:          [dynamic]RetiredPipeline,
 }
 
+// TODO: rewrite. The ModuleUse map + entry lists is a lot of machinery to load each shader once
+// from static tables; find a simpler shape.
 // Loads every shader module the tables name (once each, with the entry points its pipelines need)
 // and creates every pipeline. Depends only on the device: layouts come from format constants.
 pipelines_create :: proc(engine: ^Engine) -> (ok: bool) {

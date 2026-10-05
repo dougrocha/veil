@@ -288,6 +288,9 @@ image_barrier_compute :: proc(
 // that share a state are grouped into as few rectangular ranges as possible (one for a uniform
 // range), and all groups go out in a single pipeline barrier. A group already in a read-only
 // dst is skipped; same-state writes keep their barrier, since it orders the previous write.
+// TODO: simplify. Uniform range -> one barrier; mixed -> one barrier per (mip, layer), still
+// one call. Drop the cross-mip group merging. Also: rename (it's the CommandBuffer variant) and
+// take image_barrier_raw out of the overload (private swapchain helper, no vk in public API).
 image_barrier_gpu :: proc(
 	cmd: CommandBuffer,
 	img: Image,
