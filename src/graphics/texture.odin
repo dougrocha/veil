@@ -37,6 +37,7 @@ Texture :: struct {
 	channel_count: u8,
 	flags:         TextureFlags,
 	view_mip:      Maybe(u32), // External only: the slot shows just this mip
+	cube_slot:     u32, // cube images only: index into the bindless cube array
 }
 
 DefaultTexture :: enum u8 {
@@ -50,7 +51,6 @@ DefaultTexture :: enum u8 {
 
 TextureSystem :: struct {
 	config:             TextureSystemConfig,
-	descriptor:         backend.DescriptorSet,
 	// Fixed samplers shared by every bindless texture, indexed by the SAMPLER_* constants.
 	samplers:           [BINDLESS_SAMPLER_COUNT]backend.Sampler,
 
@@ -60,6 +60,9 @@ TextureSystem :: struct {
 	linear_texture_map: map[string]TextureHandle,
 	cubemap_map:        map[string]TextureHandle,
 	defaults:           [DefaultTexture]TextureHandle,
+	// Cubes live in their own small bindless array, so they don't eat the 2D texture budget.
+	cube_count:         u32, // high-water mark
+	cube_free:          [dynamic]u32,
 }
 
 TextureSystemConfig :: struct {
@@ -74,10 +77,14 @@ texture_system_create :: proc(engine: ^Engine, config: TextureSystemConfig) {
 	ts.linear_texture_map = make(map[string]TextureHandle)
 	ts.cubemap_map = make(map[string]TextureHandle)
 
-	ts.descriptor = backend.descriptor_set_create_bindless_array(
+	backend.bindless_init(
 		&engine.vk_ctx,
-		config.max_textures_count,
-		BINDLESS_SAMPLER_COUNT,
+		{
+			texture_count = config.max_textures_count,
+			sampler_count = BINDLESS_SAMPLER_COUNT,
+			cube_count = BINDLESS_CUBE_COUNT,
+			storage_count = BINDLESS_STORAGE_IMAGE_COUNT,
+		},
 	)
 	texture_samplers_create(engine)
 
@@ -105,7 +112,7 @@ texture_system_destroy :: proc(engine: ^Engine) {
 		}
 		delete(cache^)
 	}
-	backend.descriptor_set_destroy(&engine.vk_ctx, &ts.descriptor)
+	delete(ts.cube_free)
 }
 
 texture_system_has_capacity :: proc(ts: ^TextureSystem) -> bool {
@@ -125,7 +132,9 @@ texture_unload :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: s
 	}
 	assert(.External not_in pool_get(&ts.textures, handle).flags, "external textures are not unloaded")
 	backend.device_wait_idle(&engine.vk_ctx)
-	texture_destroy(&engine.vk_ctx, pool_get(&ts.textures, handle)^)
+	t := pool_get(&ts.textures, handle)
+	if texture_is_cube(engine, t^) do append(&ts.cube_free, t.cube_slot)
+	texture_destroy(&engine.vk_ctx, t^)
 	pool_free(&ts.textures, handle)
 	stored_key, _ := delete_key(cache, key)
 	delete(stored_key)
@@ -134,9 +143,8 @@ texture_unload :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: s
 // The cache owns a copy of key, so callers may pass temp-allocated strings.
 texture_register :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: string, t: Texture) -> TextureHandle {
 	ts := &engine.texture_system
-	handle := pool_alloc(&ts.textures, t)
+	handle := texture_add(engine, t)
 	cache^[strings.clone(key)] = handle
-	write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
 	return handle
 }
 
@@ -144,10 +152,7 @@ texture_register :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key:
 // When the owner recreates the image (new handle), call texture_update_external; the texture
 // handle and slot stay the same. With a mip, the slot samples only that level of img.
 texture_register_external :: proc(engine: ^Engine, img: backend.Image, mip: Maybe(u32) = nil) -> TextureHandle {
-	ts := &engine.texture_system
-	handle := pool_alloc(&ts.textures, Texture{image = img, flags = {.External}, view_mip = mip})
-	write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
-	return handle
+	return texture_add(engine, Texture{image = img, flags = {.External}, view_mip = mip})
 }
 
 // Points an external texture's slot at the recreated image. The caller must make sure no
@@ -159,7 +164,7 @@ texture_update_external :: proc(engine: ^Engine, handle: TextureHandle, img: bac
 	assert(.External in t.flags, "texture_update_external on an owned texture")
 	t.image = img
 	if mip != nil do t.view_mip = mip
-	write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
+	texture_write_slot(engine, handle)
 }
 
 texture_create_builtin :: proc(engine: ^Engine) {
@@ -176,9 +181,7 @@ texture_create_builtin :: proc(engine: ^Engine) {
 		ts := &engine.texture_system
 		t := t
 		texture_upload(&engine.vk_ctx, pixels, &t, format)
-		handle := pool_alloc(&ts.textures, t)
-		write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
-		return handle
+		return texture_add(engine, t)
 	}
 
 	ts.defaults[.White] = upload_builtin(
@@ -210,8 +213,7 @@ texture_create_builtin :: proc(engine: ^Engine) {
 		for i in 0 ..< 6 do black[i] = {0, 0, 0, 0xFF}
 
 		cube := cubemap_upload(&engine.vk_ctx, staging, 1)
-		ts.defaults[.Black_Cube] = pool_alloc(&ts.textures, cube)
-		write_descriptor_texture(&engine.vk_ctx, ts, ts.defaults[.Black_Cube], u32(ts.defaults[.Black_Cube].index))
+		ts.defaults[.Black_Cube] = texture_add(engine, cube)
 	}
 }
 
@@ -458,19 +460,50 @@ texture_samplers_create :: proc(engine: ^Engine) {
 	ts.samplers[SAMPLER_LINEAR_CLAMP] = make_sampler(ctx, .Linear, .Clamp_To_Edge)
 	ts.samplers[SAMPLER_NEAREST_CLAMP] = make_sampler(ctx, .Nearest, .Clamp_To_Edge)
 	for sampler, i in ts.samplers {
-		backend.descriptor_write_bindless_sampler(ctx, &ts.descriptor, u32(i), sampler)
+		backend.bindless_write_sampler(ctx, u32(i), sampler)
 	}
 }
 
 
-// Writes a texture from the texture system into the descriptor set at the given binding.
-// Writes to all sets in the descriptor (all frames).
-write_descriptor_texture :: proc(
-	ctx: ^backend.Context,
-	ts: ^TextureSystem,
-	handle: TextureHandle,
-	array_element: u32 = 0,
-) {
-	t := pool_get(&ts.textures, handle)
-	backend.descriptor_write_bindless_texture(ctx, &ts.descriptor, array_element, t.image, mip = t.view_mip)
+// Adds a texture to the pool and writes its bindless slot. 2D textures use the pool index as
+// their slot; cubes get a slot in the cube array.
+@(private = "file")
+texture_add :: proc(engine: ^Engine, t: Texture) -> TextureHandle {
+	ts := &engine.texture_system
+	t := t
+	if texture_is_cube(engine, t) {
+		if len(ts.cube_free) > 0 {
+			t.cube_slot = pop(&ts.cube_free)
+		} else {
+			assert(ts.cube_count < BINDLESS_CUBE_COUNT, "texture_add: out of bindless cube slots")
+			t.cube_slot = ts.cube_count
+			ts.cube_count += 1
+		}
+	}
+	handle := pool_alloc(&ts.textures, t)
+	texture_write_slot(engine, handle)
+	return handle
+}
+
+@(private = "file")
+texture_is_cube :: proc(engine: ^Engine, t: Texture) -> bool {
+	return backend.image_desc(&engine.vk_ctx, t.image).cube
+}
+
+// Writes the texture's bindless slot: the cube array for cubes, the 2D array otherwise.
+@(private = "file")
+texture_write_slot :: proc(engine: ^Engine, handle: TextureHandle) {
+	t := pool_get(&engine.texture_system.textures, handle)
+	if texture_is_cube(engine, t^) {
+		backend.bindless_write_cube(&engine.vk_ctx, t.cube_slot, t.image)
+	} else {
+		backend.bindless_write_texture(&engine.vk_ctx, u32(handle.index), t.image, t.view_mip)
+	}
+}
+
+// Bindless cube slot of a cube texture, for SceneData.skybox_cube and friends.
+texture_cube_slot :: proc(engine: ^Engine, handle: TextureHandle) -> u32 {
+	t := pool_get(&engine.texture_system.textures, handle)
+	assert(texture_is_cube(engine, t^), "texture_cube_slot: not a cube texture")
+	return t.cube_slot
 }

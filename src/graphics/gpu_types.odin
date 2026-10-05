@@ -14,6 +14,7 @@ SAMPLER_LINEAR_CLAMP :: 1
 SAMPLER_NEAREST_CLAMP :: 2
 BINDLESS_SAMPLER_COUNT :: 3
 BINDLESS_STORAGE_IMAGE_COUNT :: 16
+BINDLESS_CUBE_COUNT :: 16
 
 Vertex :: struct #max_field_align(16) {
 	pos:     Vec3,
@@ -99,7 +100,7 @@ SceneData :: struct #max_field_align(16) {
 	point_light_count:       u32,
 	directional_light_count: u32,
 	spot_light_count:        u32,
-	_reserved_counts:        u32,
+	skybox_cube:             u32, // bindless cube slot the skybox (and later IBL) samples
 	directional_lights:      [MAX_DIRECTIONAL_LIGHTS]GpuDirectionalLight,
 	spot_lights:             [MAX_SPOT_LIGHTS]GpuSpotLight,
 	ambient_light:           GpuAmbientLight,

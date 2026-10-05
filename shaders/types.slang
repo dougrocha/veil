@@ -14,6 +14,7 @@ static const uint SAMPLER_LINEAR_CLAMP = 1;
 static const uint SAMPLER_NEAREST_CLAMP = 2;
 static const uint BINDLESS_SAMPLER_COUNT = 3;
 static const uint BINDLESS_STORAGE_IMAGE_COUNT = 16;
+static const uint BINDLESS_CUBE_COUNT = 16;
 
 struct Vertex {
     float4 pos;
@@ -97,7 +98,7 @@ struct SceneData {
     uint point_light_count;
     uint directional_light_count;
     uint spot_light_count;
-    uint _reserved_counts;
+    uint skybox_cube;
     DirectionalLight directional_lights[MAX_DIRECTIONAL_LIGHTS];
     SpotLight spot_lights[MAX_SPOT_LIGHTS];
     AmbientLight ambient_light;

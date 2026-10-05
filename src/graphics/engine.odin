@@ -37,8 +37,8 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	engine.swapchain = backend.swapchain_create(vk_ctx, width, height)
 	engine.render_targets = render_targets_create(vk_ctx, engine.swapchain.extent)
 
-	// The 3 global combined image samplers (shadow atlases, skybox) count against the same per-stage limit.
-	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_textures_per_stage - 3)
+	// The cube array and the 2 fixed depth slots count against the same per-stage sampled-image limit.
+	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_textures_per_stage - BINDLESS_CUBE_COUNT - 2)
 
 	shader_system_create(engine, max_bindless_textures) or_return
 	shadow_handle := shader_load(engine, "shadow", GRAPHICS_ENTRIES) or_return
@@ -85,27 +85,12 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 global_resources_create :: proc(engine: ^Engine) {
 	vk_ctx := &engine.vk_ctx
 
-	engine.global_descriptor = backend.descriptor_set_create_sampler_array(vk_ctx, 3)
 	engine.shadow_atlas = shadow_atlas_create(vk_ctx, POINT_SHADOW_MAP_SIZE, MAX_POINT_LIGHTS * 6, cube = true)
-	backend.descriptor_write_image_view(
-		vk_ctx,
-		&engine.global_descriptor,
-		0,
-		engine.shadow_atlas.image,
-		engine.shadow_atlas.sampler,
-		.Depth_Read,
-	)
+	backend.bindless_write_fixed(vk_ctx, .Depth_Cube_Array, engine.shadow_atlas.image, engine.shadow_atlas.sampler)
 	engine.shadow_2d_atlas = shadow_atlas_create(vk_ctx, SHADOW_MAP_SIZE, MAX_SHADOW_2D_SLOTS, cube = false)
-	backend.descriptor_write_image_view(
-		vk_ctx,
-		&engine.global_descriptor,
-		1,
-		engine.shadow_2d_atlas.image,
-		engine.shadow_2d_atlas.sampler,
-		.Depth_Read,
-	)
-	// The skybox pass samples binding 2 every frame, so it needs a valid cube before any
-	// set_skybox_texture call; with no skybox configured the sky renders black.
+	backend.bindless_write_fixed(vk_ctx, .Depth_2D_Array, engine.shadow_2d_atlas.image, engine.shadow_2d_atlas.sampler)
+	// The skybox pass samples SceneData.skybox_cube every frame; with no skybox configured
+	// the sky renders black.
 	set_skybox_texture(engine, engine.texture_system.defaults[.Black_Cube])
 }
 
@@ -118,8 +103,6 @@ engine_destroy :: proc(self: ^Engine) {
 	destroy_model_system(self)
 	material_system_destroy(self)
 
-	backend.descriptor_set_destroy(&self.vk_ctx, &self.global_descriptor)
-	backend.descriptor_set_destroy(&self.vk_ctx, &self.storage_descriptor)
 	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_atlas)
 	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_2d_atlas)
 
@@ -285,8 +268,7 @@ draw_shadow :: proc(
 	directional := light_type == .Directional
 	shadow_pipeline := get_pipeline(&engine.pipeline_registry, .Shadow_Directional if directional else .Shadow)
 
-	frame_idx := current_frame_res_index(engine)
-	backend.pipeline_bind(cmd, shadow_pipeline, {engine.texture_system.descriptor.sets[frame_idx]})
+	backend.pipeline_bind(cmd, shadow_pipeline)
 	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
 
 	frame := current_frame_data(engine)
@@ -330,12 +312,7 @@ draw_shadow :: proc(
 draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	mesh_pipeline := get_pipeline(&engine.pipeline_registry, .Mesh)
 
-	frame_idx := current_frame_res_index(engine)
-	sets := [2]backend.DescriptorSetHandle {
-		engine.texture_system.descriptor.sets[frame_idx],
-		engine.global_descriptor.sets[frame_idx],
-	}
-	backend.pipeline_bind(cmd, mesh_pipeline, sets[:])
+	backend.pipeline_bind(cmd, mesh_pipeline)
 	backend.pipeline_set_depth_write(cmd, mesh_pipeline, true)
 	frame := current_frame_data(engine)
 
@@ -418,13 +395,9 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	}
 }
 
+// Takes effect on the next recorded frame: it only changes the cube slot SceneData carries.
 set_skybox_texture :: proc(engine: ^Engine, handle: TextureHandle) {
-	// The global set isn't update-after-bind and this writes every frame's copy, so no
-	// in-flight frame may be using it.
-	backend.device_wait_idle(&engine.vk_ctx)
-	t := pool_get(&engine.texture_system.textures, handle)
-	sampler := engine.texture_system.samplers[SAMPLER_LINEAR_REPEAT]
-	backend.descriptor_write_image_view(&engine.vk_ctx, &engine.global_descriptor, 2, t.image, sampler)
+	engine.skybox_cube = texture_cube_slot(engine, handle)
 }
 
 // Renders every active light's shadow maps. Each atlas is transitioned as a whole (all layers,
@@ -515,8 +488,7 @@ shadow_pass :: proc(
 
 draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	pipeline := get_pipeline(&engine.pipeline_registry, .Skybox)
-	skybox_frame_idx := current_frame_res_index(engine)
-	backend.pipeline_bind(cmd, pipeline, {engine.global_descriptor.sets[skybox_frame_idx]})
+	backend.pipeline_bind(cmd, pipeline)
 	pc := SkyboxPushConstants {
 		scene_data = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
 	}
@@ -526,13 +498,8 @@ draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 }
 
 draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	frame_idx := current_frame_res_index(engine)
-	sets := [2]backend.DescriptorSetHandle {
-		engine.texture_system.descriptor.sets[frame_idx],
-		engine.global_descriptor.sets[frame_idx],
-	}
 	pipeline := get_pipeline(&engine.pipeline_registry, .UI)
-	backend.pipeline_bind(cmd, pipeline, sets[:])
+	backend.pipeline_bind(cmd, pipeline)
 	ui_renderer_flush(engine, cmd)
 }
 

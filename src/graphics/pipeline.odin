@@ -103,7 +103,6 @@ destroy_pipeline_registry :: proc(ctx: ^backend.Context, reg: ^PipelineRegistry)
 
 make_shadow_config :: proc(engine: ^Engine) -> backend.GraphicsPipelineConfig {
 	config := backend.pipeline_default_config()
-	backend.pipeline_config_set_descriptor_layouts(&config, engine.texture_system.descriptor)
 	backend.pipeline_config_set_no_cull(&config)
 	backend.pipeline_config_enable_depth_bias(&config)
 	backend.pipeline_config_set_depth_compare(&config, .LessOrEqual)
@@ -128,7 +127,6 @@ register_ui_pipeline :: proc(engine: ^Engine, ui_handle: backend.Shader) {
 	backend.pipeline_config_disable_depth(&config)
 	backend.pipeline_config_set_layout(&config, overlay_pass_layout(&engine.vk_ctx, &engine.render_targets))
 	backend.pipeline_config_set_blend(&config, .Alpha)
-	backend.pipeline_config_set_descriptor_layouts(&config, engine.texture_system.descriptor, engine.global_descriptor)
 	backend.pipeline_config_set_push_constant(&config, size_of(UIPushConstants), {.Vertex, .Fragment})
 	pipeline_register(engine, .UI, ui_handle, config)
 }
@@ -138,7 +136,6 @@ register_mesh_pipeline :: proc(engine: ^Engine, mesh_handle: backend.Shader) {
 	backend.pipeline_config_set_layout(&config, main_pass_layout(&engine.vk_ctx, &engine.render_targets))
 	backend.pipeline_config_set_depth_dynamic(&config)
 	backend.pipeline_config_set_blend(&config, .Alpha)
-	backend.pipeline_config_set_descriptor_layouts(&config, engine.texture_system.descriptor, engine.global_descriptor)
 	backend.pipeline_config_set_push_constant(&config, size_of(PushConstants), {.Vertex, .Fragment})
 	pipeline_register(engine, .Mesh, mesh_handle, config)
 }
@@ -161,11 +158,6 @@ register_particle_pipelines :: proc(engine: ^Engine, particle_handle: backend.Sh
 // Compute post passes: set 0 = bindless textures, set 1 = bindless storage images.
 make_post_compute_config :: proc(engine: ^Engine, push_constant_size: int) -> backend.ComputePipelineConfig {
 	config: backend.ComputePipelineConfig
-	backend.pipeline_config_set_descriptor_layouts_compute(
-		&config,
-		engine.texture_system.descriptor,
-		engine.storage_descriptor,
-	)
 	backend.pipeline_config_set_push_constant_compute(&config, push_constant_size, {.Compute})
 	return config
 }
@@ -187,7 +179,6 @@ register_skybox_pipeline :: proc(engine: ^Engine, skybox_handle: backend.Shader)
 	backend.pipeline_config_set_depth_write_default(&config, false)
 	backend.pipeline_config_set_depth_compare(&config, .LessOrEqual)
 	backend.pipeline_config_set_layout(&config, main_pass_layout(&engine.vk_ctx, &engine.render_targets))
-	backend.pipeline_config_set_descriptor_layouts(&config, engine.global_descriptor)
 	backend.pipeline_config_set_push_constant(&config, size_of(SkyboxPushConstants), {.Vertex, .Fragment})
 	pipeline_register(engine, .Skybox, skybox_handle, config)
 }
@@ -197,7 +188,6 @@ register_debug_view_pipeline :: proc(engine: ^Engine, debug_view_handle: backend
 	backend.pipeline_config_set_no_cull(&config)
 	backend.pipeline_config_disable_depth(&config)
 	backend.pipeline_config_set_layout(&config, overlay_pass_layout(&engine.vk_ctx, &engine.render_targets))
-	backend.pipeline_config_set_descriptor_layouts(&config, engine.texture_system.descriptor, engine.global_descriptor)
 	backend.pipeline_config_set_push_constant(&config, size_of(DebugViewPushConstants), {.Fragment})
 	pipeline_register(engine, .Debug_View, debug_view_handle, config)
 }

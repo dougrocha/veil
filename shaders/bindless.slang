@@ -5,23 +5,32 @@
 #define BINDLESS_TEXTURE_COUNT 1024
 #endif
 
-// Bindless resource access. Shaders go through gpu_texture / gpu_sampler
-// instead of touching the binding directly, so how an index resolves to a
-// descriptor (e.g. NonUniformResourceIndex, descriptor heap) can change here.
-// Texture indices come from the texture system; sampler indices are the fixed
+// The bindless table: set 0 of every pipeline (backend/bindless.odin). Shaders go through
+// gpu_texture / gpu_sampler / gpu_cube instead of touching the bindings directly, so how an
+// index resolves to a descriptor (e.g. NonUniformResourceIndex, descriptor heap) can change here.
+// Texture and cube indices come from the texture system; sampler indices are the fixed
 // SAMPLER_* constants from gpu_types.odin.
+//
+//   binding 0  Texture2D[]             gpu_texture
+//   binding 1  SamplerState[]          gpu_sampler
+//   binding 2  TextureCube[]           gpu_cube
+//   binding 3  RWTexture2D[]           gpu_storage (storage.slang, compute only)
+//   binding 4  depth cube array        declared by its users (mesh: comparison, debug_view: plain)
+//   binding 5  depth 2D array          declared by its users
 import types;
 
-struct BindlessTextures {
-    Texture2D<float4> textures[BINDLESS_TEXTURE_COUNT];
-    SamplerState samplers[BINDLESS_SAMPLER_COUNT];
-}
-[[vk_binding(0, 0)]] ParameterBlock<BindlessTextures> bindless;
+[[vk_binding(0, 0)]] Texture2D<float4> textures[BINDLESS_TEXTURE_COUNT];
+[[vk_binding(1, 0)]] SamplerState samplers[BINDLESS_SAMPLER_COUNT];
+[[vk_binding(2, 0)]] TextureCube<float4> cubes[BINDLESS_CUBE_COUNT];
 
 Texture2D<float4> gpu_texture(uint index) {
-    return bindless.textures[index];
+    return textures[index];
 }
 
 SamplerState gpu_sampler(uint index) {
-    return bindless.samplers[index];
+    return samplers[index];
+}
+
+TextureCube<float4> gpu_cube(uint index) {
+    return cubes[index];
 }

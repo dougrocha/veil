@@ -76,7 +76,7 @@ ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 			screen_size   = {f32(engine.swapchain.extent.width), f32(engine.swapchain.extent.height)},
 			atlas_texture = atlas_texture,
 		}
-		backend.pipeline_bind(cmd, pipeline, {engine.texture_system.descriptor.sets[frame_res_index]})
+		backend.pipeline_bind(cmd, pipeline)
 		backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc, index = 1)
 		backend.cmd_draw(cmd, u32(len(batch.vertices)))
 		stats_count_draw(engine)

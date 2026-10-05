@@ -7,22 +7,10 @@ Pipeline :: struct {
 	pipeline: vk.Pipeline,
 }
 
-pipeline_bind :: proc(cmd: RenderEncoder, pipeline: Pipeline, desc_sets: []vk.DescriptorSet = {}) {
-	raw_cmd := cmd.handle
-	vk.CmdBindPipeline(raw_cmd, .GRAPHICS, pipeline.pipeline)
-
-	if len(desc_sets) > 0 {
-		vk.CmdBindDescriptorSets(
-			raw_cmd,
-			.GRAPHICS,
-			pipeline.layout,
-			0,
-			u32(len(desc_sets)),
-			raw_data(desc_sets),
-			0,
-			nil,
-		)
-	}
+// Binds the pipeline and the bindless table (set 0).
+pipeline_bind :: proc(cmd: RenderEncoder, pipeline: Pipeline) {
+	vk.CmdBindPipeline(cmd.handle, .GRAPHICS, pipeline.pipeline)
+	vk.CmdBindDescriptorSets(cmd.handle, .GRAPHICS, pipeline.layout, 0, 1, &cmd.ctx.bindless.set, 0, nil)
 }
 
 pipeline_push :: proc(
@@ -85,20 +73,6 @@ pipeline_config_set_blend :: proc(config: ^GraphicsPipelineConfig, mode: BlendMo
 pipeline_config_disable_depth :: proc(config: ^GraphicsPipelineConfig) {
 	config.depth_stencil.depthTestEnable = false
 	config.depth_stencil.depthWriteEnable = false
-}
-
-pipeline_config_set_descriptor_layouts :: proc(config: ^GraphicsPipelineConfig, sets: ..DescriptorSet) {
-	for set, i in sets {
-		config.descriptor_layouts[i] = set.layout
-	}
-	config.descriptor_layout_count = u32(len(sets))
-}
-
-pipeline_config_set_descriptor_layouts_compute :: proc(config: ^ComputePipelineConfig, sets: ..DescriptorSet) {
-	for set, i in sets {
-		config.descriptor_layouts[i] = set.layout
-	}
-	config.descriptor_layout_count = u32(len(sets))
 }
 
 pipeline_config_set_no_cull :: proc(config: ^GraphicsPipelineConfig) {
@@ -197,25 +171,21 @@ pipeline_config_set_layout :: proc(config: ^GraphicsPipelineConfig, layout: Atta
 }
 
 GraphicsPipelineConfig :: struct {
-	viewport:                vk.PipelineViewportStateCreateInfo,
-	input_assembly:          vk.PipelineInputAssemblyStateCreateInfo,
-	rasterization:           vk.PipelineRasterizationStateCreateInfo,
-	multi_sample:            vk.PipelineMultisampleStateCreateInfo,
-	color_blend_attachment:  vk.PipelineColorBlendAttachmentState,
-	color_blend:             vk.PipelineColorBlendStateCreateInfo,
-	depth_stencil:           vk.PipelineDepthStencilStateCreateInfo,
-	dynamic_states:          [4]vk.DynamicState,
-	dynamic_state_count:     u32,
-	attachments:             AttachmentLayout,
-	descriptor_layouts:      [8]vk.DescriptorSetLayout,
-	descriptor_layout_count: u32,
-	push_constant_range:     vk.PushConstantRange,
+	viewport:               vk.PipelineViewportStateCreateInfo,
+	input_assembly:         vk.PipelineInputAssemblyStateCreateInfo,
+	rasterization:          vk.PipelineRasterizationStateCreateInfo,
+	multi_sample:           vk.PipelineMultisampleStateCreateInfo,
+	color_blend_attachment: vk.PipelineColorBlendAttachmentState,
+	color_blend:            vk.PipelineColorBlendStateCreateInfo,
+	depth_stencil:          vk.PipelineDepthStencilStateCreateInfo,
+	dynamic_states:         [4]vk.DynamicState,
+	dynamic_state_count:    u32,
+	attachments:            AttachmentLayout,
+	push_constant_range:    vk.PushConstantRange,
 }
 
 ComputePipelineConfig :: struct {
-	descriptor_layouts:      [8]vk.DescriptorSetLayout,
-	descriptor_layout_count: u32,
-	push_constant_range:     vk.PushConstantRange,
+	push_constant_range: vk.PushConstantRange,
 }
 
 PipelineConfig :: union {
@@ -307,11 +277,7 @@ pipeline_create :: proc(ctx: ^Context, config: ^GraphicsPipelineConfig, stages: 
 		"pipeline_create: no attachment layout set (pipeline_config_set_layout)",
 	)
 	assert(attachments.samples > 0, "pipeline_create: attachment layout has no sample count")
-	layout_info := pipeline_build_layout_info(
-		&config.descriptor_layouts,
-		config.descriptor_layout_count,
-		&config.push_constant_range,
-	)
+	layout_info := pipeline_build_layout_info(ctx, &config.push_constant_range)
 
 	layout: vk.PipelineLayout
 	vk_check(vk.CreatePipelineLayout(device, &layout_info, nil, &layout))
@@ -385,11 +351,7 @@ pipeline_create :: proc(ctx: ^Context, config: ^GraphicsPipelineConfig, stages: 
 
 pipeline_create_compute :: proc(ctx: ^Context, config: ^ComputePipelineConfig, stage: ShaderStageDesc) -> Pipeline {
 	device := ctx.device
-	layout_info := pipeline_build_layout_info(
-		&config.descriptor_layouts,
-		config.descriptor_layout_count,
-		&config.push_constant_range,
-	)
+	layout_info := pipeline_build_layout_info(ctx, &config.push_constant_range)
 
 	layout: vk.PipelineLayout
 	vk_check(vk.CreatePipelineLayout(device, &layout_info, nil, &layout))
@@ -413,17 +375,17 @@ pipeline_destroy :: proc(ctx: ^Context, pipeline: Pipeline) {
 	vk.DestroyPipelineLayout(ctx.device, pipeline.layout, nil)
 }
 
+// Every pipeline layout is the bindless table (set 0) plus its push constants.
+@(private)
 pipeline_build_layout_info :: proc(
-	descriptor_layouts: ^[8]vk.DescriptorSetLayout,
-	descriptor_layout_count: u32,
+	ctx: ^Context,
 	push_constant_range: ^vk.PushConstantRange,
 ) -> vk.PipelineLayoutCreateInfo {
+	assert(ctx.bindless.layout != 0, "pipeline_create: bindless_init has not run")
 	info := vk.PipelineLayoutCreateInfo {
 		sType          = .PIPELINE_LAYOUT_CREATE_INFO,
-		setLayoutCount = descriptor_layout_count,
-	}
-	if descriptor_layout_count > 0 {
-		info.pSetLayouts = &descriptor_layouts[0]
+		setLayoutCount = 1,
+		pSetLayouts    = &ctx.bindless.layout,
 	}
 	if push_constant_range.size > 0 {
 		info.pushConstantRangeCount = 1

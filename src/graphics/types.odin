@@ -26,59 +26,55 @@ Extent2D :: backend.Extent2D
 vec3_splat :: proc(v: f32) -> Vec3 {return {v, v, v}}
 
 Engine :: struct {
-	vk_ctx:             backend.Context,
+	vk_ctx:            backend.Context,
 
 	// swapchain
-	swapchain:          backend.Swapchain,
-	render_targets:     RenderTargets,
+	swapchain:         backend.Swapchain,
+	render_targets:    RenderTargets,
 
 	// shaders
-	shader_system:      ShaderSystem,
+	shader_system:     ShaderSystem,
 
 	// graphics pipeline
-	pipeline_registry:  PipelineRegistry,
+	pipeline_registry: PipelineRegistry,
 
 	// frame and sync resources
-	frame_data:         [backend.MAX_FRAMES_IN_FLIGHT]FrameData,
+	frame_data:        [backend.MAX_FRAMES_IN_FLIGHT]FrameData,
 
 	// buffers
-	model_system:       ModelSystem,
-	material_system:    MaterialSystem,
+	model_system:      ModelSystem,
+	material_system:   MaterialSystem,
 
 	// timers
-	time_info:          TimeInfo,
+	time_info:         TimeInfo,
 
 	// texture
-	texture_system:     TextureSystem,
-
-	// global resources (binding 0 = point shadow cube atlas, 1 = 2D shadow atlas, 2 = skybox)
-	global_descriptor:  backend.DescriptorSet,
-	// bindless storage images for compute post passes; slots are the STORAGE_SLOT_* constants
-	storage_descriptor: backend.DescriptorSet,
-	hdr_texture:        TextureHandle, // external texture for render_targets.hdr; stable across resizes
-	bloom_textures:     [BLOOM_MAX_MIPS]TextureHandle, // one external texture per bloom mip
-	shadow_atlas:       ShadowAtlas,
-	shadow_2d_atlas:    ShadowAtlas,
+	texture_system:    TextureSystem,
+	skybox_cube:       u32, // bindless cube slot copied into SceneData each frame
+	hdr_texture:       TextureHandle, // external texture for render_targets.hdr; stable across resizes
+	bloom_textures:    [BLOOM_MAX_MIPS]TextureHandle, // one external texture per bloom mip
+	shadow_atlas:      ShadowAtlas,
+	shadow_2d_atlas:   ShadowAtlas,
 
 	// simulation state — no Vulkan types
-	scene:              Scene,
-	camera_system:      CameraSystem,
-	stats:              Stats,
-	gpu_profiler:       GpuProfiler,
-	shadow_cache:       ShadowCache,
+	scene:             Scene,
+	camera_system:     CameraSystem,
+	stats:             Stats,
+	gpu_profiler:      GpuProfiler,
+	shadow_cache:      ShadowCache,
 
 	// debug capture
-	frame_dump:         FrameDump,
+	frame_dump:        FrameDump,
 
 	// other stuff
-	line_renderer:      LineRenderer,
-	ui_renderer:        UIRenderer,
-	debug_views:        DebugViewQueue,
-	debug_settings:     DebugSettings,
+	line_renderer:     LineRenderer,
+	ui_renderer:       UIRenderer,
+	debug_views:       DebugViewQueue,
+	debug_settings:    DebugSettings,
 
 	// Temp allocator for engine_render, reset at the end of every frame. Kept apart from the
 	// game loop's context.temp_allocator so each side resets on its own schedule.
-	frame_arena:        virtual.Arena,
+	frame_arena:       virtual.Arena,
 }
 
 LightMask :: enum u32 {

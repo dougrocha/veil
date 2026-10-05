@@ -1,6 +1,6 @@
 #include "bindless.slang"
-[[vk_binding(0, 1)]] SamplerCubeArray shadow_cubes;
-[[vk_binding(1, 1)]] Sampler2DArray shadow_2d_maps;
+[[vk_binding(4, 0)]] SamplerCubeArray shadow_cubes;
+[[vk_binding(5, 0)]] Sampler2DArray shadow_2d_maps;
 
 struct PushConstants {
     uint mode; // 0 = 2D texture, 1 = shadow cube face, 2 = 2D shadow (dir/spot)

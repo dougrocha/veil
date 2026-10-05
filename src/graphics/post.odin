@@ -4,7 +4,7 @@ import "core:fmt"
 
 import "backend"
 
-// Fixed slots in the bindless storage array (storage_descriptor, set 1 of compute post passes).
+// Fixed slots in the bindless storage array.
 STORAGE_SLOT_DRAW :: 0
 STORAGE_SLOT_BLOOM :: 1 // bloom mip i is at STORAGE_SLOT_BLOOM + i
 #assert(STORAGE_SLOT_BLOOM + BLOOM_MAX_MIPS <= BINDLESS_STORAGE_IMAGE_COUNT)
@@ -21,10 +21,6 @@ BLOOM_MIN_MIP_SIZE :: 8
 BLOOM_UPSAMPLE_RADIUS :: 1.0
 
 post_targets_create :: proc(engine: ^Engine) {
-	engine.storage_descriptor = backend.descriptor_set_create_bindless_storage(
-		&engine.vk_ctx,
-		BINDLESS_STORAGE_IMAGE_COUNT,
-	)
 	targets := &engine.render_targets
 	bloom_mips := backend.image_desc(&engine.vk_ctx, targets.bloom).mip_levels
 	engine.hdr_texture = texture_register_external(engine, targets.hdr)
@@ -57,16 +53,10 @@ bloom_slot_mip :: proc(mip_levels: u32, slot: u32) -> u32 {
 storage_images_write :: proc(engine: ^Engine) {
 	targets := &engine.render_targets
 	bloom_mips := backend.image_desc(&engine.vk_ctx, targets.bloom).mip_levels
-	backend.descriptor_write_bindless_storage(
-		&engine.vk_ctx,
-		&engine.storage_descriptor,
-		STORAGE_SLOT_DRAW,
-		targets.draw,
-	)
+	backend.bindless_write_storage(&engine.vk_ctx, STORAGE_SLOT_DRAW, targets.draw)
 	for i in 0 ..< u32(BLOOM_MAX_MIPS) {
-		backend.descriptor_write_bindless_storage(
+		backend.bindless_write_storage(
 			&engine.vk_ctx,
-			&engine.storage_descriptor,
 			STORAGE_SLOT_BLOOM + i,
 			targets.bloom,
 			bloom_slot_mip(bloom_mips, i),
@@ -100,16 +90,6 @@ dispatch_post :: proc(encoder: backend.ComputeEncoder, size: [2]u32) {
 	)
 }
 
-@(private = "file")
-bind_post_sets :: proc(engine: ^Engine, encoder: backend.ComputeEncoder, pipeline: backend.Pipeline) {
-	frame_idx := current_frame_res_index(engine)
-	backend.pipeline_bind_compute(
-		encoder,
-		pipeline,
-		{engine.texture_system.descriptor.sets[frame_idx], engine.storage_descriptor.sets[frame_idx]},
-	)
-}
-
 // CoD:AW-style chain. Downsamples hdr -> mip 0 -> ... -> mip L-1 (each overwrites its target),
 // then upsamples back up, each step adding the smaller mip into the next larger one. Mip 0 ends
 // up holding every blur radius and is what the tonemap composites.
@@ -127,7 +107,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	defer backend.end_compute_pass(encoder)
 
 	down := get_pipeline(&engine.pipeline_registry, .Bloom_Down_Compute)
-	bind_post_sets(engine, encoder, down)
+	backend.pipeline_bind_compute(encoder, down)
 	for i in 0 ..< levels {
 		src_size: [2]u32
 		pc := BloomPushConstants {
@@ -149,7 +129,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	}
 
 	up := get_pipeline(&engine.pipeline_registry, .Bloom_Up_Compute)
-	bind_post_sets(engine, encoder, up)
+	backend.pipeline_bind_compute(encoder, up)
 	for i := int(levels) - 2; i >= 0; i -= 1 {
 		dst := u32(i)
 		src := dst + 1
@@ -188,7 +168,7 @@ dispatch_tonemap :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	}
 
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
-	bind_post_sets(engine, encoder, pipeline)
+	backend.pipeline_bind_compute(encoder, pipeline)
 	backend.pipeline_push_compute(encoder, pipeline, &pc)
 	dispatch_post(encoder, {engine.swapchain.extent.width, engine.swapchain.extent.height})
 	backend.end_compute_pass(encoder)

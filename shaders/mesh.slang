@@ -116,8 +116,8 @@ float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 f
 }
 
 [[vk_push_constant]] PushConstants pc;
-[[vk_binding(0, 1)]] SamplerCubeArrayShadow shadow_cubes;
-[[vk_binding(1, 1)]] Sampler2DArrayShadow shadow_2d_maps;
+[[vk_binding(4, 0)]] SamplerCubeArrayShadow shadow_cubes;
+[[vk_binding(5, 0)]] Sampler2DArrayShadow shadow_2d_maps;
 
 float4 sample_base_color(uint index, float2 uv) {
     return gpu_texture(index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);

@@ -120,22 +120,10 @@ cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
 	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
 }
 
-pipeline_bind_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline, desc_sets: []vk.DescriptorSet = {}) {
-	raw_cmd := cmd.handle
-	vk.CmdBindPipeline(raw_cmd, .COMPUTE, pipeline.pipeline)
-
-	if len(desc_sets) > 0 {
-		vk.CmdBindDescriptorSets(
-			raw_cmd,
-			.COMPUTE,
-			pipeline.layout,
-			0,
-			u32(len(desc_sets)),
-			raw_data(desc_sets),
-			0,
-			nil,
-		)
-	}
+// Binds the pipeline and the bindless table (set 0).
+pipeline_bind_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline) {
+	vk.CmdBindPipeline(cmd.handle, .COMPUTE, pipeline.pipeline)
+	vk.CmdBindDescriptorSets(cmd.handle, .COMPUTE, pipeline.layout, 0, 1, &cmd.ctx.bindless.set, 0, nil)
 }
 
 pipeline_push_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline, data: ^$T, offset: u32 = 0) {

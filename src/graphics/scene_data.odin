@@ -41,6 +41,7 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		point_light_count = engine.scene.point_light_count,
 		directional_light_count = engine.scene.directional_light_count,
 		spot_light_count = engine.scene.spot_light_count,
+		skybox_cube = engine.skybox_cube,
 		cam_pos_shadow_map_size = {active_camera.position.x, active_camera.position.y, active_camera.position.z, 0},
 		ambient_light = {
 			color_brightness = {

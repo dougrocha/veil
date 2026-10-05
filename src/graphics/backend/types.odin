@@ -126,5 +126,6 @@ Context :: struct {
 	images:                          handles.Pool(ImageSlot),
 	buffers:                         handles.Pool(BufferSlot),
 	shaders:                         handles.Pool(ShaderSlot),
+	bindless:                        BindlessTable,
 	pending_releases:                [dynamic]PendingRelease, // destroyed handles awaiting GPU completion
 }

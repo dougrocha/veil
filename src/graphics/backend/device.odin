@@ -57,6 +57,7 @@ context_destroy :: proc(ctx: ^Context) {
 	delete(ctx.pending_releases)
 
 	vk.DestroyCommandPool(ctx.device, ctx.upload_pool, nil)
+	bindless_destroy(ctx)
 	images_destroy(ctx)
 	buffers_destroy(ctx)
 	shaders_destroy(ctx)

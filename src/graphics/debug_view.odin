@@ -45,12 +45,7 @@ debug_view_flush :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	defer backend.end_render_pass(encoder)
 
 	pipeline := get_pipeline(&engine.pipeline_registry, .Debug_View)
-	frame_idx := current_frame_res_index(engine)
-	sets := [2]backend.DescriptorSetHandle {
-		engine.texture_system.descriptor.sets[frame_idx],
-		engine.global_descriptor.sets[frame_idx],
-	}
-	backend.pipeline_bind(encoder, pipeline, sets[:])
+	backend.pipeline_bind(encoder, pipeline)
 
 	width := i32(engine.swapchain.extent.width)
 	height := i32(engine.swapchain.extent.height)
