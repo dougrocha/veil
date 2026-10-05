@@ -15,13 +15,9 @@ VERTEX_ENTRY :: "vertex_main"
 FRAGMENT_MAIN :: "fragment_main"
 COMPUTE_MAIN :: "compute_main"
 
-DEFAULT_VERTEX_ENTRY: cstring : VERTEX_ENTRY
-DEFAULT_FRAGMENT_ENTRY: cstring : FRAGMENT_MAIN
-DEFAULT_COMPUTE_ENTRY: cstring : COMPUTE_MAIN
-
-ShaderHandle :: Handle(backend.ShaderModule)
-
-INVALID_SHADER_HANDLE :: ShaderHandle{}
+// Entry point sets the shaders declare.
+GRAPHICS_ENTRIES :: []backend.ShaderEntryPoint{{VERTEX_ENTRY, .Vertex}, {FRAGMENT_MAIN, .Fragment}}
+COMPUTE_ENTRIES :: []backend.ShaderEntryPoint{{COMPUTE_MAIN, .Compute}}
 
 log_slang_diagnostics :: proc(diagnostics: ^sp.IBlob, failed: bool) {
 	if diagnostics == nil do return
@@ -41,14 +37,20 @@ ShaderSystem :: struct {
 	// of recompiling changed source, so shader_load creates a fresh session
 	// per call instead of reusing a stored one.
 	bindless_texture_count: u32,
-	modules:                Pool(backend.ShaderModule),
-	name_to_handle:         map[string]ShaderHandle,
+	loaded:                 map[string]LoadedShader, // by module name
 	fw:                     watcher.Watcher,
+}
+
+// What a module was loaded with, so a reload can recompile it the same way.
+LoadedShader :: struct {
+	shader:       backend.Shader,
+	entry_points: []backend.ShaderEntryPoint,
 }
 
 shader_create_session :: proc(
 	global_session: ^sp.IGlobalSession,
 	bindless_texture_count: u32,
+	target: backend.ShaderTarget,
 ) -> (
 	^sp.ISession,
 	bool,
@@ -57,6 +59,7 @@ shader_create_session :: proc(
 		{name = .VulkanUseEntryPointName, value = {kind = .Int, intValue0 = 1}},
 		{name = .GLSLForceScalarLayout, value = {kind = .Int, intValue0 = 1}},
 	}
+	assert(target == .SPIRV, "shader_create_session: only SPIR-V output is supported")
 	target_desc := sp.TargetDesc {
 		structureSize            = size_of(sp.TargetDesc),
 		format                   = .SPIRV,
@@ -97,15 +100,18 @@ shader_system_create :: proc(self: ^Engine, bindless_texture_count: u32) -> bool
 
 	// fail fast if a session can't be created with this config, even though
 	// shader_load creates its own short-lived session per call
-	session, ok := shader_create_session(ss.global_session, bindless_texture_count)
+	session, ok := shader_create_session(
+		ss.global_session,
+		bindless_texture_count,
+		backend.shader_target(&self.vk_ctx),
+	)
 	if !ok {
 		return false
 	}
 	session->release()
 	ss.bindless_texture_count = bindless_texture_count
 
-	ss.modules = pool_init(256, backend.ShaderModule)
-	ss.name_to_handle = make(map[string]ShaderHandle)
+	ss.loaded = make(map[string]LoadedShader)
 
 	watcher.init(&ss.fw, "shaders")
 
@@ -114,28 +120,31 @@ shader_system_create :: proc(self: ^Engine, bindless_texture_count: u32) -> bool
 
 shader_system_destroy :: proc(self: ^Engine) {
 	ss := &self.shader_system
-	for &module, i in ss.modules.values {
-		if pool_is_alive(&ss.modules, Index(i)) {
-			backend.shader_module_destroy(&self.vk_ctx, module)
-		}
-	}
-	watcher.destroy(&ss.fw)
-	pool_destroy(&ss.modules)
-	for name in ss.name_to_handle {
+	for name, loaded in ss.loaded {
+		backend.shader_destroy(&self.vk_ctx, loaded.shader)
+		delete(loaded.entry_points)
 		delete(name)
 	}
-	delete(ss.name_to_handle)
+	delete(ss.loaded)
+	watcher.destroy(&ss.fw)
 	ss.global_session->release()
 }
 
-// Compiles a Slang module by name and caches the resulting VkShaderModule.
-// entry_points lists the entry point names to link into the SPIR-V blob.
-shader_load :: proc(self: ^Engine, module_name: string, entry_points: []string) -> (ShaderHandle, bool) {
-	ss := &self.shader_system
-
-	session, session_ok := shader_create_session(ss.global_session, ss.bindless_texture_count)
+// Compiles a Slang module to code for the given target. Pure Slang: no GPU objects, so an
+// offline tool or a shader cache can produce the same bytes. The caller owns the result.
+shader_compile :: proc(
+	ss: ^ShaderSystem,
+	module_name: string,
+	entry_points: []backend.ShaderEntryPoint,
+	target: backend.ShaderTarget,
+	allocator := context.allocator,
+) -> (
+	code: []byte,
+	ok: bool,
+) {
+	session, session_ok := shader_create_session(ss.global_session, ss.bindless_texture_count, target)
 	if !session_ok {
-		return INVALID_SHADER_HANDLE, false
+		return nil, false
 	}
 	defer session->release()
 
@@ -147,18 +156,18 @@ shader_load :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	log_slang_diagnostics(diagnostics, slang_module == nil)
 	if slang_module == nil {
 		log.errorf("Could not load Slang module: %s", module_name)
-		return INVALID_SHADER_HANDLE, false
+		return nil, false
 	}
 
 	ep_handles := make([]^sp.IEntryPoint, len(entry_points), context.temp_allocator)
 	defer for ep in ep_handles {
 		if ep != nil do ep->release()
 	}
-	for name, i in entry_points {
-		name_cstr := strings.clone_to_cstring(name, context.temp_allocator)
+	for entry, i in entry_points {
+		name_cstr := strings.clone_to_cstring(entry.name, context.temp_allocator)
 		if res := slang_module->findEntryPointByName(name_cstr, &ep_handles[i]); sp.FAILED(res) {
-			log.errorf("Could not find Slang entry point: %s", name)
-			return INVALID_SHADER_HANDLE, false
+			log.errorf("Could not find Slang entry point: %s", entry.name)
+			return nil, false
 		}
 	}
 
@@ -175,7 +184,7 @@ shader_load :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	log_slang_diagnostics(diag, sp.FAILED(link_res))
 	if sp.FAILED(link_res) {
 		log.errorf("Could not link Slang module: %s", module_name)
-		return INVALID_SHADER_HANDLE, false
+		return nil, false
 	}
 	defer linked->release()
 
@@ -184,31 +193,47 @@ shader_load :: proc(self: ^Engine, module_name: string, entry_points: []string) 
 	code_res := linked->getTargetCode(0, &target_code, &diag2)
 	log_slang_diagnostics(diag2, sp.FAILED(code_res))
 	if sp.FAILED(code_res) {
-		log.errorf("Could not get SPIR-V from Slang module: %s", module_name)
-		return INVALID_SHADER_HANDLE, false
+		log.errorf("Could not get target code from Slang module: %s", module_name)
+		return nil, false
 	}
 	defer target_code->release()
 
-	code_bytes := slice.bytes_from_ptr(target_code->getBufferPointer(), int(target_code->getBufferSize()))
-	assert(uintptr(raw_data(code_bytes)) % align_of(u32) == 0, "Slang SPIR-V blob is not u32-aligned")
-	spv_u32 := slice.reinterpret([]u32, code_bytes)
-	vk_module := backend.shader_module_create(&self.vk_ctx, spv_u32)
-
-	// check if this module is being reloaded (update in place) or is new
-	if existing, ok := ss.name_to_handle[module_name]; ok {
-		module_ptr := pool_get(&ss.modules, existing)
-		backend.shader_module_destroy(&self.vk_ctx, module_ptr^)
-		module_ptr^ = vk_module
-		return existing, true
-	}
-
-	handle := pool_alloc(&ss.modules, vk_module)
-	ss.name_to_handle[strings.clone(module_name)] = handle
-	return handle, true
+	return slice.clone(
+			slice.bytes_from_ptr(target_code->getBufferPointer(), int(target_code->getBufferSize())),
+			allocator,
+		),
+		true
 }
 
-shader_get :: proc(self: ^Engine, handle: ShaderHandle) -> backend.ShaderModule {
-	return pool_get(&self.shader_system.modules, handle)^
+// Compiles the module and creates its backend shader. Loading a name again recompiles it into
+// the same handle, so pipelines keep referring to it; rebuild them to pick up the new code.
+shader_load :: proc(
+	self: ^Engine,
+	module_name: string,
+	entry_points: []backend.ShaderEntryPoint,
+) -> (
+	shader: backend.Shader,
+	ok: bool,
+) {
+	ss := &self.shader_system
+	code := shader_compile(ss, module_name, entry_points, backend.shader_target(&self.vk_ctx)) or_return
+	defer delete(code)
+	desc := backend.ShaderDesc {
+		code         = code,
+		entry_points = entry_points,
+	}
+
+	if loaded, exists := ss.loaded[module_name]; exists {
+		backend.shader_replace(&self.vk_ctx, loaded.shader, desc)
+		return loaded.shader, true
+	}
+
+	shader = backend.shader_create(&self.vk_ctx, desc)
+	ss.loaded[strings.clone(module_name)] = {
+		shader       = shader,
+		entry_points = slice.clone(entry_points),
+	}
+	return shader, true
 }
 
 shader_poll_hotreload :: proc(self: ^Engine) {
@@ -229,16 +254,22 @@ shader_poll_hotreload :: proc(self: ^Engine) {
 			continue
 		}
 
-		handle, ok := ss.name_to_handle[module_name]
+		loaded, ok := ss.loaded[module_name]
 		if !ok {
 			continue
 		}
 
 		log.infof("Shader changed: %s — reloading pipelines", filename)
 
+		// Recompile once with every entry point the module was loaded with, then rebuild each
+		// pipeline that uses it.
+		if _, load_ok := shader_load(self, module_name, loaded.entry_points); !load_ok {
+			log.errorf("Shader reload '%s' failed, keeping old pipelines", module_name)
+			continue
+		}
 		for kind in PipelineKind {
-			if self.pipeline_registry.shaders[kind] == handle {
-				pipeline_reload(self, kind, module_name)
+			if self.pipeline_registry.shaders[kind] == loaded.shader {
+				pipeline_rebuild(self, kind)
 				if kind == .Shadow do shadow_cache_invalidate(self)
 			}
 		}

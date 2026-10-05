@@ -7,6 +7,7 @@ import vk "vendor:vulkan"
 Releasable :: union {
 	ImageSlot,
 	BufferSlot,
+	ShaderSlot,
 }
 
 PendingRelease :: struct {
@@ -44,6 +45,8 @@ release_up_to :: proc(ctx: ^Context, value: u64) {
 			image_slot_release(ctx, resource)
 		case BufferSlot:
 			buffer_slot_release(ctx, resource)
+		case ShaderSlot:
+			shader_slot_release(ctx, resource)
 		}
 		done += 1
 	}

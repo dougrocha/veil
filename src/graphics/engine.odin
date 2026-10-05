@@ -41,15 +41,19 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_textures_per_stage - 3)
 
 	shader_system_create(engine, max_bindless_textures) or_return
-	shadow_handle := shader_load(engine, "shadow", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
-	ui_handle := shader_load(engine, "ui", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
-	mesh_handle := shader_load(engine, "mesh", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
-	particle_handle := shader_load(engine, "particle", {VERTEX_ENTRY, FRAGMENT_MAIN, COMPUTE_MAIN}) or_return
-	skybox_handle := shader_load(engine, "skybox", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
-	debug_view_handle := shader_load(engine, "debug_view", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
-	tonemap_handle := shader_load(engine, "tonemap", {COMPUTE_MAIN}) or_return
-	bloom_down_handle := shader_load(engine, "bloom_down", {COMPUTE_MAIN}) or_return
-	bloom_up_handle := shader_load(engine, "bloom_up", {COMPUTE_MAIN}) or_return
+	shadow_handle := shader_load(engine, "shadow", GRAPHICS_ENTRIES) or_return
+	ui_handle := shader_load(engine, "ui", GRAPHICS_ENTRIES) or_return
+	mesh_handle := shader_load(engine, "mesh", GRAPHICS_ENTRIES) or_return
+	particle_handle := shader_load(
+		engine,
+		"particle",
+		{{VERTEX_ENTRY, .Vertex}, {FRAGMENT_MAIN, .Fragment}, {COMPUTE_MAIN, .Compute}},
+	) or_return
+	skybox_handle := shader_load(engine, "skybox", GRAPHICS_ENTRIES) or_return
+	debug_view_handle := shader_load(engine, "debug_view", GRAPHICS_ENTRIES) or_return
+	tonemap_handle := shader_load(engine, "tonemap", COMPUTE_ENTRIES) or_return
+	bloom_down_handle := shader_load(engine, "bloom_down", COMPUTE_ENTRIES) or_return
+	bloom_up_handle := shader_load(engine, "bloom_up", COMPUTE_ENTRIES) or_return
 
 	backend.frame_sync_create(vk_ctx)
 	frame_data_create(engine)

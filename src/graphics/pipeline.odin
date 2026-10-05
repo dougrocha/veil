@@ -22,34 +22,29 @@ PipelineKind :: enum u8 {
 }
 
 PipelineRegistry :: struct {
-	pipelines:    [PipelineKind]backend.Pipeline,
-	configs:      [PipelineKind]backend.PipelineConfig, // nil (no case matched) for unregistered kinds
-	shaders:      [PipelineKind]ShaderHandle,
-	module_names: [PipelineKind]string,
+	pipelines: [PipelineKind]backend.Pipeline,
+	configs:   [PipelineKind]backend.PipelineConfig, // nil (no case matched) for unregistered kinds
+	shaders:   [PipelineKind]backend.Shader,
 }
 
-// Every pipeline uses one shader module with the default entry point per stage;
-// register/rebuild derive the stage descs from the handle instead of taking them.
-default_graphics_stages :: proc(self: ^Engine, shader: ShaderHandle) -> [2]backend.ShaderStageDesc {
-	module := shader_get(self, shader)
-	return {
-		{module = module, entry = DEFAULT_VERTEX_ENTRY, stage = .Vertex},
-		{module = module, entry = DEFAULT_FRAGMENT_ENTRY, stage = .Fragment},
-	}
+// Every pipeline uses one shader with the default entry point per stage;
+// register/rebuild derive the stage descs from the shader instead of taking them.
+default_graphics_stages :: proc(shader: backend.Shader) -> [2]backend.ShaderStageDesc {
+	return {{shader = shader, entry = VERTEX_ENTRY}, {shader = shader, entry = FRAGMENT_MAIN}}
 }
 
-default_compute_stage :: proc(self: ^Engine, shader: ShaderHandle) -> backend.ShaderStageDesc {
-	return {module = shader_get(self, shader), entry = DEFAULT_COMPUTE_ENTRY, stage = .Compute}
+default_compute_stage :: proc(shader: backend.Shader) -> backend.ShaderStageDesc {
+	return {shader = shader, entry = COMPUTE_MAIN}
 }
 
 pipeline_register :: proc(
 	self: ^Engine,
 	kind: PipelineKind,
-	shader: ShaderHandle,
+	shader: backend.Shader,
 	config: backend.GraphicsPipelineConfig,
 ) {
 	config := config
-	stages := default_graphics_stages(self, shader)
+	stages := default_graphics_stages(shader)
 	self.pipeline_registry.pipelines[kind] = backend.pipeline_create(&self.vk_ctx, &config, stages[:])
 	self.pipeline_registry.configs[kind] = config
 	self.pipeline_registry.shaders[kind] = shader
@@ -58,11 +53,11 @@ pipeline_register :: proc(
 pipeline_register_compute :: proc(
 	self: ^Engine,
 	kind: PipelineKind,
-	shader: ShaderHandle,
+	shader: backend.Shader,
 	config: backend.ComputePipelineConfig,
 ) {
 	config := config
-	stage := default_compute_stage(self, shader)
+	stage := default_compute_stage(shader)
 	self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(&self.vk_ctx, &config, stage)
 	self.pipeline_registry.configs[kind] = config
 	self.pipeline_registry.shaders[kind] = shader
@@ -87,13 +82,13 @@ pipeline_rebuild :: proc(self: ^Engine, kind: PipelineKind) {
 
 	switch &cfg in config {
 	case backend.GraphicsPipelineConfig:
-		stages := default_graphics_stages(self, shader)
+		stages := default_graphics_stages(shader)
 		self.pipeline_registry.pipelines[kind] = backend.pipeline_create(&self.vk_ctx, &cfg, stages[:])
 	case backend.ComputePipelineConfig:
 		self.pipeline_registry.pipelines[kind] = backend.pipeline_create_compute(
 			&self.vk_ctx,
 			&cfg,
-			default_compute_stage(self, shader),
+			default_compute_stage(shader),
 		)
 	case nil:
 	}
@@ -117,7 +112,7 @@ make_shadow_config :: proc(engine: ^Engine) -> backend.GraphicsPipelineConfig {
 	return config
 }
 
-register_shadow_pipelines :: proc(engine: ^Engine, shadow_handle: ShaderHandle) {
+register_shadow_pipelines :: proc(engine: ^Engine, shadow_handle: backend.Shader) {
 	pipeline_register(engine, .Shadow, shadow_handle, make_shadow_config(engine))
 
 	// Cascades only cover a slice of the scene along the light direction, so casters between the
@@ -127,7 +122,7 @@ register_shadow_pipelines :: proc(engine: ^Engine, shadow_handle: ShaderHandle) 
 	pipeline_register(engine, .Shadow_Directional, shadow_handle, directional_config)
 }
 
-register_ui_pipeline :: proc(engine: ^Engine, ui_handle: ShaderHandle) {
+register_ui_pipeline :: proc(engine: ^Engine, ui_handle: backend.Shader) {
 	config := backend.pipeline_default_config()
 	backend.pipeline_config_set_no_cull(&config)
 	backend.pipeline_config_disable_depth(&config)
@@ -138,7 +133,7 @@ register_ui_pipeline :: proc(engine: ^Engine, ui_handle: ShaderHandle) {
 	pipeline_register(engine, .UI, ui_handle, config)
 }
 
-register_mesh_pipeline :: proc(engine: ^Engine, mesh_handle: ShaderHandle) {
+register_mesh_pipeline :: proc(engine: ^Engine, mesh_handle: backend.Shader) {
 	config := backend.pipeline_default_config()
 	backend.pipeline_config_set_layout(&config, main_pass_layout(&engine.vk_ctx, &engine.render_targets))
 	backend.pipeline_config_set_depth_dynamic(&config)
@@ -148,7 +143,7 @@ register_mesh_pipeline :: proc(engine: ^Engine, mesh_handle: ShaderHandle) {
 	pipeline_register(engine, .Mesh, mesh_handle, config)
 }
 
-register_particle_pipelines :: proc(engine: ^Engine, particle_handle: ShaderHandle) {
+register_particle_pipelines :: proc(engine: ^Engine, particle_handle: backend.Shader) {
 	draw_config := backend.pipeline_default_config()
 	backend.pipeline_config_set_topology_points(&draw_config)
 	backend.pipeline_config_set_no_cull(&draw_config)
@@ -175,18 +170,18 @@ make_post_compute_config :: proc(engine: ^Engine, push_constant_size: int) -> ba
 	return config
 }
 
-register_tonemap_pipeline :: proc(engine: ^Engine, tonemap_handle: ShaderHandle) {
+register_tonemap_pipeline :: proc(engine: ^Engine, tonemap_handle: backend.Shader) {
 	config := make_post_compute_config(engine, size_of(TonemapPushConstants))
 	pipeline_register_compute(engine, .Tonemap_Compute, tonemap_handle, config)
 }
 
-register_bloom_pipelines :: proc(engine: ^Engine, down_handle, up_handle: ShaderHandle) {
+register_bloom_pipelines :: proc(engine: ^Engine, down_handle, up_handle: backend.Shader) {
 	config := make_post_compute_config(engine, size_of(BloomPushConstants))
 	pipeline_register_compute(engine, .Bloom_Down_Compute, down_handle, config)
 	pipeline_register_compute(engine, .Bloom_Up_Compute, up_handle, config)
 }
 
-register_skybox_pipeline :: proc(engine: ^Engine, skybox_handle: ShaderHandle) {
+register_skybox_pipeline :: proc(engine: ^Engine, skybox_handle: backend.Shader) {
 	config := backend.pipeline_default_config()
 	backend.pipeline_config_set_no_cull(&config)
 	backend.pipeline_config_set_depth_write_default(&config, false)
@@ -197,7 +192,7 @@ register_skybox_pipeline :: proc(engine: ^Engine, skybox_handle: ShaderHandle) {
 	pipeline_register(engine, .Skybox, skybox_handle, config)
 }
 
-register_debug_view_pipeline :: proc(engine: ^Engine, debug_view_handle: ShaderHandle) {
+register_debug_view_pipeline :: proc(engine: ^Engine, debug_view_handle: backend.Shader) {
 	config := backend.pipeline_default_config()
 	backend.pipeline_config_set_no_cull(&config)
 	backend.pipeline_config_disable_depth(&config)
@@ -205,28 +200,4 @@ register_debug_view_pipeline :: proc(engine: ^Engine, debug_view_handle: ShaderH
 	backend.pipeline_config_set_descriptor_layouts(&config, engine.texture_system.descriptor, engine.global_descriptor)
 	backend.pipeline_config_set_push_constant(&config, size_of(DebugViewPushConstants), {.Fragment})
 	pipeline_register(engine, .Debug_View, debug_view_handle, config)
-}
-
-pipeline_reload :: proc(self: ^Engine, kind: PipelineKind, module_name: string) {
-	config := self.pipeline_registry.configs[kind]
-
-	// load_shader reuses the same handle on a repeat load and destroys the old vk.ShaderModule
-	// itself, so there's nothing to manually destroy here.
-	entry_points: []string
-	switch _ in config {
-	case backend.GraphicsPipelineConfig:
-		entry_points = {VERTEX_ENTRY, FRAGMENT_MAIN}
-	case backend.ComputePipelineConfig:
-		entry_points = {COMPUTE_MAIN}
-	case nil:
-		log.errorf("pipeline_reload '%v': no config registered", kind)
-		return
-	}
-
-	_, compile_ok := shader_load(self, module_name, entry_points)
-	if !compile_ok {
-		log.errorf("pipeline_reload '%v': shader compilation failed, keeping old pipeline", kind)
-		return
-	}
-	pipeline_rebuild(self, kind)
 }

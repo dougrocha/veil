@@ -40,7 +40,7 @@ line_renderer_create :: proc(engine: ^Engine) -> (ok: bool) {
 	backend.pipeline_config_set_layout(&config, main_pass_layout(&engine.vk_ctx, &engine.render_targets))
 	backend.pipeline_config_set_push_constant(&config, size_of(LinePushConstants), {.Vertex, .Fragment})
 
-	shader_handle := shader_load(engine, "line", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
+	shader_handle := shader_load(engine, "line", GRAPHICS_ENTRIES) or_return
 	pipeline_register(engine, .Debug_Line, shader_handle, config)
 
 	// overlay variant: same shader, no depth test (drawn last, on top of everything)
@@ -48,7 +48,7 @@ line_renderer_create :: proc(engine: ^Engine) -> (ok: bool) {
 	backend.pipeline_config_disable_depth(&overlay_config)
 	backend.pipeline_config_set_blend(&overlay_config, .Alpha)
 	pipeline_register(engine, .Debug_Line_Overlay, shader_handle, overlay_config)
-	sector_shader := shader_load(engine, "sector", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
+	sector_shader := shader_load(engine, "sector", GRAPHICS_ENTRIES) or_return
 	pipeline_register(engine, .Debug_Sector, sector_shader, overlay_config)
 
 	batch_create(engine, &lr.tested)

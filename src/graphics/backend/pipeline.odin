@@ -318,7 +318,9 @@ pipeline_create :: proc(ctx: ^Context, config: ^GraphicsPipelineConfig, stages: 
 
 	shader_stages := make([]vk.PipelineShaderStageCreateInfo, len(stages), context.temp_allocator)
 	for desc, i in stages {
-		shader_stages[i] = shader_stage_info(desc)
+		stage: ShaderStage
+		shader_stages[i], stage = shader_stage_info(ctx, desc)
+		assert(stage != .Compute, "pipeline_create: compute entry point in a graphics pipeline")
 	}
 
 	vertex_input_info := vk.PipelineVertexInputStateCreateInfo {
@@ -392,9 +394,11 @@ pipeline_create_compute :: proc(ctx: ^Context, config: ^ComputePipelineConfig, s
 	layout: vk.PipelineLayout
 	vk_check(vk.CreatePipelineLayout(device, &layout_info, nil, &layout))
 
+	stage_info, shader_stage := shader_stage_info(ctx, stage)
+	assert(shader_stage == .Compute, "pipeline_create_compute: entry point is not a compute stage")
 	compute_info := vk.ComputePipelineCreateInfo {
 		sType  = .COMPUTE_PIPELINE_CREATE_INFO,
-		stage  = shader_stage_info(stage),
+		stage  = stage_info,
 		layout = layout,
 	}
 
