@@ -75,11 +75,13 @@ images_init :: proc(ctx: ^Context) {
 }
 
 images_destroy :: proc(ctx: ^Context) {
+	assert(handles.pool_live_count(&ctx.images) == 0, "images_destroy: images still alive")
 	handles.pool_destroy(&ctx.images)
 }
 
-image_is_valid :: proc(img: Image) -> bool {
-	return img.generation != 0
+// True while the image is alive: false for the zero handle and after image_destroy.
+image_is_valid :: proc(ctx: ^Context, img: Image) -> bool {
+	return handles.pool_is_valid(&ctx.images, img)
 }
 
 @(private)
@@ -160,8 +162,14 @@ device_max_anisotropy :: proc(ctx: ^Context) -> f32 {
 	return vk_get_physical_device_properties(ctx).limits.maxSamplerAnisotropy
 }
 
+// Frees the handle now; the Vulkan objects are released once in-flight frames are done with them.
 image_destroy :: proc(ctx: ^Context, img: Image) {
-	slot := image_slot(ctx, img)
+	release_deferred(ctx, image_slot(ctx, img)^)
+	handles.pool_free(&ctx.images, img)
+}
+
+@(private)
+image_slot_release :: proc(ctx: ^Context, slot: ImageSlot) {
 	vk.DestroyImageView(ctx.device, slot.view, nil)
 	for view in slot.mip_views do vk.DestroyImageView(ctx.device, view, nil)
 	delete(slot.mip_views)
@@ -169,7 +177,6 @@ image_destroy :: proc(ctx: ^Context, img: Image) {
 	delete(slot.layer_views)
 	delete(slot.layout)
 	vma.destroy_image(ctx.vma_allocator, slot.image, slot.alloc)
-	handles.pool_free(&ctx.images, img)
 }
 
 // View to render into one (layer, mip) of an image. Falls back to the whole view for

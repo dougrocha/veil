@@ -91,6 +91,7 @@ buffers_init :: proc(ctx: ^Context) {
 }
 
 buffers_destroy :: proc(ctx: ^Context) {
+	assert(handles.pool_live_count(&ctx.buffers) == 0, "buffers_destroy: buffers still alive")
 	handles.pool_destroy(&ctx.buffers)
 }
 
@@ -99,8 +100,9 @@ buffer_slot :: proc(ctx: ^Context, buf: Buffer($T)) -> ^BufferSlot {
 	return handles.pool_get(&ctx.buffers, buf.handle)
 }
 
-buffer_is_valid :: proc(buf: Buffer($T)) -> bool {
-	return buf.handle.generation != 0
+// True while the buffer is alive: false for the zero handle and after buffer_destroy.
+buffer_is_valid :: proc(ctx: ^Context, buf: Buffer($T)) -> bool {
+	return handles.pool_is_valid(&ctx.buffers, buf.handle)
 }
 
 buffer_create :: proc(
@@ -146,10 +148,15 @@ buffer_create :: proc(
 	return Buffer(T){handle = handles.pool_alloc(&ctx.buffers, slot)}
 }
 
+// Frees the handle now; the Vulkan buffer is released once in-flight frames are done with it.
 buffer_destroy :: proc(ctx: ^Context, buf: Buffer($T)) {
-	slot := buffer_slot(ctx, buf)
-	vma.destroy_buffer(ctx.vma_allocator, slot.buffer, slot.alloc)
+	release_deferred(ctx, buffer_slot(ctx, buf)^)
 	handles.pool_free(&ctx.buffers, buf.handle)
+}
+
+@(private)
+buffer_slot_release :: proc(ctx: ^Context, slot: BufferSlot) {
+	vma.destroy_buffer(ctx.vma_allocator, slot.buffer, slot.alloc)
 }
 
 buffer_desc :: proc(ctx: ^Context, buf: Buffer($T)) -> BufferDesc {

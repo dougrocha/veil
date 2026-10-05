@@ -127,6 +127,7 @@ frame_wait_before_render :: proc(ctx: ^Context) {
 		}
 		vk_check(vk.WaitSemaphores(ctx.device, &wait_info, max(u64)))
 	}
+	release_completed(ctx)
 }
 
 queue_submit_frame :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain, frame_sync: ^FrameSync) {

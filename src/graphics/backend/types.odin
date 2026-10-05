@@ -125,4 +125,5 @@ Context :: struct {
 	frame_index:                     u64, // frames submitted; the frame being recorded signals frame_index + 1
 	images:                          handles.Pool(ImageSlot),
 	buffers:                         handles.Pool(BufferSlot),
+	pending_releases:                [dynamic]PendingRelease, // destroyed handles awaiting GPU completion
 }

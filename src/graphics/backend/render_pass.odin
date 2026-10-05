@@ -19,7 +19,7 @@ PassConfig :: struct {
 }
 
 begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig) -> RenderEncoder {
-	if image_is_valid(config.color.image) {
+	if config.color.image != {} {
 		image_barrier(
 			cmd,
 			config.color.image,
@@ -29,7 +29,7 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 		)
 	}
 
-	if image_is_valid(config.resolve.image) && config.load_op != .Load {
+	if config.resolve.image != {} && config.load_op != .Load {
 		image_barrier(
 			cmd,
 			config.resolve.image,
@@ -39,7 +39,7 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 		)
 	}
 
-	if image_is_valid(config.depth.image) && !config.skip_depth_transition {
+	if config.depth.image != {} && !config.skip_depth_transition {
 		image_barrier(
 			cmd,
 			config.depth.image,
@@ -50,7 +50,7 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 	}
 
 	color_attach_info: vk.RenderingAttachmentInfo
-	if image_is_valid(config.color.image) {
+	if config.color.image != {} {
 		color_attach_info = vk.RenderingAttachmentInfo {
 			sType = .RENDERING_ATTACHMENT_INFO,
 			imageView = image_attachment_view(
@@ -63,7 +63,7 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 			storeOp = .DONT_CARE,
 			clearValue = {color = {float32 = config.clear_color}},
 		}
-		if image_is_valid(config.resolve.image) {
+		if config.resolve.image != {} {
 			color_attach_info.resolveMode = {.AVERAGE}
 			color_attach_info.resolveImageView = image_attachment_view(
 				image_slot(ctx, config.resolve.image),
@@ -77,10 +77,10 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 	}
 
 	extent: vk.Extent2D
-	if image_is_valid(config.color.image) {
+	if config.color.image != {} {
 		e := image_slot(ctx, config.color.image).desc.extent
 		extent = {e.width, e.height}
-	} else if image_is_valid(config.depth.image) {
+	} else if config.depth.image != {} {
 		e := image_slot(ctx, config.depth.image).desc.extent
 		extent = {e.width, e.height}
 	}
@@ -89,12 +89,12 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 		sType = .RENDERING_INFO,
 		renderArea = {offset = {0, 0}, extent = extent},
 		layerCount = 1,
-		colorAttachmentCount = 1 if image_is_valid(config.color.image) else 0,
-		pColorAttachments = &color_attach_info if image_is_valid(config.color.image) else nil,
+		colorAttachmentCount = 1 if config.color.image != {} else 0,
+		pColorAttachments = &color_attach_info if config.color.image != {} else nil,
 	}
 
 	depth_attach_info: vk.RenderingAttachmentInfo
-	if image_is_valid(config.depth.image) {
+	if config.depth.image != {} {
 		depth_attach_info = vk.RenderingAttachmentInfo {
 			sType = .RENDERING_ATTACHMENT_INFO,
 			imageView = image_attachment_view(

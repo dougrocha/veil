@@ -59,6 +59,18 @@ pool_is_alive :: proc(pool: ^Pool($T), index: Index) -> bool {
 	return pool.generations[index] % 2 == 1
 }
 
+// True when the handle points at a live slot of this pool. Unlike pool_get, never asserts:
+// the zero handle, a freed handle and a reused slot all return false.
+pool_is_valid :: proc(pool: ^Pool($T), handle: Handle(T)) -> bool {
+	if handle.index >= Index(len(pool.values)) do return false
+	return pool.generations[handle.index] == handle.generation && pool_is_alive(pool, handle.index)
+}
+
+// Slots currently allocated.
+pool_live_count :: proc(pool: ^Pool($T)) -> u32 {
+	return pool.count - u32(len(pool.free_list))
+}
+
 // Helper method to validate a handle and return its index
 //
 // will crash and assert if invalid
