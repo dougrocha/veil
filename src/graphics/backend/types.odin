@@ -42,6 +42,7 @@ ImageStateKind :: enum {
 	Transfer_Dst,
 	Present,
 	Shader_Read,
+	General, // compute storage-image read/write
 }
 
 BorderColor :: enum {

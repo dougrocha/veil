@@ -20,6 +20,8 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	engine.camera_system = camera_system_create({max_camera_count = 10})
 	engine.scene.active_camera_name = DEFAULT_CAMERA_NAME
 	engine.debug_settings.light_mask = LIGHT_MASK_ALL
+	engine.debug_settings.bloom_max_levels = BLOOM_DEFAULT_LEVELS
+	engine.debug_settings.bloom_strength = BLOOM_DEFAULT_STRENGTH
 	frame_dump_init(engine)
 	debug_env_init(engine)
 	engine.scene.ambient_light = AmbientLight {
@@ -43,6 +45,9 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	particle_handle := shader_load(engine, "particle", {VERTEX_ENTRY, FRAGMENT_MAIN, COMPUTE_MAIN}) or_return
 	skybox_handle := shader_load(engine, "skybox", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
 	debug_view_handle := shader_load(engine, "debug_view", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return
+	tonemap_handle := shader_load(engine, "tonemap", {COMPUTE_MAIN}) or_return
+	bloom_down_handle := shader_load(engine, "bloom_down", {COMPUTE_MAIN}) or_return
+	bloom_up_handle := shader_load(engine, "bloom_up", {COMPUTE_MAIN}) or_return
 
 	backend.frame_sync_create(vk_ctx)
 	frame_data_create(engine)
@@ -52,6 +57,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	create_model_system(engine)
 
 	global_resources_create(engine)
+	post_targets_create(engine)
 	gpu_profiler_create(engine)
 	shadow_cache_create(engine)
 
@@ -61,6 +67,8 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	register_particle_pipelines(engine, particle_handle)
 	register_skybox_pipeline(engine, skybox_handle)
 	register_debug_view_pipeline(engine, debug_view_handle)
+	register_tonemap_pipeline(engine, tonemap_handle)
+	register_bloom_pipelines(engine, bloom_down_handle, bloom_up_handle)
 
 	line_renderer_create(engine) or_return
 	ui_renderer_create(engine)
@@ -105,6 +113,7 @@ engine_destroy :: proc(self: ^Engine) {
 	material_system_destroy(self)
 
 	backend.descriptor_set_destroy(&self.vk_ctx, &self.global_descriptor)
+	backend.descriptor_set_destroy(&self.vk_ctx, &self.storage_descriptor)
 	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_atlas)
 	shadow_atlas_destroy(&self.vk_ctx, &self.shadow_2d_atlas)
 
@@ -145,6 +154,7 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 	if engine.swapchain.require_recreate {
 		backend.device_wait_idle(&engine.vk_ctx)
 		backend.swapchain_recreate(&engine.vk_ctx, &engine.swapchain, app.width, app.height)
+		post_targets_update(engine)
 	}
 
 	wait_start := time.tick_now()
@@ -549,7 +559,7 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			cmd,
 			backend.PassConfig {
 				color = {image = &engine.swapchain.render_targets.color},
-				resolve = {image = &engine.swapchain.render_targets.draw},
+				resolve = {image = &engine.swapchain.render_targets.hdr},
 				depth = {image = &engine.swapchain.render_targets.depth},
 				clear_color = {0.1, 0.1, 0.1, 1},
 				load_op = .Clear,
@@ -562,6 +572,14 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		backend.end_render_pass(encoder)
 	}
 	gpu_scope_end(engine, cmd, main_scope)
+
+	bloom_scope := gpu_scope_begin(engine, cmd, "bloom")
+	dispatch_bloom(engine, cmd)
+	gpu_scope_end(engine, cmd, bloom_scope)
+
+	tonemap_scope := gpu_scope_begin(engine, cmd, "tonemap")
+	dispatch_tonemap(engine, cmd)
+	gpu_scope_end(engine, cmd, tonemap_scope)
 
 	overlay_scope := gpu_scope_begin(engine, cmd, "overlay")
 	defer gpu_scope_end(engine, cmd, overlay_scope)

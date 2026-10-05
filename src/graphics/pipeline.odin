@@ -12,6 +12,9 @@ PipelineKind :: enum u8 {
 	UI,
 	Particle_Draw,
 	Particle_Compute,
+	Tonemap_Compute,
+	Bloom_Down_Compute,
+	Bloom_Up_Compute,
 	Debug_View,
 	Debug_Line,
 	Debug_Line_Overlay,
@@ -158,6 +161,29 @@ register_particle_pipelines :: proc(engine: ^Engine, particle_handle: ShaderHand
 	compute_config: backend.ComputePipelineConfig
 	backend.pipeline_config_set_push_constant_compute(&compute_config, size_of(ParticlePushConstants), {.Compute})
 	pipeline_register_compute(engine, .Particle_Compute, particle_handle, compute_config)
+}
+
+// Compute post passes: set 0 = bindless textures, set 1 = bindless storage images.
+make_post_compute_config :: proc(engine: ^Engine, push_constant_size: int) -> backend.ComputePipelineConfig {
+	config: backend.ComputePipelineConfig
+	backend.pipeline_config_set_descriptor_layouts_compute(
+		&config,
+		engine.texture_system.descriptor,
+		engine.storage_descriptor,
+	)
+	backend.pipeline_config_set_push_constant_compute(&config, push_constant_size, {.Compute})
+	return config
+}
+
+register_tonemap_pipeline :: proc(engine: ^Engine, tonemap_handle: ShaderHandle) {
+	config := make_post_compute_config(engine, size_of(TonemapPushConstants))
+	pipeline_register_compute(engine, .Tonemap_Compute, tonemap_handle, config)
+}
+
+register_bloom_pipelines :: proc(engine: ^Engine, down_handle, up_handle: ShaderHandle) {
+	config := make_post_compute_config(engine, size_of(BloomPushConstants))
+	pipeline_register_compute(engine, .Bloom_Down_Compute, down_handle, config)
+	pipeline_register_compute(engine, .Bloom_Up_Compute, up_handle, config)
 }
 
 register_skybox_pipeline :: proc(engine: ^Engine, skybox_handle: ShaderHandle) {

@@ -94,6 +94,13 @@ pipeline_config_set_descriptor_layouts :: proc(config: ^GraphicsPipelineConfig, 
 	config.descriptor_layout_count = u32(len(sets))
 }
 
+pipeline_config_set_descriptor_layouts_compute :: proc(config: ^ComputePipelineConfig, sets: ..DescriptorSet) {
+	for set, i in sets {
+		config.descriptor_layouts[i] = set.layout
+	}
+	config.descriptor_layout_count = u32(len(sets))
+}
+
 pipeline_config_set_no_cull :: proc(config: ^GraphicsPipelineConfig) {
 	config.rasterization.cullMode = {}
 }

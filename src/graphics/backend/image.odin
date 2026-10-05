@@ -247,7 +247,8 @@ IMAGE_STATES := [ImageStateKind]ImageState {
 	.Transfer_Src = {.TRANSFER_SRC_OPTIMAL, {.TRANSFER_READ}, {.TRANSFER}},
 	.Transfer_Dst = {.TRANSFER_DST_OPTIMAL, {.TRANSFER_WRITE}, {.TRANSFER}},
 	.Present      = {.PRESENT_SRC_KHR, {}, {}},
-	.Shader_Read  = {.SHADER_READ_ONLY_OPTIMAL, {.SHADER_READ}, {.FRAGMENT_SHADER}},
+	.Shader_Read  = {.SHADER_READ_ONLY_OPTIMAL, {.SHADER_READ}, {.FRAGMENT_SHADER, .COMPUTE_SHADER}},
+	.General      = {.GENERAL, {.SHADER_STORAGE_READ, .SHADER_STORAGE_WRITE}, {.COMPUTE_SHADER}},
 }
 
 layout_to_state_kind :: proc(layout: vk.ImageLayout) -> ImageState {

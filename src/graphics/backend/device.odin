@@ -250,6 +250,7 @@ logical_device_create :: proc(ctx: ^Context) -> bool {
 	   !features_12.descriptorBindingPartiallyBound ||
 	   !features_12.runtimeDescriptorArray ||
 	   !features_12.descriptorBindingSampledImageUpdateAfterBind ||
+	   !features_12.descriptorBindingStorageImageUpdateAfterBind ||
 	   !features_12.descriptorBindingUpdateUnusedWhilePending ||
 	   !features_11.shaderDrawParameters ||
 	   !extended_dynamic_state_features.extendedDynamicState ||
@@ -278,6 +279,7 @@ logical_device_create :: proc(ctx: ^Context) -> bool {
 		descriptorBindingPartiallyBound              = true,
 		runtimeDescriptorArray                       = true,
 		descriptorBindingSampledImageUpdateAfterBind = true,
+		descriptorBindingStorageImageUpdateAfterBind = true,
 		descriptorBindingUpdateUnusedWhilePending    = true,
 	}
 	enabled_features_11 := vk.PhysicalDeviceVulkan11Features {

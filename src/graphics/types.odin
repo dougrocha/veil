@@ -41,55 +41,59 @@ App :: struct {
 }
 
 Engine :: struct {
-	vk_ctx:            backend.Context,
+	vk_ctx:             backend.Context,
 
 	// swapchain
-	swapchain:         backend.Swapchain,
+	swapchain:          backend.Swapchain,
 
 	// shaders
-	shader_system:     ShaderSystem,
+	shader_system:      ShaderSystem,
 
 	// graphics pipeline
-	pipeline_registry: PipelineRegistry,
+	pipeline_registry:  PipelineRegistry,
 
 	// frame and sync resources
-	frame_data:        [backend.MAX_FRAMES_IN_FLIGHT]FrameData,
-	frame_index:       u64,
+	frame_data:         [backend.MAX_FRAMES_IN_FLIGHT]FrameData,
+	frame_index:        u64,
 
 	// buffers
-	model_system:      ModelSystem,
-	material_system:   MaterialSystem,
+	model_system:       ModelSystem,
+	material_system:    MaterialSystem,
 
 	// timers
-	time_info:         TimeInfo,
+	time_info:          TimeInfo,
 
 	// texture
-	texture_system:    TextureSystem,
+	texture_system:     TextureSystem,
 
 	// global resources (binding 0 = point shadow cube atlas, 1 = 2D shadow atlas, 2 = skybox)
-	global_descriptor: backend.DescriptorSet,
-	shadow_atlas:      ShadowAtlas,
-	shadow_2d_atlas:   ShadowAtlas,
+	global_descriptor:  backend.DescriptorSet,
+	// bindless storage images for compute post passes; slots are the STORAGE_SLOT_* constants
+	storage_descriptor: backend.DescriptorSet,
+	hdr_texture:        TextureHandle, // external texture for render_targets.hdr; stable across resizes
+	bloom_textures:     [backend.BLOOM_MAX_MIPS]TextureHandle, // one external texture per bloom mip
+	shadow_atlas:       ShadowAtlas,
+	shadow_2d_atlas:    ShadowAtlas,
 
 	// simulation state — no Vulkan types
-	scene:             Scene,
-	camera_system:     CameraSystem,
-	stats:             Stats,
-	gpu_profiler:      GpuProfiler,
-	shadow_cache:      ShadowCache,
+	scene:              Scene,
+	camera_system:      CameraSystem,
+	stats:              Stats,
+	gpu_profiler:       GpuProfiler,
+	shadow_cache:       ShadowCache,
 
 	// debug capture
-	frame_dump:        FrameDump,
+	frame_dump:         FrameDump,
 
 	// other stuff
-	line_renderer:     LineRenderer,
-	ui_renderer:       UIRenderer,
-	debug_views:       DebugViewQueue,
-	debug_settings:    DebugSettings,
+	line_renderer:      LineRenderer,
+	ui_renderer:        UIRenderer,
+	debug_views:        DebugViewQueue,
+	debug_settings:     DebugSettings,
 
 	// Temp allocator for engine_render, reset at the end of every frame. Kept apart from the
 	// game loop's context.temp_allocator so each side resets on its own schedule.
-	frame_arena:       virtual.Arena,
+	frame_arena:        virtual.Arena,
 }
 
 LightMask :: enum u32 {
@@ -101,6 +105,9 @@ LightMask :: enum u32 {
 DebugSettings :: struct {
 	show_cascades, disable_shadows, light_mask: u32,
 	particles:                                  bool, // CPU-only; not uploaded to the GPU
+	// CPU-only bloom controls; max levels is clamped to what the bloom target was allocated with
+	bloom_max_levels:                           u32,
+	bloom_strength:                             f32,
 }
 
 TimeInfo :: struct {
@@ -174,6 +181,23 @@ DebugViewPushConstants :: struct {
 	mode:  DebugViewMode,
 	index: u32, // bindless texture index (Texture_2D) or light_index (Shadow_Cube_Face / Shadow_2D)
 	face:  u32, // cube face_index (Shadow_Cube_Face only)
+}
+
+TonemapPushConstants :: struct {
+	hdr_texture:    u32, // bindless sampled index of the HDR image
+	out_storage:    u32, // bindless storage index of the LDR draw image
+	exposure:       f32,
+	bloom_texture:  u32, // bindless sampled index of bloom mip 0 (half res)
+	bloom_strength: f32, // pre-normalized: setting / bloom level count
+}
+
+// Shared by the bloom downsample and upsample passes.
+BloomPushConstants :: struct {
+	src_texture:    u32, // bindless sampled index of the mip (or hdr) being read
+	dst_storage:    u32, // bindless storage index of the mip being written
+	src_texel_size: Vec2, // 1 / source size, for sample offsets
+	karis:          u32, // downsample only: 1 on the first pass (reading hdr)
+	radius:         f32, // upsample only: tent filter radius, in source texels
 }
 
 ParticlePushConstants :: struct {

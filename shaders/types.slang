@@ -13,6 +13,7 @@ static const uint SAMPLER_LINEAR_REPEAT = 0;
 static const uint SAMPLER_LINEAR_CLAMP = 1;
 static const uint SAMPLER_NEAREST_CLAMP = 2;
 static const uint BINDLESS_SAMPLER_COUNT = 3;
+static const uint BINDLESS_STORAGE_IMAGE_COUNT = 16;
 
 struct Vertex {
     float4 pos;

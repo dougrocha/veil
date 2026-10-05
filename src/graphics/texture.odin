@@ -22,6 +22,7 @@ INVALID_TEXTURE :: TextureHandle{}
 TextureFlags :: distinct bit_set[TextureFlag;u8]
 TextureFlag :: enum u8 {
 	Transparent,
+	External, // image owned elsewhere (e.g. a render target); never destroyed by the texture system
 }
 
 Texture :: struct {
@@ -30,6 +31,7 @@ Texture :: struct {
 	// Texture metadata
 	channel_count: u8,
 	flags:         TextureFlags,
+	view_mip:      Maybe(u32), // External only: the slot shows just this mip
 }
 
 DefaultTexture :: enum u8 {
@@ -84,7 +86,7 @@ texture_destroy :: proc(ctx: ^backend.Context, t: Texture) {
 texture_system_destroy :: proc(engine: ^Engine) {
 	ts := &engine.texture_system
 	for &texture, i in ts.textures.values {
-		if pool_is_alive(&ts.textures, Index(i)) {
+		if pool_is_alive(&ts.textures, Index(i)) && .External not_in texture.flags {
 			texture_destroy(&engine.vk_ctx, texture)
 		}
 	}
@@ -116,6 +118,7 @@ texture_unload :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: s
 	if !ok {
 		return
 	}
+	assert(.External not_in pool_get(&ts.textures, handle).flags, "external textures are not unloaded")
 	backend.device_wait_idle(&engine.vk_ctx)
 	texture_destroy(&engine.vk_ctx, pool_get(&ts.textures, handle)^)
 	pool_free(&ts.textures, handle)
@@ -130,6 +133,34 @@ texture_register :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key:
 	cache^[strings.clone(key)] = handle
 	write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
 	return handle
+}
+
+// Gives an image owned outside the texture system (a render target) a bindless texture slot.
+// The pool holds a copy of the GpuImage, so call texture_update_external whenever the owner
+// recreates the image; the handle and slot stay the same.
+// With a mip, the slot samples only that level of img.
+texture_register_external :: proc(engine: ^Engine, img: ^backend.GpuImage, mip: Maybe(u32) = nil) -> TextureHandle {
+	ts := &engine.texture_system
+	handle := pool_alloc(&ts.textures, Texture{gpu = img^, flags = {.External}, view_mip = mip})
+	write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
+	return handle
+}
+
+// Points an external texture's slot at the recreated image. The caller must make sure no
+// in-flight frame still uses the old one (swapchain_recreate waits for idle). Passing a mip
+// replaces the stored one; nil keeps it.
+texture_update_external :: proc(
+	engine: ^Engine,
+	handle: TextureHandle,
+	img: ^backend.GpuImage,
+	mip: Maybe(u32) = nil,
+) {
+	ts := &engine.texture_system
+	t := pool_get(&ts.textures, handle)
+	assert(.External in t.flags, "texture_update_external on an owned texture")
+	t.gpu = img^
+	if mip != nil do t.view_mip = mip
+	write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
 }
 
 texture_create_builtin :: proc(engine: ^Engine) {
@@ -458,5 +489,5 @@ write_descriptor_texture :: proc(
 	array_element: u32 = 0,
 ) {
 	t := pool_get(&ts.textures, handle)
-	backend.descriptor_write_bindless_texture(ctx, &ts.descriptor, array_element, &t.gpu)
+	backend.descriptor_write_bindless_texture(ctx, &ts.descriptor, array_element, &t.gpu, mip = t.view_mip)
 }

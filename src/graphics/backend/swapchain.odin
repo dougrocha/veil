@@ -7,9 +7,12 @@ import vk "vendor:vulkan"
 RenderTargets :: struct {
 	color: GpuImage,
 	depth: GpuImage,
-	draw:  GpuImage,
-	bloom: GpuImage,
+	hdr:   GpuImage, // main pass resolve target, sampled by the tonemap
+	draw:  GpuImage, // tonemapped LDR result; UI draws on top, then it's blitted to the swapchain
+	bloom: GpuImage, // half-res mip chain; mip_levels may be below BLOOM_MAX_MIPS for tiny windows
 }
+
+BLOOM_MAX_MIPS :: 8
 
 Swapchain :: struct {
 	handle:              vk.SwapchainKHR,
@@ -116,11 +119,26 @@ render_target_create :: proc(
 	return img
 }
 
+bloom_target_create :: proc(ctx: ^Context, extent: vk.Extent2D) -> GpuImage {
+	half := vk.Extent3D{max(extent.width / 2, 1), max(extent.height / 2, 1), 1}
+	// A full chain for the short side has floor(log2(short)) + 1 levels.
+	full_chain: u32 = 1
+	for (min(half.width, half.height) >> full_chain) > 0 do full_chain += 1
+
+	desc := image_desc_default(half, DRAW_FORMAT, {.Storage, .Sampled})
+	desc.mip_levels = min(BLOOM_MAX_MIPS, full_chain)
+	img := image_create(ctx, desc)
+	img.image_view = image_view_create(ctx, img, image_view_desc_default(img))
+	return img
+}
+
 render_targets_create :: proc(ctx: ^Context, extent: vk.Extent2D, msaa: vk.SampleCountFlags) -> RenderTargets {
 	extent_3d := vk.Extent3D{extent.width, extent.height, 1}
 	return RenderTargets {
+		bloom = bloom_target_create(ctx, extent),
 		color = render_target_create(ctx, extent_3d, DRAW_FORMAT, {.Transient, .ColorAttachment}, samples = msaa),
 		depth = render_target_create(ctx, extent_3d, DEPTH_FORMAT, {.DepthStencilAttachment}, samples = msaa),
+		hdr = render_target_create(ctx, extent_3d, DRAW_FORMAT, {.ColorAttachment, .Sampled}),
 		draw = render_target_create(
 			ctx,
 			extent_3d,
@@ -133,7 +151,9 @@ render_targets_create :: proc(ctx: ^Context, extent: vk.Extent2D, msaa: vk.Sampl
 render_targets_destroy :: proc(ctx: ^Context, targets: ^RenderTargets) {
 	image_destroy(ctx, targets.color)
 	image_destroy(ctx, targets.depth)
+	image_destroy(ctx, targets.hdr)
 	image_destroy(ctx, targets.draw)
+	image_destroy(ctx, targets.bloom)
 }
 
 swapchain_acquire_next_image :: proc(

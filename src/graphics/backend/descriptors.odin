@@ -155,8 +155,13 @@ descriptor_set_create_bindless_array :: proc(
 	count: u32 = MAX_FRAMES_IN_FLIGHT,
 ) -> DescriptorSet {
 	bindings := []vk.DescriptorSetLayoutBinding {
-		{binding = 0, descriptorType = .SAMPLED_IMAGE, descriptorCount = texture_count, stageFlags = {.FRAGMENT}},
-		{binding = 1, descriptorType = .SAMPLER, descriptorCount = sampler_count, stageFlags = {.FRAGMENT}},
+		{
+			binding = 0,
+			descriptorType = .SAMPLED_IMAGE,
+			descriptorCount = texture_count,
+			stageFlags = {.FRAGMENT, .COMPUTE},
+		},
+		{binding = 1, descriptorType = .SAMPLER, descriptorCount = sampler_count, stageFlags = {.FRAGMENT, .COMPUTE}},
 	}
 	// UPDATE_UNUSED_WHILE_PENDING: texture registration writes a new slot into every frame's
 	// set, including ones a submitted frame is still executing.
@@ -215,16 +220,21 @@ descriptor_write_image_view :: proc(
 	descriptor_write_image_info(ctx, set, binding, &image_info, array_element)
 }
 
-// Writes one texture slot of the bindless set (binding 0) in every frame's set.
+// Writes one texture slot of the bindless set (binding 0) in every frame's set. With a mip,
+// the slot sees only that level (through its mip view) instead of the whole image.
 descriptor_write_bindless_texture :: proc(
 	ctx: ^Context,
 	desc: ^DescriptorSet,
 	array_element: u32,
 	img: ^GpuImage,
 	state: ImageStateKind = .Shader_Read,
+	mip: Maybe(u32) = nil,
 ) {
+	view := img.image_view
+	// Single-mip images have no mip views; their full view is that one level.
+	if m, ok := mip.?; ok && len(img.mip_views) > 0 do view = img.mip_views[m]
 	image_info := vk.DescriptorImageInfo {
-		imageView   = img.image_view,
+		imageView   = view,
 		imageLayout = IMAGE_STATES[state].layout,
 	}
 	for i in 0 ..< desc.count {
@@ -255,6 +265,58 @@ descriptor_write_bindless_sampler :: proc(ctx: ^Context, desc: ^DescriptorSet, a
 			descriptorCount = 1,
 			descriptorType  = .SAMPLER,
 			pImageInfo      = &sampler_info,
+		}
+		vk.UpdateDescriptorSets(ctx.device, 1, &write, 0, nil)
+	}
+}
+
+// Bindless storage images for compute: one RWTexture2D array at binding 0, indexed by slot.
+// Same update-after-bind flags as the texture set so slots can be rewritten (e.g. after a
+// swapchain resize) without reallocating.
+descriptor_set_create_bindless_storage :: proc(
+	ctx: ^Context,
+	image_count: u32,
+	count: u32 = MAX_FRAMES_IN_FLIGHT,
+) -> DescriptorSet {
+	bindings := []vk.DescriptorSetLayoutBinding {
+		{binding = 0, descriptorType = .STORAGE_IMAGE, descriptorCount = image_count, stageFlags = {.COMPUTE}},
+	}
+	binding_flags := []vk.DescriptorBindingFlags {
+		DescriptorBindingFlags{.PARTIALLY_BOUND, .UPDATE_AFTER_BIND, .UPDATE_UNUSED_WHILE_PENDING},
+	}
+	return descriptor_set_create(
+		ctx,
+		bindings,
+		count,
+		binding_flags = binding_flags,
+		layout_flags = {.UPDATE_AFTER_BIND_POOL},
+		pool_flags = {.UPDATE_AFTER_BIND},
+	)
+}
+
+// Writes one storage slot in every frame's set. Multi-mip images bind a single mip through
+// its mip view; others bind the full view.
+descriptor_write_bindless_storage :: proc(
+	ctx: ^Context,
+	desc: ^DescriptorSet,
+	array_element: u32,
+	img: ^GpuImage,
+	mip: u32 = 0,
+) {
+	view := img.mip_views[mip] if len(img.mip_views) > 0 else img.image_view
+	image_info := vk.DescriptorImageInfo {
+		imageView   = view,
+		imageLayout = IMAGE_STATES[.General].layout,
+	}
+	for i in 0 ..< desc.count {
+		write := vk.WriteDescriptorSet {
+			sType           = .WRITE_DESCRIPTOR_SET,
+			dstSet          = desc.sets[i],
+			dstBinding      = 0,
+			dstArrayElement = array_element,
+			descriptorCount = 1,
+			descriptorType  = .STORAGE_IMAGE,
+			pImageInfo      = &image_info,
 		}
 		vk.UpdateDescriptorSets(ctx.device, 1, &write, 0, nil)
 	}
