@@ -180,7 +180,6 @@ main :: proc() {
 			case .WINDOW_PIXEL_SIZE_CHANGED:
 				app.width = u32(ev.window.data1)
 				app.height = u32(ev.window.data2)
-				app.engine.swapchain.require_recreate = true
 			}
 		}
 

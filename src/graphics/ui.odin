@@ -58,7 +58,7 @@ ui_renderer_batch_for :: proc(engine: ^Engine, atlas_texture: u32) -> ^UI_Batch 
 ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	ur := &engine.ui_renderer
 	pipeline := get_pipeline(&engine.pipeline_registry, .UI)
-	frame_res_index := current_frame_res_index(engine)
+	frame_res_index := backend.frame_slot(&engine.vk_ctx)
 
 	for atlas_texture, &batch in ur.batches {
 		if len(batch.vertices) == 0 do continue

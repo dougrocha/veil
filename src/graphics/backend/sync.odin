@@ -52,10 +52,6 @@ current_frame_sync :: proc(ctx: ^Context) -> ^FrameSync {
 	return &ctx.frame_sync[ctx.frame_index % MAX_FRAMES_IN_FLIGHT]
 }
 
-frame_command_buffer_begin :: proc(ctx: ^Context, frame_sync: ^FrameSync) -> CommandBuffer {
-	return frame_sync.command_buffer
-}
-
 upload_pool_create :: proc(ctx: ^Context) {
 	pool_info := vk.CommandPoolCreateInfo {
 		sType            = .COMMAND_POOL_CREATE_INFO,

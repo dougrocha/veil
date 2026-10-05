@@ -32,7 +32,7 @@ gpu_spot_light :: proc(light: SpotLight) -> GpuSpotLight {
 }
 
 scene_data_buffer_update :: proc(engine: ^Engine) {
-	frame_index := current_frame_res_index(engine)
+	frame_index := backend.frame_slot(&engine.vk_ctx)
 	aspect := f32(engine.swapchain.extent.width) / f32(engine.swapchain.extent.height)
 	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	scene := SceneData {

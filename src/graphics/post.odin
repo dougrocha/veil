@@ -30,7 +30,7 @@ post_targets_create :: proc(engine: ^Engine) {
 	storage_images_write(engine)
 }
 
-// Called by engine_resize after it recreates the render targets. The images have new
+// Called by render_targets_resize after it recreates the render targets. The images have new
 // handles; texture handles and storage slots stay the same and are pointed at them.
 post_targets_update :: proc(engine: ^Engine) {
 	targets := &engine.render_targets

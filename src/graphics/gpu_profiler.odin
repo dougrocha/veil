@@ -28,7 +28,7 @@ gpu_profiler_destroy :: proc(engine: ^Engine) {
 // Feeds this slot's previous results into stats. Call after the slot's frame fence wait.
 gpu_profiler_collect :: proc(engine: ^Engine) {
 	p := &engine.gpu_profiler
-	slot := current_frame_res_index(engine)
+	slot := backend.frame_slot(&engine.vk_ctx)
 	stamps: [backend.MAX_GPU_TIMESTAMPS]f64
 	count := backend.gpu_timer_read(&engine.vk_ctx, &p.timer, slot, stamps[:])
 	if count == 0 do return
@@ -42,14 +42,14 @@ gpu_profiler_collect :: proc(engine: ^Engine) {
 // Starts this slot's recording. Call at the top of the command buffer, outside any pass.
 gpu_profiler_reset :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	p := &engine.gpu_profiler
-	slot := current_frame_res_index(engine)
+	slot := backend.frame_slot(&engine.vk_ctx)
 	p.scope_count[slot] = 0
 	backend.gpu_timer_reset(cmd, &p.timer, slot)
 }
 
 gpu_scope_begin :: proc(engine: ^Engine, cmd: backend.CommandBuffer, name: string) -> int {
 	p := &engine.gpu_profiler
-	slot := current_frame_res_index(engine)
+	slot := backend.frame_slot(&engine.vk_ctx)
 	if p.scope_count[slot] >= MAX_GPU_SCOPES do return -1
 
 	id := p.scope_count[slot]
@@ -66,7 +66,7 @@ gpu_scope_begin :: proc(engine: ^Engine, cmd: backend.CommandBuffer, name: strin
 gpu_scope_end :: proc(engine: ^Engine, cmd: backend.CommandBuffer, id: int) {
 	if id < 0 do return
 	p := &engine.gpu_profiler
-	slot := current_frame_res_index(engine)
+	slot := backend.frame_slot(&engine.vk_ctx)
 	scope := &p.scopes[slot][id]
 	end, ok := backend.gpu_timer_write(cmd, &p.timer, slot)
 	scope.end = end

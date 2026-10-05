@@ -51,7 +51,7 @@ gpu_timer_destroy :: proc(ctx: ^Context, timer: ^GpuTimer) {
 
 // Reads the slot's previous submission as milliseconds on the GPU clock. Call after the slot's
 // frame fence has been waited on. Returns 0 when there is nothing to read.
-gpu_timer_read :: proc(ctx: ^Context, timer: ^GpuTimer, slot: u64, out_ms: []f64) -> int {
+gpu_timer_read :: proc(ctx: ^Context, timer: ^GpuTimer, slot: int, out_ms: []f64) -> int {
 	count := min(int(timer.written[slot]), len(out_ms))
 	if !timer.supported || count == 0 do return 0
 
@@ -75,14 +75,14 @@ gpu_timer_read :: proc(ctx: ^Context, timer: ^GpuTimer, slot: u64, out_ms: []f64
 }
 
 // Resets the slot's queries at the start of its command buffer.
-gpu_timer_reset :: proc(cmd: CommandBuffer, timer: ^GpuTimer, slot: u64) {
+gpu_timer_reset :: proc(cmd: CommandBuffer, timer: ^GpuTimer, slot: int) {
 	timer.written[slot] = 0
 	if !timer.supported do return
 	vk.CmdResetQueryPool(cmd.handle, timer.pools[slot], 0, MAX_GPU_TIMESTAMPS)
 }
 
 // Writes a timestamp once all prior work completes. Returns false when out of queries or unsupported.
-gpu_timer_write :: proc(cmd: CommandBuffer, timer: ^GpuTimer, slot: u64) -> (index: u32, ok: bool) {
+gpu_timer_write :: proc(cmd: CommandBuffer, timer: ^GpuTimer, slot: int) -> (index: u32, ok: bool) {
 	if !timer.supported || timer.written[slot] >= MAX_GPU_TIMESTAMPS do return 0, false
 	index = timer.written[slot]
 	vk.CmdWriteTimestamp2(cmd.handle, {.ALL_COMMANDS}, timer.pools[slot], index)

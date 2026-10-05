@@ -138,26 +138,14 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	engine.time_info.delta_time = delta_time
 	engine.time_info.time += delta_time
 
-	// A minimized window has no drawable pixels; keep the old swapchain until it returns.
-	if width == 0 || height == 0 do return
-
-	if engine.swapchain.require_recreate {
-		engine_resize(engine, width, height)
-	}
-
 	wait_start := time.tick_now()
-	backend.frame_wait_before_render(&engine.vk_ctx)
-	frame_sync := backend.current_frame_sync(&engine.vk_ctx)
+	cmd, ok := backend.frame_begin(&engine.vk_ctx, &engine.swapchain, width, height)
+	if !ok do return
 
-	switch backend.swapchain_acquire_next_image(&engine.vk_ctx, &engine.swapchain, frame_sync) {
-	case .Success:
-	case .Suboptimal:
-		engine.swapchain.require_recreate = true
-	case .OutOfDate:
-		engine.swapchain.require_recreate = true
-		return
-	case .NotReady:
-		return
+	// The swapchain may have just been recreated; the targets follow its extent, which can differ
+	// from the window size.
+	if engine.render_targets.extent != engine.swapchain.extent {
+		render_targets_resize(engine)
 	}
 
 	engine.time_info.frame_count += 1
@@ -170,17 +158,11 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	shadow_cache_update(engine)
 	shader_poll_hotreload(engine)
 
-	cmd := record_command_buffer(engine)
+	record_frame(engine, cmd)
 	record_ms := tick_ms(record_start)
 	submit_start := time.tick_now()
 
-	backend.queue_submit_frame(&engine.vk_ctx, cmd, &engine.swapchain, frame_sync)
-
-	switch backend.queue_present_frame(&engine.vk_ctx, cmd, &engine.swapchain, frame_sync) {
-	case .Success:
-	case .OutOfDate, .Suboptimal:
-		engine.swapchain.require_recreate = true
-	}
+	backend.frame_end(&engine.vk_ctx, &engine.swapchain, cmd, engine.render_targets.draw)
 	stats_add_timings(
 		engine,
 		{frame = f64(delta_time) * 1000, wait = wait_ms, record = record_ms, submit = tick_ms(submit_start)},
@@ -198,18 +180,14 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	}
 }
 
-current_frame_res_index :: proc(engine: ^Engine) -> u64 {
-	return engine.vk_ctx.frame_index % backend.MAX_FRAMES_IN_FLIGHT
-}
-
 current_frame_data :: #force_inline proc(engine: ^Engine) -> ^FrameData {
-	return &engine.frame_data[current_frame_res_index(engine)]
+	return &engine.frame_data[backend.frame_slot(&engine.vk_ctx)]
 }
 
 dispatch_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	pipeline := get_pipeline(&engine.pipeline_registry, .Particle_Compute)
 
-	frame_res_index := current_frame_res_index(engine)
+	frame_res_index := backend.frame_slot(&engine.vk_ctx)
 	last_frame := (frame_res_index + backend.MAX_FRAMES_IN_FLIGHT - 1) % backend.MAX_FRAMES_IN_FLIGHT
 	compute_pc := ParticlePushConstants {
 		particles_in  = backend.buffer_address(&engine.vk_ctx, engine.frame_data[last_frame].particle_buffer),
@@ -231,7 +209,7 @@ dispatch_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	pipeline := get_pipeline(&engine.pipeline_registry, .Particle_Draw)
 
-	frame_res_index := current_frame_res_index(engine)
+	frame_res_index := backend.frame_slot(&engine.vk_ctx)
 	particle_pc := ParticlePushConstants {
 		scene_data    = backend.buffer_address(&engine.vk_ctx, engine.frame_data[frame_res_index].scene_data_buffer),
 		particles_out = backend.buffer_address(&engine.vk_ctx, engine.frame_data[frame_res_index].particle_buffer),
@@ -555,20 +533,12 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	}
 }
 
-record_command_buffer :: proc(engine: ^Engine) -> backend.CommandBuffer {
-	current_frame_sync := backend.current_frame_sync(&engine.vk_ctx)
-	cmd := backend.frame_command_buffer_begin(&engine.vk_ctx, current_frame_sync)
-
-	backend.cmd_begin_recording(&engine.vk_ctx, cmd)
+record_frame :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	stats_record_begin(engine)
 	defer stats_record_end(engine)
 	gpu_profiler_reset(engine, cmd)
 
 	frame_scope := gpu_scope_begin(engine, cmd, "frame")
 	draw_scene(engine, cmd)
-	backend.present_blit(&engine.vk_ctx, cmd, &engine.swapchain, engine.render_targets.draw)
 	gpu_scope_end(engine, cmd, frame_scope)
-
-	backend.cmd_end_recording(cmd)
-	return cmd
 }

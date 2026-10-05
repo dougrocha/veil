@@ -140,7 +140,7 @@ frame_dump_capture :: proc(engine: ^Engine) -> (done: bool) {
 	pixels := backend.image_read_rgba8(&engine.vk_ctx, engine.render_targets.draw)
 	defer delete(pixels)
 
-	index := int(engine.vk_ctx.frame_index) - 1 // the frame just submitted
+	index := int(engine.time_info.frame_count) - 1 // the frame just submitted
 	path := fmt.tprintf("%s_%03d.png", fd.prefix, index)
 	path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
 

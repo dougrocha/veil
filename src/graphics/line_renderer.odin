@@ -133,7 +133,7 @@ flush_batch :: proc(
 	if len(batch.vertices) == 0 do return
 	assert(len(batch.vertices) <= MAX_LINE_VERTICES)
 
-	frame_res_index := current_frame_res_index(engine)
+	frame_res_index := backend.frame_slot(&engine.vk_ctx)
 	buffer := &batch.buffers[frame_res_index]
 	mem.copy(
 		backend.buffer_contents(&engine.vk_ctx, buffer^),

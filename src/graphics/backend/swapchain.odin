@@ -10,7 +10,8 @@ Swapchain :: struct {
 	// Signaled by the frame's submit, waited on by present. One per image, not per frame in
 	// flight: the presentation engine can still hold it after that frame's fence has passed.
 	present_semaphores:  []vk.Semaphore,
-	require_recreate:    bool,
+	require_recreate:    bool, // set by acquire/present when stale; frame_begin recreates
+	requested:           Extent2D, // window size it was built for; extent can differ
 	extent:              Extent2D,
 	current_image_index: u32,
 }
@@ -31,6 +32,7 @@ swapchain_recreate :: proc(ctx: ^Context, swapchain: ^Swapchain, width, height: 
 @(private = "file")
 swapchain_build :: proc(ctx: ^Context, width, height: u32, old_handle: vk.SwapchainKHR) -> Swapchain {
 	swapchain: Swapchain
+	swapchain.requested = {width, height}
 
 	surface_caps: vk.SurfaceCapabilitiesKHR
 	vk_check(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.physical_device, ctx.surface, &surface_caps))
