@@ -40,7 +40,6 @@ Engine :: struct {
 
 	// frame and sync resources
 	frame_data:         [backend.MAX_FRAMES_IN_FLIGHT]FrameData,
-	frame_index:        u64,
 
 	// buffers
 	model_system:       ModelSystem,

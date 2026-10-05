@@ -122,6 +122,7 @@ Context :: struct {
 	max_bindless_textures_per_stage: u32,
 	timeline_semaphore:              vk.Semaphore,
 	frame_sync:                      [MAX_FRAMES_IN_FLIGHT]FrameSync,
+	frame_index:                     u64, // frames submitted; the frame being recorded signals frame_index + 1
 	images:                          handles.Pool(ImageSlot),
 	buffers:                         handles.Pool(BufferSlot),
 }

@@ -45,8 +45,8 @@ immediate_submit :: proc(ctx: ^Context) -> (cmd: CommandBuffer) {
 	return CommandBuffer{handle = begin_immediate_submit(ctx), ctx = ctx}
 }
 
-cmd_begin_recording :: proc(ctx: ^Context, cmd: CommandBuffer, frame_index: u64) {
-	frame_sync := current_frame_sync(ctx, frame_index)
+cmd_begin_recording :: proc(ctx: ^Context, cmd: CommandBuffer) {
+	frame_sync := current_frame_sync(ctx)
 	vk.ResetCommandPool(ctx.device, frame_sync.command_pool, {})
 
 	begin_info := vk.CommandBufferBeginInfo {

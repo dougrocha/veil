@@ -159,8 +159,8 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	}
 
 	wait_start := time.tick_now()
-	backend.frame_wait_before_render(&engine.vk_ctx, engine.frame_index)
-	frame_sync := backend.current_frame_sync(&engine.vk_ctx, engine.frame_index)
+	backend.frame_wait_before_render(&engine.vk_ctx)
+	frame_sync := backend.current_frame_sync(&engine.vk_ctx)
 
 	switch backend.swapchain_acquire_next_image(&engine.vk_ctx, &engine.swapchain, frame_sync) {
 	case .Success:
@@ -187,8 +187,7 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	record_ms := tick_ms(record_start)
 	submit_start := time.tick_now()
 
-	signal_value := engine.frame_index + 1
-	backend.queue_submit_frame(&engine.vk_ctx, cmd, &engine.swapchain, frame_sync, signal_value)
+	backend.queue_submit_frame(&engine.vk_ctx, cmd, &engine.swapchain, frame_sync)
 
 	switch backend.queue_present_frame(&engine.vk_ctx, cmd, &engine.swapchain, frame_sync) {
 	case .Success:
@@ -210,12 +209,10 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 			_ = sdl.PushEvent(&quit)
 		}
 	}
-
-	engine.frame_index += 1
 }
 
 current_frame_res_index :: proc(engine: ^Engine) -> u64 {
-	return engine.frame_index % backend.MAX_FRAMES_IN_FLIGHT
+	return engine.vk_ctx.frame_index % backend.MAX_FRAMES_IN_FLIGHT
 }
 
 current_frame_data :: #force_inline proc(engine: ^Engine) -> ^FrameData {
@@ -589,10 +586,10 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 }
 
 record_command_buffer :: proc(engine: ^Engine) -> backend.CommandBuffer {
-	current_frame_sync := backend.current_frame_sync(&engine.vk_ctx, engine.frame_index)
+	current_frame_sync := backend.current_frame_sync(&engine.vk_ctx)
 	cmd := backend.frame_command_buffer_begin(&engine.vk_ctx, current_frame_sync)
 
-	backend.cmd_begin_recording(&engine.vk_ctx, cmd, engine.frame_index)
+	backend.cmd_begin_recording(&engine.vk_ctx, cmd)
 	stats_record_begin(engine)
 	defer stats_record_end(engine)
 	gpu_profiler_reset(engine, cmd)

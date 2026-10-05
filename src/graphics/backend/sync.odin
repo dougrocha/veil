@@ -48,8 +48,8 @@ frame_sync_destroy :: proc(ctx: ^Context) {
 	vk.DestroySemaphore(ctx.device, ctx.timeline_semaphore, nil)
 }
 
-current_frame_sync :: proc(ctx: ^Context, frame_index: u64) -> ^FrameSync {
-	return &ctx.frame_sync[frame_index % MAX_FRAMES_IN_FLIGHT]
+current_frame_sync :: proc(ctx: ^Context) -> ^FrameSync {
+	return &ctx.frame_sync[ctx.frame_index % MAX_FRAMES_IN_FLIGHT]
 }
 
 frame_command_buffer_begin :: proc(ctx: ^Context, frame_sync: ^FrameSync) -> CommandBuffer {
@@ -116,9 +116,9 @@ binary_semaphore_create :: proc(ctx: ^Context) -> vk.Semaphore {
 
 // Frame N signals the timeline with N + 1. Before reusing this frame's slot, wait for the
 // frame that last used it (N - MAX_FRAMES_IN_FLIGHT) to finish.
-frame_wait_before_render :: proc(ctx: ^Context, frame_index: u64) {
-	if frame_index >= MAX_FRAMES_IN_FLIGHT {
-		wait_value := frame_index - MAX_FRAMES_IN_FLIGHT + 1
+frame_wait_before_render :: proc(ctx: ^Context) {
+	if ctx.frame_index >= MAX_FRAMES_IN_FLIGHT {
+		wait_value := ctx.frame_index - MAX_FRAMES_IN_FLIGHT + 1
 		wait_info := vk.SemaphoreWaitInfo {
 			sType          = .SEMAPHORE_WAIT_INFO,
 			semaphoreCount = 1,
@@ -129,13 +129,8 @@ frame_wait_before_render :: proc(ctx: ^Context, frame_index: u64) {
 	}
 }
 
-queue_submit_frame :: proc(
-	ctx: ^Context,
-	cmd: CommandBuffer,
-	swapchain: ^Swapchain,
-	frame_sync: ^FrameSync,
-	signal_value: u64,
-) {
+queue_submit_frame :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain, frame_sync: ^FrameSync) {
+	signal_value := ctx.frame_index + 1
 	image_acquired_wait_info := vk.SemaphoreSubmitInfo {
 		sType     = .SEMAPHORE_SUBMIT_INFO,
 		semaphore = frame_sync.image_acquired_semaphore,
@@ -175,4 +170,5 @@ queue_submit_frame :: proc(
 	}
 
 	vk_check(vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, 0))
+	ctx.frame_index += 1
 }
