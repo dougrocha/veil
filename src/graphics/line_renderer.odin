@@ -37,7 +37,7 @@ line_renderer_create :: proc(engine: ^Engine) -> (ok: bool) {
 
 	config := backend.pipeline_default_config()
 	backend.pipeline_config_set_no_cull(&config)
-	backend.pipeline_config_set_layout(&config, main_pass_layout(&engine.render_targets))
+	backend.pipeline_config_set_layout(&config, main_pass_layout(&engine.vk_ctx, &engine.render_targets))
 	backend.pipeline_config_set_push_constant(&config, size_of(LinePushConstants), {.Vertex, .Fragment})
 
 	shader_handle := shader_load(engine, "line", {VERTEX_ENTRY, FRAGMENT_MAIN}) or_return

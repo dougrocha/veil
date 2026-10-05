@@ -40,7 +40,7 @@ debug_view_flush :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	encoder := backend.begin_render_pass(
 		&engine.vk_ctx,
 		cmd,
-		backend.PassConfig{color = {image = &engine.render_targets.draw}, load_op = .Load},
+		backend.PassConfig{color = {image = engine.render_targets.draw}, load_op = .Load},
 	)
 	defer backend.end_render_pass(encoder)
 

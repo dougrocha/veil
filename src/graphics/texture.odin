@@ -30,7 +30,8 @@ TextureFlag :: enum u8 {
 }
 
 Texture :: struct {
-	using gpu:     backend.GpuImage,
+	image:         backend.Image,
+	extent:        backend.Extent3D, // set before upload; texture_upload sizes the image from it
 
 	// Texture metadata
 	channel_count: u8,
@@ -84,7 +85,7 @@ texture_system_create :: proc(engine: ^Engine, config: TextureSystemConfig) {
 }
 
 texture_destroy :: proc(ctx: ^backend.Context, t: Texture) {
-	backend.image_destroy(ctx, t.gpu)
+	backend.image_destroy(ctx, t.image)
 }
 
 texture_system_destroy :: proc(engine: ^Engine) {
@@ -140,12 +141,11 @@ texture_register :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key:
 }
 
 // Gives an image owned outside the texture system (a render target) a bindless texture slot.
-// The pool holds a copy of the GpuImage, so call texture_update_external whenever the owner
-// recreates the image; the handle and slot stay the same.
-// With a mip, the slot samples only that level of img.
-texture_register_external :: proc(engine: ^Engine, img: ^backend.GpuImage, mip: Maybe(u32) = nil) -> TextureHandle {
+// When the owner recreates the image (new handle), call texture_update_external; the texture
+// handle and slot stay the same. With a mip, the slot samples only that level of img.
+texture_register_external :: proc(engine: ^Engine, img: backend.Image, mip: Maybe(u32) = nil) -> TextureHandle {
 	ts := &engine.texture_system
-	handle := pool_alloc(&ts.textures, Texture{gpu = img^, flags = {.External}, view_mip = mip})
+	handle := pool_alloc(&ts.textures, Texture{image = img, flags = {.External}, view_mip = mip})
 	write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
 	return handle
 }
@@ -153,16 +153,11 @@ texture_register_external :: proc(engine: ^Engine, img: ^backend.GpuImage, mip: 
 // Points an external texture's slot at the recreated image. The caller must make sure no
 // in-flight frame still uses the old one (engine_resize waits for idle). Passing a mip
 // replaces the stored one; nil keeps it.
-texture_update_external :: proc(
-	engine: ^Engine,
-	handle: TextureHandle,
-	img: ^backend.GpuImage,
-	mip: Maybe(u32) = nil,
-) {
+texture_update_external :: proc(engine: ^Engine, handle: TextureHandle, img: backend.Image, mip: Maybe(u32) = nil) {
 	ts := &engine.texture_system
 	t := pool_get(&ts.textures, handle)
 	assert(.External in t.flags, "texture_update_external on an owned texture")
-	t.gpu = img^
+	t.image = img
 	if mip != nil do t.view_mip = mip
 	write_descriptor_texture(&engine.vk_ctx, ts, handle, u32(handle.index))
 }
@@ -188,23 +183,23 @@ texture_create_builtin :: proc(engine: ^Engine) {
 
 	ts.defaults[.White] = upload_builtin(
 		engine,
-		Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4},
+		Texture{extent = backend.extent3d(1, 1, 1), channel_count = 4},
 		&white,
 	)
 	ts.defaults[.Metallic_Roughness] = upload_builtin(
 		engine,
-		Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4},
+		Texture{extent = backend.extent3d(1, 1, 1), channel_count = 4},
 		&white,
 	)
 	ts.defaults[.Flat_Normal] = upload_builtin(
 		engine,
-		Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4},
+		Texture{extent = backend.extent3d(1, 1, 1), channel_count = 4},
 		&flat_normal,
 		.Rgba8_Unorm,
 	)
 	ts.defaults[.Occlusion] = upload_builtin(
 		engine,
-		Texture{gpu = {extent = backend.extent3d(1, 1, 1)}, channel_count = 4},
+		Texture{extent = backend.extent3d(1, 1, 1), channel_count = 4},
 		&white,
 	)
 
@@ -323,9 +318,9 @@ texture_register_rgba8 :: proc(
 	}
 
 	texture := Texture {
-		gpu = {extent = backend.extent3d(u32(img.width), u32(img.height), 1)},
+		extent        = backend.extent3d(u32(img.width), u32(img.height), 1),
 		channel_count = 4,
-		flags = flags,
+		flags         = flags,
 	}
 	texture_upload(&engine.vk_ctx, img.pixels, &texture, is_srgb ? .Rgba8_Unorm_Srgb : .Rgba8_Unorm)
 	return texture_register(engine, cache, key, texture)
@@ -354,18 +349,16 @@ texture_upload :: proc(
 		{.TransferSrc, .TransferDst, .Sampled, .ColorAttachment},
 	)
 	desc.mip_levels = mip_levels
-	gpu_img := backend.image_create(ctx, desc)
+	img := backend.image_create(ctx, desc)
 
 	{
 		cmd := backend.immediate_submit(ctx)
-		backend.image_barrier(cmd, &gpu_img, .Transfer_Dst, backend.ImageAspectFlags{.Color}, level_count = mip_levels)
-		backend.copy_buffer_to_image(cmd, staging.buffer, &gpu_img, w, h)
+		backend.image_barrier(cmd, img, .Transfer_Dst, backend.ImageAspectFlags{.Color}, level_count = mip_levels)
+		backend.copy_buffer_to_image(cmd, staging.buffer, img, w, h)
 	}
 
-	backend.generate_mipmaps(ctx, &gpu_img)
-
-	texture.gpu = gpu_img
-	texture_image_view_create(ctx, texture)
+	backend.generate_mipmaps(ctx, img)
+	texture.image = img
 }
 
 
@@ -430,26 +423,17 @@ cubemap_upload :: proc(ctx: ^backend.Context, staging: backend.GpuBuffer(u8), si
 	desc := backend.image_desc_default(backend.extent3d(size, size, 1), .Rgba8_Unorm_Srgb, {.TransferDst, .Sampled})
 	desc.array_layers = 6
 	desc.cube = true
-	gpu_img := backend.image_create(ctx, desc)
+	img := backend.image_create(ctx, desc)
 
 	{
 		cmd := backend.immediate_submit(ctx)
 
-		backend.image_barrier(cmd, &gpu_img, .Transfer_Dst, backend.ImageAspectFlags{.Color}, layer_count = 6)
-		backend.copy_buffer_to_cubemap(cmd, staging.buffer, &gpu_img, size, size, face_size)
-		backend.image_barrier(cmd, &gpu_img, .Shader_Read, backend.ImageAspectFlags{.Color}, layer_count = 6)
+		backend.image_barrier(cmd, img, .Transfer_Dst, backend.ImageAspectFlags{.Color}, layer_count = 6)
+		backend.copy_buffer_to_cubemap(cmd, staging.buffer, img, size, size, face_size)
+		backend.image_barrier(cmd, img, .Shader_Read, backend.ImageAspectFlags{.Color}, layer_count = 6)
 	}
 
-	t := Texture {
-		gpu           = gpu_img,
-		channel_count = 4,
-	}
-	backend.image_view_create_cubemap(ctx, &t.gpu)
-	return t
-}
-
-texture_image_view_create :: proc(ctx: ^backend.Context, t: ^Texture) {
-	backend.image_view_create_default(ctx, &t.gpu)
+	return Texture{image = img, extent = desc.extent, channel_count = 4}
 }
 
 texture_samplers_create :: proc(engine: ^Engine) {
@@ -488,5 +472,5 @@ write_descriptor_texture :: proc(
 	array_element: u32 = 0,
 ) {
 	t := pool_get(&ts.textures, handle)
-	backend.descriptor_write_bindless_texture(ctx, &ts.descriptor, array_element, &t.gpu, mip = t.view_mip)
+	backend.descriptor_write_bindless_texture(ctx, &ts.descriptor, array_element, t.image, mip = t.view_mip)
 }

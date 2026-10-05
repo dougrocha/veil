@@ -5,6 +5,8 @@ import "core:log"
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
+import "../../handles"
+
 MAX_FRAMES_IN_FLIGHT :: 2
 
 // Validation layers cost CPU on every command; release builds pass -define:VEIL_VALIDATION=false.
@@ -80,7 +82,12 @@ Extent3D :: struct {
 	width, height, depth: u32,
 }
 
-CommandBuffer :: distinct vk.CommandBuffer
+// Recording target for GPU commands. Carries the context so calls like image_barrier can
+// look up image state from a handle; its fields are backend-only.
+CommandBuffer :: struct {
+	handle: vk.CommandBuffer,
+	ctx:    ^Context,
+}
 RenderEncoder :: CommandBuffer
 ComputeEncoder :: CommandBuffer
 Sampler :: distinct vk.Sampler
@@ -112,4 +119,5 @@ Context :: struct {
 	max_bindless_textures_per_stage: u32,
 	timeline_semaphore:              vk.Semaphore,
 	frame_sync:                      [MAX_FRAMES_IN_FLIGHT]FrameSync,
+	images:                          handles.Pool(ImageSlot),
 }

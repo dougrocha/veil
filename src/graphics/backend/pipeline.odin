@@ -8,7 +8,7 @@ Pipeline :: struct {
 }
 
 pipeline_bind :: proc(cmd: CommandBuffer, pipeline: Pipeline, desc_sets: []vk.DescriptorSet = {}) {
-	raw_cmd := vk.CommandBuffer(cmd)
+	raw_cmd := cmd.handle
 	vk.CmdBindPipeline(raw_cmd, .GRAPHICS, pipeline.pipeline)
 
 	if len(desc_sets) > 0 {
@@ -32,7 +32,7 @@ pipeline_push :: proc(
 	data: ^$T,
 	index: u32 = 0,
 ) {
-	vk.CmdPushConstants(vk.CommandBuffer(cmd), pipeline.layout, shader_stages_to_vk(stages), 0, u32(size_of(T)), data)
+	vk.CmdPushConstants(cmd.handle, pipeline.layout, shader_stages_to_vk(stages), 0, u32(size_of(T)), data)
 }
 
 pipeline_set_viewport :: proc(cmd: CommandBuffer, width: f32, height: f32, offset_x: f32 = 0, offset_y: f32 = 0) {
@@ -44,7 +44,7 @@ pipeline_set_viewport :: proc(cmd: CommandBuffer, width: f32, height: f32, offse
 		minDepth = 0.0,
 		maxDepth = 1.0,
 	}
-	vk.CmdSetViewport(vk.CommandBuffer(cmd), 0, 1, &viewport)
+	vk.CmdSetViewport(cmd.handle, 0, 1, &viewport)
 }
 
 pipeline_set_scissor :: proc(cmd: CommandBuffer, width: u32, height: u32, offset_x: i32 = 0, offset_y: i32 = 0) {
@@ -52,11 +52,11 @@ pipeline_set_scissor :: proc(cmd: CommandBuffer, width: u32, height: u32, offset
 		offset = {offset_x, offset_y},
 		extent = {width, height},
 	}
-	vk.CmdSetScissor(vk.CommandBuffer(cmd), 0, 1, &scissor)
+	vk.CmdSetScissor(cmd.handle, 0, 1, &scissor)
 }
 
 pipeline_set_depth_write :: proc(cmd: CommandBuffer, pipeline: Pipeline, enabled: bool) {
-	vk.CmdSetDepthWriteEnable(vk.CommandBuffer(cmd), b32(enabled))
+	vk.CmdSetDepthWriteEnable(cmd.handle, b32(enabled))
 }
 
 BlendModeAttachment :: enum {

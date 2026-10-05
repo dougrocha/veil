@@ -96,14 +96,10 @@ render_target_create :: proc(
 	format: Format,
 	usage: ImageUsageFlags,
 	samples: u32 = 1,
-) -> GpuImage {
+) -> Image {
 	desc := image_desc_default(extent, format, usage)
 	desc.samples = samples
-	img := image_create(ctx, desc)
-
-	view_desc := image_view_desc_default(img)
-	img.image_view = image_view_create(ctx, img, view_desc)
-	return img
+	return image_create(ctx, desc)
 }
 
 swapchain_acquire_next_image :: proc(
@@ -162,16 +158,16 @@ swapchain_acquire_barrier :: proc(cmd: CommandBuffer, image: vk.Image, dst: Imag
 		imageMemoryBarrierCount = 1,
 		pImageMemoryBarriers    = &barrier,
 	}
-	vk.CmdPipelineBarrier2(vk.CommandBuffer(cmd), &dep_info)
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
 }
 
 // Copies src (same extent as the swapchain) into the acquired image and readies it for present.
-present_blit :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain, src: ^GpuImage) {
+present_blit :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain, src: Image) {
 	image_barrier(cmd, src, .Transfer_Src, ImageAspectFlags{.Color})
 	swapchain_acquire_barrier(cmd, swapchain.images[swapchain.current_image_index], .Transfer_Dst)
 	copy_image_to_image(
 		cmd,
-		src.image,
+		image_slot(ctx, src).image,
 		swapchain.images[swapchain.current_image_index],
 		swapchain.extent,
 		swapchain.extent,

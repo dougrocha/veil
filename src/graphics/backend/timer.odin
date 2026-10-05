@@ -78,14 +78,14 @@ gpu_timer_read :: proc(ctx: ^Context, timer: ^GpuTimer, slot: u64, out_ms: []f64
 gpu_timer_reset :: proc(cmd: CommandBuffer, timer: ^GpuTimer, slot: u64) {
 	timer.written[slot] = 0
 	if !timer.supported do return
-	vk.CmdResetQueryPool(vk.CommandBuffer(cmd), timer.pools[slot], 0, MAX_GPU_TIMESTAMPS)
+	vk.CmdResetQueryPool(cmd.handle, timer.pools[slot], 0, MAX_GPU_TIMESTAMPS)
 }
 
 // Writes a timestamp once all prior work completes. Returns false when out of queries or unsupported.
 gpu_timer_write :: proc(cmd: CommandBuffer, timer: ^GpuTimer, slot: u64) -> (index: u32, ok: bool) {
 	if !timer.supported || timer.written[slot] >= MAX_GPU_TIMESTAMPS do return 0, false
 	index = timer.written[slot]
-	vk.CmdWriteTimestamp2(vk.CommandBuffer(cmd), {.ALL_COMMANDS}, timer.pools[slot], index)
+	vk.CmdWriteTimestamp2(cmd.handle, {.ALL_COMMANDS}, timer.pools[slot], index)
 	timer.written[slot] += 1
 	return index, true
 }

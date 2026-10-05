@@ -207,14 +207,14 @@ descriptor_write_image_view :: proc(
 	ctx: ^Context,
 	set: ^DescriptorSet,
 	binding: u32,
-	img: ^GpuImage,
+	img: Image,
 	sampler: Sampler,
 	state: ImageStateKind = .Shader_Read,
 	array_element: u32 = 0,
 ) {
 	image_info := vk.DescriptorImageInfo {
 		sampler     = vk.Sampler(sampler),
-		imageView   = img.image_view,
+		imageView   = image_slot(ctx, img).view,
 		imageLayout = IMAGE_STATES[state].layout,
 	}
 	descriptor_write_image_info(ctx, set, binding, &image_info, array_element)
@@ -226,15 +226,12 @@ descriptor_write_bindless_texture :: proc(
 	ctx: ^Context,
 	desc: ^DescriptorSet,
 	array_element: u32,
-	img: ^GpuImage,
+	img: Image,
 	state: ImageStateKind = .Shader_Read,
 	mip: Maybe(u32) = nil,
 ) {
-	view := img.image_view
-	// Single-mip images have no mip views; their full view is that one level.
-	if m, ok := mip.?; ok && len(img.mip_views) > 0 do view = img.mip_views[m]
 	image_info := vk.DescriptorImageInfo {
-		imageView   = view,
+		imageView   = image_mip_view(image_slot(ctx, img), mip),
 		imageLayout = IMAGE_STATES[state].layout,
 	}
 	for i in 0 ..< desc.count {
@@ -300,12 +297,11 @@ descriptor_write_bindless_storage :: proc(
 	ctx: ^Context,
 	desc: ^DescriptorSet,
 	array_element: u32,
-	img: ^GpuImage,
+	img: Image,
 	mip: u32 = 0,
 ) {
-	view := img.mip_views[mip] if len(img.mip_views) > 0 else img.image_view
 	image_info := vk.DescriptorImageInfo {
-		imageView   = view,
+		imageView   = image_mip_view(image_slot(ctx, img), mip),
 		imageLayout = IMAGE_STATES[.General].layout,
 	}
 	for i in 0 ..< desc.count {

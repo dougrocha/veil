@@ -3,7 +3,7 @@ package backend
 import vk "vendor:vulkan"
 
 AttachmentInfo :: struct {
-	image: ^GpuImage, // nil = no attachment
+	image: Image, // zero handle = no attachment
 	layer: u32,
 	mip:   u32,
 }
@@ -19,7 +19,7 @@ PassConfig :: struct {
 }
 
 begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig) -> RenderEncoder {
-	if config.color.image != nil {
+	if image_is_valid(config.color.image) {
 		image_barrier(
 			cmd,
 			config.color.image,
@@ -29,7 +29,7 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 		)
 	}
 
-	if config.resolve.image != nil && config.load_op != .Load {
+	if image_is_valid(config.resolve.image) && config.load_op != .Load {
 		image_barrier(
 			cmd,
 			config.resolve.image,
@@ -39,7 +39,7 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 		)
 	}
 
-	if config.depth.image != nil && !config.skip_depth_transition {
+	if image_is_valid(config.depth.image) && !config.skip_depth_transition {
 		image_barrier(
 			cmd,
 			config.depth.image,
@@ -50,19 +50,23 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 	}
 
 	color_attach_info: vk.RenderingAttachmentInfo
-	if config.color.image != nil {
+	if image_is_valid(config.color.image) {
 		color_attach_info = vk.RenderingAttachmentInfo {
 			sType = .RENDERING_ATTACHMENT_INFO,
-			imageView = image_attachment_view(config.color.image, config.color.layer, config.color.mip),
+			imageView = image_attachment_view(
+				image_slot(ctx, config.color.image),
+				config.color.layer,
+				config.color.mip,
+			),
 			imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
 			loadOp = load_op_to_vk(config.load_op),
 			storeOp = .DONT_CARE,
 			clearValue = {color = {float32 = config.clear_color}},
 		}
-		if config.resolve.image != nil {
+		if image_is_valid(config.resolve.image) {
 			color_attach_info.resolveMode = {.AVERAGE}
 			color_attach_info.resolveImageView = image_attachment_view(
-				config.resolve.image,
+				image_slot(ctx, config.resolve.image),
 				config.resolve.layer,
 				config.resolve.mip,
 			)
@@ -73,25 +77,31 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 	}
 
 	extent: vk.Extent2D
-	if config.color.image != nil {
-		extent = {config.color.image.extent.width, config.color.image.extent.height}
-	} else if config.depth.image != nil {
-		extent = {config.depth.image.extent.width, config.depth.image.extent.height}
+	if image_is_valid(config.color.image) {
+		e := image_slot(ctx, config.color.image).desc.extent
+		extent = {e.width, e.height}
+	} else if image_is_valid(config.depth.image) {
+		e := image_slot(ctx, config.depth.image).desc.extent
+		extent = {e.width, e.height}
 	}
 
 	rendering_info := vk.RenderingInfo {
 		sType = .RENDERING_INFO,
 		renderArea = {offset = {0, 0}, extent = extent},
 		layerCount = 1,
-		colorAttachmentCount = 1 if config.color.image != nil else 0,
-		pColorAttachments = &color_attach_info if config.color.image != nil else nil,
+		colorAttachmentCount = 1 if image_is_valid(config.color.image) else 0,
+		pColorAttachments = &color_attach_info if image_is_valid(config.color.image) else nil,
 	}
 
 	depth_attach_info: vk.RenderingAttachmentInfo
-	if config.depth.image != nil {
+	if image_is_valid(config.depth.image) {
 		depth_attach_info = vk.RenderingAttachmentInfo {
 			sType = .RENDERING_ATTACHMENT_INFO,
-			imageView = image_attachment_view(config.depth.image, config.depth.layer, config.depth.mip),
+			imageView = image_attachment_view(
+				image_slot(ctx, config.depth.image),
+				config.depth.layer,
+				config.depth.mip,
+			),
 			imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
 			loadOp = load_op_to_vk(config.load_op),
 			storeOp = .STORE if config.store_depth else .DONT_CARE,
@@ -100,14 +110,14 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 		rendering_info.pDepthAttachment = &depth_attach_info
 	}
 
-	vk.CmdBeginRendering(vk.CommandBuffer(cmd), &rendering_info)
+	vk.CmdBeginRendering(cmd.handle, &rendering_info)
 
-	encoder := RenderEncoder(cmd)
+	encoder := cmd
 	pipeline_set_viewport(encoder, f32(extent.width), f32(extent.height))
 	pipeline_set_scissor(encoder, extent.width, extent.height)
 	return encoder
 }
 
 end_render_pass :: proc(encoder: RenderEncoder) {
-	vk.CmdEndRendering(vk.CommandBuffer(encoder))
+	vk.CmdEndRendering(encoder.handle)
 }

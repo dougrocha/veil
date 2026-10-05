@@ -87,7 +87,7 @@ command_buffer_allocate :: proc(ctx: ^Context, pool: vk.CommandPool) -> CommandB
 
 	command_buffer: vk.CommandBuffer
 	vk_check(vk.AllocateCommandBuffers(ctx.device, &cmd_alloc_info, &command_buffer))
-	return CommandBuffer(command_buffer)
+	return CommandBuffer{handle = command_buffer, ctx = ctx}
 }
 
 timeline_semaphore_create :: proc(ctx: ^Context, initial_value: u64 = 0) -> vk.Semaphore {
@@ -161,7 +161,7 @@ queue_submit_frame :: proc(
 
 	cmd_submit_info := vk.CommandBufferSubmitInfo {
 		sType         = .COMMAND_BUFFER_SUBMIT_INFO,
-		commandBuffer = vk.CommandBuffer(cmd),
+		commandBuffer = cmd.handle,
 	}
 
 	submit_info := vk.SubmitInfo2 {

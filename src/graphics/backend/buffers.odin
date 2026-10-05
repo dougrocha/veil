@@ -94,5 +94,5 @@ buffer_copy :: proc(ctx: ^Context, src, dst: vk.Buffer, size: vk.DeviceSize) {
 	region := vk.BufferCopy {
 		size = size,
 	}
-	vk.CmdCopyBuffer(vk.CommandBuffer(cmd), src, dst, 1, &region)
+	vk.CmdCopyBuffer(cmd.handle, src, dst, 1, &region)
 }

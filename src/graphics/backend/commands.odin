@@ -21,7 +21,7 @@ begin_immediate_submit :: proc(ctx: ^Context) -> vk.CommandBuffer {
 }
 
 end_immediate_submit :: proc(ctx: ^Context, cmd: CommandBuffer) {
-	cmd := vk.CommandBuffer(cmd)
+	cmd := cmd.handle
 	vk_check(vk.EndCommandBuffer(cmd))
 
 	cmd_info := vk.CommandBufferSubmitInfo {
@@ -42,7 +42,7 @@ end_immediate_submit :: proc(ctx: ^Context, cmd: CommandBuffer) {
 // idea from https://github.com/wrapperup/cool-engine-odin
 @(deferred_in_out = end_immediate_submit)
 immediate_submit :: proc(ctx: ^Context) -> (cmd: CommandBuffer) {
-	return CommandBuffer(begin_immediate_submit(ctx))
+	return CommandBuffer{handle = begin_immediate_submit(ctx), ctx = ctx}
 }
 
 cmd_begin_recording :: proc(ctx: ^Context, cmd: CommandBuffer, frame_index: u64) {
@@ -53,15 +53,15 @@ cmd_begin_recording :: proc(ctx: ^Context, cmd: CommandBuffer, frame_index: u64)
 		sType = .COMMAND_BUFFER_BEGIN_INFO,
 		flags = {.ONE_TIME_SUBMIT},
 	}
-	vk_check(vk.BeginCommandBuffer(vk.CommandBuffer(cmd), &begin_info))
+	vk_check(vk.BeginCommandBuffer(cmd.handle, &begin_info))
 }
 
 cmd_end_recording :: proc(cmd: CommandBuffer) {
-	vk_check(vk.EndCommandBuffer(vk.CommandBuffer(cmd)))
+	vk_check(vk.EndCommandBuffer(cmd.handle))
 }
 
 cmd_set_depth_bias :: proc(cmd: CommandBuffer, bias, clamp, slope: f32) {
-	vk.CmdSetDepthBias(vk.CommandBuffer(cmd), bias, clamp, slope)
+	vk.CmdSetDepthBias(cmd.handle, bias, clamp, slope)
 }
 
 cmd_draw :: proc(
@@ -71,21 +71,21 @@ cmd_draw :: proc(
 	first_vertex: u32 = 0,
 	first_instance: u32 = 0,
 ) {
-	vk.CmdDraw(vk.CommandBuffer(cmd), vertex_count, instance_count, first_vertex, first_instance)
+	vk.CmdDraw(cmd.handle, vertex_count, instance_count, first_vertex, first_instance)
 }
 
 cmd_draw_points :: proc(cmd: RenderEncoder, vertex_count: u32, instance_count: u32 = 1, first_vertex: u32 = 0) {
-	vk.CmdDraw(vk.CommandBuffer(cmd), vertex_count, instance_count, first_vertex, 0)
+	vk.CmdDraw(cmd.handle, vertex_count, instance_count, first_vertex, 0)
 }
 
 cmd_draw_indexed :: proc(cmd: CommandBuffer, index_buffer: vk.Buffer, index_count: u32) {
-	vk.CmdBindIndexBuffer(vk.CommandBuffer(cmd), index_buffer, 0, .UINT32)
-	vk.CmdDrawIndexed(vk.CommandBuffer(cmd), index_count, 1, 0, 0, 0)
+	vk.CmdBindIndexBuffer(cmd.handle, index_buffer, 0, .UINT32)
+	vk.CmdDrawIndexed(cmd.handle, index_count, 1, 0, 0, 0)
 }
 
 // Vulkan takes the local workgroup size from the shader.
 cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32, threads_per_group: [3]u32) {
-	vk.CmdDispatch(vk.CommandBuffer(cmd), x, y, z)
+	vk.CmdDispatch(cmd.handle, x, y, z)
 }
 
 cmd_barrier_compute_write_to_vertex_read :: proc(cmd: ComputeEncoder) {
@@ -101,7 +101,7 @@ cmd_barrier_compute_write_to_vertex_read :: proc(cmd: ComputeEncoder) {
 		memoryBarrierCount = 1,
 		pMemoryBarriers    = &barrier,
 	}
-	vk.CmdPipelineBarrier2(vk.CommandBuffer(cmd), &dep_info)
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
 }
 
 cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
@@ -117,11 +117,11 @@ cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
 		memoryBarrierCount = 1,
 		pMemoryBarriers    = &barrier,
 	}
-	vk.CmdPipelineBarrier2(vk.CommandBuffer(cmd), &dep_info)
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
 }
 
 pipeline_bind_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline, desc_sets: []vk.DescriptorSet = {}) {
-	raw_cmd := vk.CommandBuffer(cmd)
+	raw_cmd := cmd.handle
 	vk.CmdBindPipeline(raw_cmd, .COMPUTE, pipeline.pipeline)
 
 	if len(desc_sets) > 0 {
@@ -139,11 +139,11 @@ pipeline_bind_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline, desc_sets
 }
 
 pipeline_push_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline, data: ^$T, offset: u32 = 0) {
-	vk.CmdPushConstants(vk.CommandBuffer(cmd), pipeline.layout, {.COMPUTE}, offset, u32(size_of(T)), data)
+	vk.CmdPushConstants(cmd.handle, pipeline.layout, {.COMPUTE}, offset, u32(size_of(T)), data)
 }
 
 begin_compute_pass :: proc(ctx: ^Context, cmd: CommandBuffer) -> ComputeEncoder {
-	return ComputeEncoder(cmd)
+	return cmd
 }
 
 end_compute_pass :: proc(encoder: ComputeEncoder) {

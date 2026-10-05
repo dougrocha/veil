@@ -5,6 +5,8 @@ import "core:log"
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
 
+import "../../handles"
+
 extent3d :: proc(width, height, depth: u32) -> Extent3D {
 	return {width, height, depth}
 }
@@ -17,20 +19,22 @@ image_aspect_to_vk :: proc(flags: ImageAspectFlags) -> vk.ImageAspectFlags {
 	return vk_flags
 }
 
-GpuImage :: struct {
-	image:        vk.Image,
-	image_view:   vk.ImageView,
-	layer_views:  []vk.ImageView, // one per array layer; only for multi-layer attachment images
-	mip_views:    []vk.ImageView, // one per mip level; only for multi-mip storage images
-	alloc:        vma.Allocation,
-	alloc_info:   vma.Allocation_Info,
-	extent:       Extent3D,
-	format:       Format,
-	mip_levels:   u32,
-	array_layers: u32,
-	samples:      u32,
-	layout:       []vk.ImageLayout, // one per (mip, layer); index with image_layout_index
-	usage:        ImageUsageFlags,
+// Handle to a backend-owned image. The zero value means "no image". Stale handles (to a
+// destroyed image) assert on use.
+Image :: handles.Handle(ImageSlot)
+
+MAX_IMAGES :: 2048
+
+// Everything Vulkan about an image. Lives in ctx.images; only the backend sees it.
+@(private)
+ImageSlot :: struct {
+	desc:        ImageDesc,
+	image:       vk.Image,
+	view:        vk.ImageView, // whole image: D2, D2_ARRAY, CUBE or CUBE_ARRAY from desc
+	layer_views: []vk.ImageView, // one per array layer; only for multi-layer attachment images
+	mip_views:   []vk.ImageView, // one per mip level; only for multi-mip images
+	alloc:       vma.Allocation,
+	layout:      []vk.ImageLayout, // one per (mip, layer); index with image_layout_index
 }
 
 image_usage_to_vk :: proc(usage: ImageUsageFlags) -> vk.ImageUsageFlags {
@@ -45,11 +49,13 @@ image_usage_to_vk :: proc(usage: ImageUsageFlags) -> vk.ImageUsageFlags {
 	return flags
 }
 
-image_layout_index :: proc(img: ^GpuImage, mip, layer: u32) -> u32 {
-	return mip * img.array_layers + layer
+@(private)
+image_layout_index :: proc(slot: ^ImageSlot, mip, layer: u32) -> u32 {
+	return mip * slot.desc.array_layers + layer
 }
 
-// Backend-neutral description of an image; image_create takes it as-is.
+// Backend-neutral description of an image; image_create takes it as-is and image_desc
+// returns it unchanged.
 ImageDesc :: struct {
 	extent:       Extent3D,
 	format:       Format,
@@ -64,7 +70,31 @@ image_desc_default :: proc(extent: Extent3D, format: Format, usage: ImageUsageFl
 	return ImageDesc{extent = extent, format = format, usage = usage, mip_levels = 1, array_layers = 1, samples = 1}
 }
 
-image_create :: proc(ctx: ^Context, desc: ImageDesc) -> GpuImage {
+images_init :: proc(ctx: ^Context) {
+	ctx.images = handles.pool_init(MAX_IMAGES, ImageSlot)
+}
+
+images_destroy :: proc(ctx: ^Context) {
+	handles.pool_destroy(&ctx.images)
+}
+
+image_is_valid :: proc(img: Image) -> bool {
+	return img.generation != 0
+}
+
+@(private)
+image_slot :: proc(ctx: ^Context, img: Image) -> ^ImageSlot {
+	return handles.pool_get(&ctx.images, img)
+}
+
+// The description the image was created with.
+image_desc :: proc(ctx: ^Context, img: Image) -> ImageDesc {
+	return image_slot(ctx, img).desc
+}
+
+// Creates the image, its whole-image view, and per-layer (attachments) and per-mip (storage)
+// views.
+image_create :: proc(ctx: ^Context, desc: ImageDesc) -> Image {
 	image_info := vk.ImageCreateInfo {
 		sType         = .IMAGE_CREATE_INFO,
 		imageType     = .D2,
@@ -80,136 +110,111 @@ image_create :: proc(ctx: ^Context, desc: ImageDesc) -> GpuImage {
 		flags         = {.CUBE_COMPATIBLE} if desc.cube else {},
 	}
 
-	gpu_img := GpuImage {
-		extent       = desc.extent,
-		format       = desc.format,
-		mip_levels   = desc.mip_levels,
-		array_layers = desc.array_layers,
-		samples      = desc.samples,
-		usage        = desc.usage,
+	slot := ImageSlot {
+		desc = desc,
 	}
-
-	gpu_img.layout = make([]vk.ImageLayout, desc.mip_levels * desc.array_layers)
-	for i in 0 ..< len(gpu_img.layout) {
-		gpu_img.layout[i] = .UNDEFINED
-	}
+	slot.layout = make([]vk.ImageLayout, desc.mip_levels * desc.array_layers)
+	for &l in slot.layout do l = .UNDEFINED
 
 	vk_check(
 		vma.create_image(
 			ctx.vma_allocator,
 			image_info,
 			vma.Allocation_Create_Info{usage = .Auto, required_flags = {.DEVICE_LOCAL}},
-			&gpu_img.image,
-			&gpu_img.alloc,
-			&gpu_img.alloc_info,
+			&slot.image,
+			&slot.alloc,
+			nil,
 		),
 	)
 
+	// Transfer-only images (e.g. readback staging) can't have views.
+	VIEW_USAGE :: ImageUsageFlags{.Sampled, .Storage, .ColorAttachment, .DepthStencilAttachment}
+	if desc.usage & VIEW_USAGE != {} {
+		view_type: vk.ImageViewType = .D2
+		if desc.cube {
+			view_type = .CUBE if desc.array_layers == 6 else .CUBE_ARRAY
+		} else if desc.array_layers > 1 {
+			view_type = .D2_ARRAY
+		}
+		slot.view = image_view_create(ctx, &slot, view_type, 0, desc.mip_levels, 0, desc.array_layers)
+	}
+
 	if desc.array_layers > 1 && desc.usage & {.ColorAttachment, .DepthStencilAttachment} != {} {
-		gpu_img.layer_views = make([]vk.ImageView, desc.array_layers)
+		slot.layer_views = make([]vk.ImageView, desc.array_layers)
 		for i in 0 ..< desc.array_layers {
-			view_desc := image_view_desc_default(gpu_img)
-			view_desc.base_array_layer = i
-			view_desc.array_layers = 1
-			view_desc.mip_levels = 1
-			gpu_img.layer_views[i] = image_view_create(ctx, gpu_img, view_desc)
+			slot.layer_views[i] = image_view_create(ctx, &slot, .D2, 0, 1, i, 1)
 		}
 	}
 
 	if desc.mip_levels > 1 && desc.usage & {.Storage} != {} {
-		gpu_img.mip_views = make([]vk.ImageView, desc.mip_levels)
+		slot.mip_views = make([]vk.ImageView, desc.mip_levels)
 		for i in 0 ..< desc.mip_levels {
-			view_desc := image_view_desc_default(gpu_img)
-			view_desc.base_mip_level = i
-			view_desc.mip_levels = 1
-			view_desc.array_layers = 1
-			gpu_img.mip_views[i] = image_view_create(ctx, gpu_img, view_desc)
+			slot.mip_views[i] = image_view_create(ctx, &slot, .D2, i, 1, 0, 1)
 		}
 	}
 
-	return gpu_img
-}
-
-image_create_default_view :: proc(ctx: ^Context, img: ^GpuImage, cube: bool, layers: u32) {
-	view_desc := image_view_desc_default(img^)
-	view_desc.view_type = .CUBE_ARRAY if cube else .D2_ARRAY
-	view_desc.array_layers = layers
-	img.image_view = image_view_create(ctx, img^, view_desc)
-}
-
-image_view_create_default :: proc(ctx: ^Context, img: ^GpuImage) {
-	img.image_view = image_view_create(ctx, img^, image_view_desc_default(img^))
-}
-
-image_view_create_cubemap :: proc(ctx: ^Context, img: ^GpuImage) {
-	view_desc := image_view_desc_default(img^)
-	view_desc.view_type = .CUBE
-	view_desc.array_layers = 6
-	img.image_view = image_view_create(ctx, img^, view_desc)
+	return handles.pool_alloc(&ctx.images, slot)
 }
 
 device_max_anisotropy :: proc(ctx: ^Context) -> f32 {
 	return vk_get_physical_device_properties(ctx).limits.maxSamplerAnisotropy
 }
 
-image_destroy :: proc(ctx: ^Context, img: GpuImage) {
-	image_view_destroy(ctx, img.image_view)
-	for view in img.mip_views {
-		image_view_destroy(ctx, view)
-	}
-	delete(img.mip_views)
-	for view in img.layer_views {
-		image_view_destroy(ctx, view)
-	}
-	delete(img.layer_views)
-	delete(img.layout)
-	vma.destroy_image(ctx.vma_allocator, img.image, img.alloc)
+image_destroy :: proc(ctx: ^Context, img: Image) {
+	slot := image_slot(ctx, img)
+	vk.DestroyImageView(ctx.device, slot.view, nil)
+	for view in slot.mip_views do vk.DestroyImageView(ctx.device, view, nil)
+	delete(slot.mip_views)
+	for view in slot.layer_views do vk.DestroyImageView(ctx.device, view, nil)
+	delete(slot.layer_views)
+	delete(slot.layout)
+	vma.destroy_image(ctx.vma_allocator, slot.image, slot.alloc)
+	handles.pool_free(&ctx.images, img)
 }
 
-// View to render into one (layer, mip) of an image. Falls back to the full
-// view for single-layer images.
-image_attachment_view :: proc(img: ^GpuImage, layer: u32, mip: u32 = 0) -> vk.ImageView {
+// View to render into one (layer, mip) of an image. Falls back to the whole view for
+// single-layer images.
+@(private)
+image_attachment_view :: proc(slot: ^ImageSlot, layer: u32, mip: u32 = 0) -> vk.ImageView {
 	assert(mip == 0, "mip attachment views not implemented yet")
-	if len(img.layer_views) == 0 {
+	if len(slot.layer_views) == 0 {
 		assert(layer == 0, "image has no layer views")
-		return img.image_view
+		return slot.view
 	}
-	return img.layer_views[layer]
+	return slot.layer_views[layer]
 }
 
-ImageViewDesc :: struct {
-	view_type:        vk.ImageViewType,
-	mip_levels:       u32,
-	array_layers:     u32,
-	base_mip_level:   u32,
-	base_array_layer: u32,
+// View of one mip level for sampling or storage; single-mip images use the whole view.
+@(private)
+image_mip_view :: proc(slot: ^ImageSlot, mip: Maybe(u32)) -> vk.ImageView {
+	if m, ok := mip.?; ok && len(slot.mip_views) > 0 do return slot.mip_views[m]
+	return slot.view
 }
 
-image_view_desc_default :: proc(img: GpuImage) -> ImageViewDesc {
-	return ImageViewDesc{view_type = .D2, mip_levels = img.mip_levels, array_layers = img.array_layers}
-}
-
-image_view_create :: proc(ctx: ^Context, img: GpuImage, desc: ImageViewDesc) -> vk.ImageView {
+@(private)
+image_view_create :: proc(
+	ctx: ^Context,
+	slot: ^ImageSlot,
+	view_type: vk.ImageViewType,
+	base_mip, mip_count, base_layer, layer_count: u32,
+) -> vk.ImageView {
+	format := format_to_vk(slot.desc.format)
 	info := vk.ImageViewCreateInfo {
 		sType = .IMAGE_VIEW_CREATE_INFO,
-		image = img.image,
-		viewType = desc.view_type,
-		format = format_to_vk(img.format),
+		image = slot.image,
+		viewType = view_type,
+		format = format,
 		subresourceRange = {
-			aspectMask = format_aspect_mask(format_to_vk(img.format)),
-			baseMipLevel = desc.base_mip_level,
-			levelCount = desc.mip_levels,
-			baseArrayLayer = desc.base_array_layer,
-			layerCount = desc.array_layers,
+			aspectMask = format_aspect_mask(format),
+			baseMipLevel = base_mip,
+			levelCount = mip_count,
+			baseArrayLayer = base_layer,
+			layerCount = layer_count,
 		},
 	}
 	view: vk.ImageView
 	vk_check(vk.CreateImageView(ctx.device, &info, nil, &view))
 	return view
-}
-
-image_view_destroy :: proc(ctx: ^Context, view: vk.ImageView) {
-	vk.DestroyImageView(ctx.device, view, nil)
 }
 
 ImageState :: struct {
@@ -250,7 +255,7 @@ image_barrier :: proc {
 
 image_barrier_gpu :: proc(
 	cmd: CommandBuffer,
-	img: ^GpuImage,
+	img: Image,
 	dst: ImageStateKind,
 	aspect_mask: ImageAspectFlags,
 	base_mip_level: u32 = 0,
@@ -258,7 +263,8 @@ image_barrier_gpu :: proc(
 	base_array_layer: u32 = 0,
 	layer_count: u32 = 1,
 ) {
-	src := layout_to_state_kind(img.layout[image_layout_index(img, base_mip_level, base_array_layer)])
+	slot := image_slot(cmd.ctx, img)
+	src := layout_to_state_kind(slot.layout[image_layout_index(slot, base_mip_level, base_array_layer)])
 	dst := IMAGE_STATES[dst]
 
 	barrier := vk.ImageMemoryBarrier2 {
@@ -271,7 +277,7 @@ image_barrier_gpu :: proc(
 		newLayout           = dst.layout,
 		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-		image               = img.image,
+		image               = slot.image,
 		subresourceRange    = {
 			image_aspect_to_vk(aspect_mask),
 			base_mip_level,
@@ -285,16 +291,16 @@ image_barrier_gpu :: proc(
 		imageMemoryBarrierCount = 1,
 		pImageMemoryBarriers    = &barrier,
 	}
-	vk.CmdPipelineBarrier2(vk.CommandBuffer(cmd), &dep_info)
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
 
 	for m in base_mip_level ..< base_mip_level + level_count {
 		for l in base_array_layer ..< base_array_layer + layer_count {
-			img.layout[image_layout_index(img, m, l)] = dst.layout
+			slot.layout[image_layout_index(slot, m, l)] = dst.layout
 		}
 	}
 }
 
-// for raw vk.Image handles with no GpuImage wrapper (e.g. swapchain images), where the
+// for raw vk.Image handles with no Image slot (e.g. swapchain images), where the
 // caller must track/know the current layout itself.
 image_barrier_raw :: proc(
 	cmd: CommandBuffer,
@@ -327,24 +333,25 @@ image_barrier_raw :: proc(
 		imageMemoryBarrierCount = 1,
 		pImageMemoryBarriers    = &barrier,
 	}
-	vk.CmdPipelineBarrier2(vk.CommandBuffer(cmd), &dep_info)
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
 }
 
 // image helpers
 
-generate_mipmaps :: proc(ctx: ^Context, img: ^GpuImage) {
-	format_props := vk_get_physical_device_format_properties(ctx, format_to_vk(img.format))
+generate_mipmaps :: proc(ctx: ^Context, img: Image) {
+	slot := image_slot(ctx, img)
+	format_props := vk_get_physical_device_format_properties(ctx, format_to_vk(slot.desc.format))
 
 	if .SAMPLED_IMAGE_FILTER_LINEAR not_in format_props.optimalTilingFeatures {
 		log.panicf("Texture image format does not support linear blitting")
 	}
 
-	mip_levels := img.mip_levels
+	mip_levels := slot.desc.mip_levels
 
 	{
 		cmd := immediate_submit(ctx)
 
-		mip_width, mip_height := img.extent.width, img.extent.height
+		mip_width, mip_height := slot.desc.extent.width, slot.desc.extent.height
 		for i in 1 ..< mip_levels {
 			image_barrier(cmd, img, .Transfer_Src, ImageAspectFlags{.Color}, level_count = 1, base_mip_level = i - 1)
 
@@ -357,15 +364,15 @@ generate_mipmaps :: proc(ctx: ^Context, img: ^GpuImage) {
 			}
 			blit_info := vk.BlitImageInfo2 {
 				sType          = .BLIT_IMAGE_INFO_2,
-				srcImage       = img.image,
+				srcImage       = slot.image,
 				srcImageLayout = .TRANSFER_SRC_OPTIMAL,
-				dstImage       = img.image,
+				dstImage       = slot.image,
 				dstImageLayout = .TRANSFER_DST_OPTIMAL,
 				regionCount    = 1,
 				pRegions       = &blit,
 				filter         = .LINEAR,
 			}
-			vk.CmdBlitImage2(vk.CommandBuffer(cmd), &blit_info)
+			vk.CmdBlitImage2(cmd.handle, &blit_info)
 
 			image_barrier(cmd, img, .Shader_Read, ImageAspectFlags{.Color}, level_count = 1, base_mip_level = i - 1)
 
@@ -384,6 +391,7 @@ generate_mipmaps :: proc(ctx: ^Context, img: ^GpuImage) {
 	}
 }
 
+@(private)
 copy_image_to_image :: proc(cmd: CommandBuffer, src, dst: vk.Image, src_extent, dst_extent: Extent2D) {
 	blit_region := vk.ImageBlit2 {
 		sType = .IMAGE_BLIT_2,
@@ -394,7 +402,7 @@ copy_image_to_image :: proc(cmd: CommandBuffer, src, dst: vk.Image, src_extent, 
 	blit_region.dstOffsets[1] = {i32(dst_extent.width), i32(dst_extent.height), 1}
 
 	vk.CmdBlitImage2(
-		vk.CommandBuffer(cmd),
+		cmd.handle,
 		&vk.BlitImageInfo2 {
 			sType = .BLIT_IMAGE_INFO_2,
 			srcImage = src,
@@ -408,7 +416,7 @@ copy_image_to_image :: proc(cmd: CommandBuffer, src, dst: vk.Image, src_extent, 
 	)
 }
 
-copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: ^GpuImage, width, height: u32) {
+copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: Image, width, height: u32) {
 	region := vk.BufferImageCopy2 {
 		sType = .BUFFER_IMAGE_COPY_2,
 		bufferOffset = 0,
@@ -420,11 +428,11 @@ copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: ^GpuIma
 	}
 
 	vk.CmdCopyBufferToImage2(
-		vk.CommandBuffer(cmd),
+		cmd.handle,
 		&vk.CopyBufferToImageInfo2 {
 			sType = .COPY_BUFFER_TO_IMAGE_INFO_2,
 			srcBuffer = buffer,
-			dstImage = img.image,
+			dstImage = image_slot(cmd.ctx, img).image,
 			dstImageLayout = .TRANSFER_DST_OPTIMAL,
 			regionCount = 1,
 			pRegions = &region,
@@ -432,7 +440,7 @@ copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: ^GpuIma
 	)
 }
 
-copy_image_to_buffer :: proc(cmd: CommandBuffer, img: ^GpuImage, buffer: vk.Buffer, width, height: u32) {
+copy_image_to_buffer :: proc(cmd: CommandBuffer, img: Image, buffer: vk.Buffer, width, height: u32) {
 	region := vk.BufferImageCopy2 {
 		sType = .BUFFER_IMAGE_COPY_2,
 		bufferOffset = 0,
@@ -444,10 +452,10 @@ copy_image_to_buffer :: proc(cmd: CommandBuffer, img: ^GpuImage, buffer: vk.Buff
 	}
 
 	vk.CmdCopyImageToBuffer2(
-		vk.CommandBuffer(cmd),
+		cmd.handle,
 		&vk.CopyImageToBufferInfo2 {
 			sType = .COPY_IMAGE_TO_BUFFER_INFO_2,
-			srcImage = img.image,
+			srcImage = image_slot(cmd.ctx, img).image,
 			srcImageLayout = .TRANSFER_SRC_OPTIMAL,
 			dstBuffer = buffer,
 			regionCount = 1,
@@ -459,7 +467,7 @@ copy_image_to_buffer :: proc(cmd: CommandBuffer, img: ^GpuImage, buffer: vk.Buff
 copy_buffer_to_cubemap :: proc(
 	cmd: CommandBuffer,
 	buffer: vk.Buffer,
-	img: ^GpuImage,
+	img: Image,
 	face_w, face_h: u32,
 	face_size: u32,
 ) {
@@ -474,11 +482,11 @@ copy_buffer_to_cubemap :: proc(
 	}
 
 	vk.CmdCopyBufferToImage2(
-		vk.CommandBuffer(cmd),
+		cmd.handle,
 		&vk.CopyBufferToImageInfo2 {
 			sType = .COPY_BUFFER_TO_IMAGE_INFO_2,
 			srcBuffer = buffer,
-			dstImage = img.image,
+			dstImage = image_slot(cmd.ctx, img).image,
 			dstImageLayout = .TRANSFER_DST_OPTIMAL,
 			regionCount = 6,
 			pRegions = &regions[0],

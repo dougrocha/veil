@@ -12,8 +12,8 @@ SHADOW_DEPTH_FORMAT :: backend.Format.D32_Sfloat
 SPOT_SHADOW_SLOT_BASE :: MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT
 
 ShadowAtlas :: struct {
-	using gpu: backend.GpuImage,
-	sampler:   backend.Sampler,
+	image:   backend.Image,
+	sampler: backend.Sampler,
 }
 
 shadow_atlas_create :: proc(ctx: ^backend.Context, size: u32, layers: u32, cube: bool) -> ShadowAtlas {
@@ -25,11 +25,8 @@ shadow_atlas_create :: proc(ctx: ^backend.Context, size: u32, layers: u32, cube:
 		{.DepthStencilAttachment, .Sampled},
 	)
 	desc.array_layers = layers
-	if cube {
-		desc.cube = true
-	}
-	atlas.gpu = backend.image_create(ctx, desc)
-	backend.image_create_default_view(ctx, &atlas.gpu, cube, layers)
+	desc.cube = cube
+	atlas.image = backend.image_create(ctx, desc)
 
 	sampler_desc := backend.sampler_desc_default()
 	sampler_desc.compare_enable = true
@@ -41,7 +38,7 @@ shadow_atlas_create :: proc(ctx: ^backend.Context, size: u32, layers: u32, cube:
 
 shadow_atlas_destroy :: proc(ctx: ^backend.Context, atlas: ^ShadowAtlas) {
 	backend.sampler_destroy(ctx, atlas.sampler)
-	backend.image_destroy(ctx, atlas.gpu)
+	backend.image_destroy(ctx, atlas.image)
 }
 
 shadow_atlas_transition :: proc(
@@ -50,7 +47,7 @@ shadow_atlas_transition :: proc(
 	state: backend.ImageStateKind,
 	layer_count: u32,
 ) {
-	backend.image_barrier(cmd, &atlas.gpu, state, backend.ImageAspectFlags{.Depth}, layer_count = layer_count)
+	backend.image_barrier(cmd, atlas.image, state, backend.ImageAspectFlags{.Depth}, layer_count = layer_count)
 }
 
 // Depth only. The atlases are created after the pipelines are registered, so this reads the

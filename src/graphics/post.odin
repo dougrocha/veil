@@ -26,20 +26,22 @@ post_targets_create :: proc(engine: ^Engine) {
 		BINDLESS_STORAGE_IMAGE_COUNT,
 	)
 	targets := &engine.render_targets
-	engine.hdr_texture = texture_register_external(engine, &targets.hdr)
+	bloom_mips := backend.image_desc(&engine.vk_ctx, targets.bloom).mip_levels
+	engine.hdr_texture = texture_register_external(engine, targets.hdr)
 	for &handle, i in engine.bloom_textures {
-		handle = texture_register_external(engine, &targets.bloom, bloom_slot_mip(&targets.bloom, u32(i)))
+		handle = texture_register_external(engine, targets.bloom, bloom_slot_mip(bloom_mips, u32(i)))
 	}
 	storage_images_write(engine)
 }
 
-// Called by engine_resize after it recreates the render targets and their views. Texture
-// handles and storage slots stay the same; only the descriptors change.
+// Called by engine_resize after it recreates the render targets. The images have new
+// handles; texture handles and storage slots stay the same and are pointed at them.
 post_targets_update :: proc(engine: ^Engine) {
 	targets := &engine.render_targets
-	texture_update_external(engine, engine.hdr_texture, &targets.hdr)
+	bloom_mips := backend.image_desc(&engine.vk_ctx, targets.bloom).mip_levels
+	texture_update_external(engine, engine.hdr_texture, targets.hdr)
 	for handle, i in engine.bloom_textures {
-		texture_update_external(engine, handle, &targets.bloom, bloom_slot_mip(&targets.bloom, u32(i)))
+		texture_update_external(engine, handle, targets.bloom, bloom_slot_mip(bloom_mips, u32(i)))
 	}
 	storage_images_write(engine)
 }
@@ -47,26 +49,27 @@ post_targets_update :: proc(engine: ^Engine) {
 // Every bloom slot needs a valid view, but a tiny window allocates fewer than BLOOM_MAX_MIPS
 // levels. Slots past the last level alias it; bloom_levels never dispatches them.
 @(private = "file")
-bloom_slot_mip :: proc(bloom: ^backend.GpuImage, slot: u32) -> u32 {
-	return min(slot, bloom.mip_levels - 1)
+bloom_slot_mip :: proc(mip_levels: u32, slot: u32) -> u32 {
+	return min(slot, mip_levels - 1)
 }
 
 @(private = "file")
 storage_images_write :: proc(engine: ^Engine) {
 	targets := &engine.render_targets
+	bloom_mips := backend.image_desc(&engine.vk_ctx, targets.bloom).mip_levels
 	backend.descriptor_write_bindless_storage(
 		&engine.vk_ctx,
 		&engine.storage_descriptor,
 		STORAGE_SLOT_DRAW,
-		&targets.draw,
+		targets.draw,
 	)
 	for i in 0 ..< u32(BLOOM_MAX_MIPS) {
 		backend.descriptor_write_bindless_storage(
 			&engine.vk_ctx,
 			&engine.storage_descriptor,
 			STORAGE_SLOT_BLOOM + i,
-			&targets.bloom,
-			bloom_slot_mip(&targets.bloom, i),
+			targets.bloom,
+			bloom_slot_mip(bloom_mips, i),
 		)
 	}
 }
@@ -74,7 +77,7 @@ storage_images_write :: proc(engine: ^Engine) {
 // Active bloom levels: as many as fit before a mip's short side drops below BLOOM_MIN_MIP_SIZE,
 // capped by the debug setting and by what the bloom target was allocated with.
 bloom_levels :: proc(engine: ^Engine) -> u32 {
-	bloom := &engine.render_targets.bloom
+	bloom := backend.image_desc(&engine.vk_ctx, engine.render_targets.bloom)
 	short_side := min(bloom.extent.width, bloom.extent.height)
 	for_screen: u32 = 1
 	for (short_side >> for_screen) >= BLOOM_MIN_MIP_SIZE do for_screen += 1
@@ -82,8 +85,8 @@ bloom_levels :: proc(engine: ^Engine) -> u32 {
 }
 
 @(private = "file")
-mip_extent :: proc(img: ^backend.GpuImage, mip: u32) -> [2]u32 {
-	return {max(img.extent.width >> mip, 1), max(img.extent.height >> mip, 1)}
+mip_extent :: proc(desc: backend.ImageDesc, mip: u32) -> [2]u32 {
+	return {max(desc.extent.width >> mip, 1), max(desc.extent.height >> mip, 1)}
 }
 
 @(private = "file")
@@ -112,11 +115,13 @@ bind_post_sets :: proc(engine: ^Engine, encoder: backend.ComputeEncoder, pipelin
 // up holding every blur radius and is what the tonemap composites.
 dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	targets := &engine.render_targets
-	bloom := &targets.bloom
+	bloom := targets.bloom
+	bloom_desc := backend.image_desc(&engine.vk_ctx, bloom)
+	hdr_extent := backend.image_desc(&engine.vk_ctx, targets.hdr).extent
 	color := backend.ImageAspectFlags{.Color}
 	levels := bloom_levels(engine)
 
-	backend.image_barrier(cmd, &targets.hdr, .Shader_Read, color)
+	backend.image_barrier(cmd, targets.hdr, .Shader_Read, color)
 
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
 	defer backend.end_compute_pass(encoder)
@@ -129,18 +134,18 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			dst_storage = STORAGE_SLOT_BLOOM + i,
 		}
 		if i == 0 {
-			src_size = {targets.hdr.extent.width, targets.hdr.extent.height}
+			src_size = {hdr_extent.width, hdr_extent.height}
 			pc.src_texture = u32(engine.hdr_texture.index)
 			pc.karis = 1
 		} else {
 			backend.image_barrier(cmd, bloom, .Shader_Read, color, base_mip_level = i - 1)
-			src_size = mip_extent(bloom, i - 1)
+			src_size = mip_extent(bloom_desc, i - 1)
 			pc.src_texture = u32(engine.bloom_textures[i - 1].index)
 		}
 		pc.src_texel_size = {1 / f32(src_size.x), 1 / f32(src_size.y)}
 		backend.image_barrier(cmd, bloom, .General, color, base_mip_level = i)
 		backend.pipeline_push_compute(encoder, down, &pc)
-		dispatch_post(encoder, mip_extent(bloom, i))
+		dispatch_post(encoder, mip_extent(bloom_desc, i))
 	}
 
 	up := get_pipeline(&engine.pipeline_registry, .Bloom_Up_Compute)
@@ -148,7 +153,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	for i := int(levels) - 2; i >= 0; i -= 1 {
 		dst := u32(i)
 		src := dst + 1
-		src_size := mip_extent(bloom, src)
+		src_size := mip_extent(bloom_desc, src)
 		backend.image_barrier(cmd, bloom, .Shader_Read, color, base_mip_level = src)
 		// dst was last read by the downsample into src; the upsample reads and writes it in place.
 		backend.image_barrier(cmd, bloom, .General, color, base_mip_level = dst)
@@ -159,7 +164,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			radius         = BLOOM_UPSAMPLE_RADIUS,
 		}
 		backend.pipeline_push_compute(encoder, up, &pc)
-		dispatch_post(encoder, mip_extent(bloom, dst))
+		dispatch_post(encoder, mip_extent(bloom_desc, dst))
 	}
 
 	// The tonemap samples mip 0.
@@ -170,8 +175,8 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 // afterwards (debug view, UI) skips the tonemap, and present_blit only has to sRGB-encode.
 dispatch_tonemap :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	targets := &engine.render_targets
-	backend.image_barrier(cmd, &targets.hdr, .Shader_Read, backend.ImageAspectFlags{.Color})
-	backend.image_barrier(cmd, &targets.draw, .General, backend.ImageAspectFlags{.Color})
+	backend.image_barrier(cmd, targets.hdr, .Shader_Read, backend.ImageAspectFlags{.Color})
+	backend.image_barrier(cmd, targets.draw, .General, backend.ImageAspectFlags{.Color})
 
 	pipeline := get_pipeline(&engine.pipeline_registry, .Tonemap_Compute)
 	pc := TonemapPushConstants {

@@ -87,7 +87,7 @@ global_resources_create :: proc(engine: ^Engine) {
 		vk_ctx,
 		&engine.global_descriptor,
 		0,
-		&engine.shadow_atlas.gpu,
+		engine.shadow_atlas.image,
 		engine.shadow_atlas.sampler,
 		.Depth_Read,
 	)
@@ -96,7 +96,7 @@ global_resources_create :: proc(engine: ^Engine) {
 		vk_ctx,
 		&engine.global_descriptor,
 		1,
-		&engine.shadow_2d_atlas.gpu,
+		engine.shadow_2d_atlas.image,
 		engine.shadow_2d_atlas.sampler,
 		.Depth_Read,
 	)
@@ -421,7 +421,7 @@ set_skybox_texture :: proc(engine: ^Engine, handle: TextureHandle) {
 	backend.device_wait_idle(&engine.vk_ctx)
 	t := pool_get(&engine.texture_system.textures, handle)
 	sampler := engine.texture_system.samplers[SAMPLER_LINEAR_REPEAT]
-	backend.descriptor_write_image_view(&engine.vk_ctx, &engine.global_descriptor, 2, &t.gpu, sampler)
+	backend.descriptor_write_image_view(&engine.vk_ctx, &engine.global_descriptor, 2, t.image, sampler)
 }
 
 // Renders every active light's shadow maps. Each atlas is transitioned as a whole (all layers,
@@ -499,7 +499,7 @@ shadow_pass :: proc(
 		&engine.vk_ctx,
 		cmd,
 		backend.PassConfig {
-			depth = {image = &atlas.gpu, layer = layer},
+			depth = {image = atlas.image, layer = layer},
 			load_op = .Clear,
 			store_depth = true,
 			skip_depth_transition = true,
@@ -548,9 +548,9 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			&engine.vk_ctx,
 			cmd,
 			backend.PassConfig {
-				color = {image = &engine.render_targets.color},
-				resolve = {image = &engine.render_targets.hdr},
-				depth = {image = &engine.render_targets.depth},
+				color = {image = engine.render_targets.color},
+				resolve = {image = engine.render_targets.hdr},
+				depth = {image = engine.render_targets.depth},
 				clear_color = {0.1, 0.1, 0.1, 1},
 				load_op = .Clear,
 			},
@@ -579,7 +579,7 @@ draw_scene :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		encoder := backend.begin_render_pass(
 			&engine.vk_ctx,
 			cmd,
-			backend.PassConfig{color = {image = &engine.render_targets.draw}, load_op = .Load},
+			backend.PassConfig{color = {image = engine.render_targets.draw}, load_op = .Load},
 		)
 		draw_ui(engine, encoder)
 		backend.end_render_pass(encoder)
@@ -597,7 +597,7 @@ record_command_buffer :: proc(engine: ^Engine) -> backend.CommandBuffer {
 
 	frame_scope := gpu_scope_begin(engine, cmd, "frame")
 	draw_scene(engine, cmd)
-	backend.present_blit(&engine.vk_ctx, cmd, &engine.swapchain, &engine.render_targets.draw)
+	backend.present_blit(&engine.vk_ctx, cmd, &engine.swapchain, engine.render_targets.draw)
 	gpu_scope_end(engine, cmd, frame_scope)
 
 	backend.cmd_end_recording(cmd)

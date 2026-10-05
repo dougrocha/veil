@@ -107,7 +107,7 @@ font_load_from_file :: proc(engine: ^Engine, path: string, pixel_height: f32) ->
 	}
 
 	texture := Texture {
-		gpu = {extent = backend.extent3d(u32(font.atlas_w), u32(font.atlas_h), 1)},
+		extent        = backend.extent3d(u32(font.atlas_w), u32(font.atlas_h), 1),
 		channel_count = 1,
 	}
 	texture_upload(&engine.vk_ctx, raw_data(atlas_pixels), &texture, .R8_Unorm)
