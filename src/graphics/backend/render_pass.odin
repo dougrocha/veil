@@ -112,7 +112,7 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 
 	vk.CmdBeginRendering(cmd.handle, &rendering_info)
 
-	encoder := cmd
+	encoder := RenderEncoder(cmd)
 	pipeline_set_viewport(encoder, f32(extent.width), f32(extent.height))
 	pipeline_set_scissor(encoder, extent.width, extent.height)
 	return encoder

@@ -250,7 +250,31 @@ layout_to_state_kind :: proc(layout: vk.ImageLayout) -> ImageState {
 
 image_barrier :: proc {
 	image_barrier_gpu,
+	image_barrier_compute,
 	image_barrier_raw,
+}
+
+// Barriers between dispatches are legal inside a compute pass (unlike a render pass).
+image_barrier_compute :: proc(
+	enc: ComputeEncoder,
+	img: Image,
+	dst: ImageStateKind,
+	aspect_mask: ImageAspectFlags,
+	base_mip_level: u32 = 0,
+	level_count: u32 = 1,
+	base_array_layer: u32 = 0,
+	layer_count: u32 = 1,
+) {
+	image_barrier_gpu(
+		CommandBuffer(enc),
+		img,
+		dst,
+		aspect_mask,
+		base_mip_level,
+		level_count,
+		base_array_layer,
+		layer_count,
+	)
 }
 
 image_barrier_gpu :: proc(

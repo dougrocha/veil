@@ -88,8 +88,11 @@ CommandBuffer :: struct {
 	handle: vk.CommandBuffer,
 	ctx:    ^Context,
 }
-RenderEncoder :: CommandBuffer
-ComputeEncoder :: CommandBuffer
+// Recording inside a render pass (draws) or a compute pass (dispatches). Distinct types so a
+// draw can't be recorded in a compute pass, a dispatch in a render pass, or a barrier in either
+// render pass (image_barrier accepts CommandBuffer and ComputeEncoder only).
+RenderEncoder :: distinct CommandBuffer
+ComputeEncoder :: distinct CommandBuffer
 Sampler :: distinct vk.Sampler
 
 load_op_to_vk :: proc(op: LoadOp) -> vk.AttachmentLoadOp {

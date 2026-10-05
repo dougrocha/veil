@@ -7,7 +7,7 @@ Pipeline :: struct {
 	pipeline: vk.Pipeline,
 }
 
-pipeline_bind :: proc(cmd: CommandBuffer, pipeline: Pipeline, desc_sets: []vk.DescriptorSet = {}) {
+pipeline_bind :: proc(cmd: RenderEncoder, pipeline: Pipeline, desc_sets: []vk.DescriptorSet = {}) {
 	raw_cmd := cmd.handle
 	vk.CmdBindPipeline(raw_cmd, .GRAPHICS, pipeline.pipeline)
 
@@ -26,7 +26,7 @@ pipeline_bind :: proc(cmd: CommandBuffer, pipeline: Pipeline, desc_sets: []vk.De
 }
 
 pipeline_push :: proc(
-	cmd: CommandBuffer,
+	cmd: RenderEncoder,
 	pipeline: Pipeline,
 	stages: bit_set[ShaderStage],
 	data: ^$T,
@@ -35,7 +35,7 @@ pipeline_push :: proc(
 	vk.CmdPushConstants(cmd.handle, pipeline.layout, shader_stages_to_vk(stages), 0, u32(size_of(T)), data)
 }
 
-pipeline_set_viewport :: proc(cmd: CommandBuffer, width: f32, height: f32, offset_x: f32 = 0, offset_y: f32 = 0) {
+pipeline_set_viewport :: proc(cmd: RenderEncoder, width: f32, height: f32, offset_x: f32 = 0, offset_y: f32 = 0) {
 	viewport := vk.Viewport {
 		x        = offset_x,
 		y        = offset_y,
@@ -47,7 +47,7 @@ pipeline_set_viewport :: proc(cmd: CommandBuffer, width: f32, height: f32, offse
 	vk.CmdSetViewport(cmd.handle, 0, 1, &viewport)
 }
 
-pipeline_set_scissor :: proc(cmd: CommandBuffer, width: u32, height: u32, offset_x: i32 = 0, offset_y: i32 = 0) {
+pipeline_set_scissor :: proc(cmd: RenderEncoder, width: u32, height: u32, offset_x: i32 = 0, offset_y: i32 = 0) {
 	scissor := vk.Rect2D {
 		offset = {offset_x, offset_y},
 		extent = {width, height},
@@ -55,7 +55,7 @@ pipeline_set_scissor :: proc(cmd: CommandBuffer, width: u32, height: u32, offset
 	vk.CmdSetScissor(cmd.handle, 0, 1, &scissor)
 }
 
-pipeline_set_depth_write :: proc(cmd: CommandBuffer, pipeline: Pipeline, enabled: bool) {
+pipeline_set_depth_write :: proc(cmd: RenderEncoder, pipeline: Pipeline, enabled: bool) {
 	vk.CmdSetDepthWriteEnable(cmd.handle, b32(enabled))
 }
 

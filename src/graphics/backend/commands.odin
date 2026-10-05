@@ -60,12 +60,12 @@ cmd_end_recording :: proc(cmd: CommandBuffer) {
 	vk_check(vk.EndCommandBuffer(cmd.handle))
 }
 
-cmd_set_depth_bias :: proc(cmd: CommandBuffer, bias, clamp, slope: f32) {
+cmd_set_depth_bias :: proc(cmd: RenderEncoder, bias, clamp, slope: f32) {
 	vk.CmdSetDepthBias(cmd.handle, bias, clamp, slope)
 }
 
 cmd_draw :: proc(
-	cmd: CommandBuffer,
+	cmd: RenderEncoder,
 	vertex_count: u32 = 3,
 	instance_count: u32 = 1,
 	first_vertex: u32 = 0,
@@ -78,7 +78,7 @@ cmd_draw_points :: proc(cmd: RenderEncoder, vertex_count: u32, instance_count: u
 	vk.CmdDraw(cmd.handle, vertex_count, instance_count, first_vertex, 0)
 }
 
-cmd_draw_indexed :: proc(cmd: CommandBuffer, index_buffer: Buffer(u32), index_count: u32) {
+cmd_draw_indexed :: proc(cmd: RenderEncoder, index_buffer: Buffer(u32), index_count: u32) {
 	vk.CmdBindIndexBuffer(cmd.handle, buffer_slot(cmd.ctx, index_buffer).buffer, 0, .UINT32)
 	vk.CmdDrawIndexed(cmd.handle, index_count, 1, 0, 0, 0)
 }
@@ -143,7 +143,7 @@ pipeline_push_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline, data: ^$T
 }
 
 begin_compute_pass :: proc(ctx: ^Context, cmd: CommandBuffer) -> ComputeEncoder {
-	return cmd
+	return ComputeEncoder(cmd)
 }
 
 end_compute_pass :: proc(encoder: ComputeEncoder) {

@@ -138,12 +138,12 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			pc.src_texture = u32(engine.hdr_texture.index)
 			pc.karis = 1
 		} else {
-			backend.image_barrier(cmd, bloom, .Shader_Read, color, base_mip_level = i - 1)
+			backend.image_barrier(encoder, bloom, .Shader_Read, color, base_mip_level = i - 1)
 			src_size = mip_extent(bloom_desc, i - 1)
 			pc.src_texture = u32(engine.bloom_textures[i - 1].index)
 		}
 		pc.src_texel_size = {1 / f32(src_size.x), 1 / f32(src_size.y)}
-		backend.image_barrier(cmd, bloom, .General, color, base_mip_level = i)
+		backend.image_barrier(encoder, bloom, .General, color, base_mip_level = i)
 		backend.pipeline_push_compute(encoder, down, &pc)
 		dispatch_post(encoder, mip_extent(bloom_desc, i))
 	}
@@ -154,9 +154,9 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		dst := u32(i)
 		src := dst + 1
 		src_size := mip_extent(bloom_desc, src)
-		backend.image_barrier(cmd, bloom, .Shader_Read, color, base_mip_level = src)
+		backend.image_barrier(encoder, bloom, .Shader_Read, color, base_mip_level = src)
 		// dst was last read by the downsample into src; the upsample reads and writes it in place.
-		backend.image_barrier(cmd, bloom, .General, color, base_mip_level = dst)
+		backend.image_barrier(encoder, bloom, .General, color, base_mip_level = dst)
 		pc := BloomPushConstants {
 			src_texture    = u32(engine.bloom_textures[src].index),
 			dst_storage    = STORAGE_SLOT_BLOOM + dst,
@@ -168,7 +168,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	}
 
 	// The tonemap samples mip 0.
-	backend.image_barrier(cmd, bloom, .Shader_Read, color, base_mip_level = 0)
+	backend.image_barrier(encoder, bloom, .Shader_Read, color, base_mip_level = 0)
 }
 
 // Tonemaps the HDR target (plus bloom) into the LDR draw target. Everything drawn into draw
