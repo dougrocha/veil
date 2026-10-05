@@ -63,6 +63,7 @@ build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, c
 
 	for instance, slot_i in view.instances.values {
 		if !pool_is_alive(view.instances, Index(slot_i)) do continue
+		if instance.model == INVALID_MODEL do continue // group root
 		if kind != .View && !instance.casts_shadow do continue
 
 		model := pool_get(view.models, instance.model)

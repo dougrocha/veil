@@ -37,6 +37,7 @@ pick :: proc(engine: ^Engine, mouse_pos: Vec2) -> InstanceHandle {
 
 	for instance, i in engine.scene.instances.values {
 		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
+		if instance.model == INVALID_MODEL do continue // group root
 
 		model := pool_get(&engine.model_system.models, instance.model)
 		sphere := instance_world_sphere(engine, instance)

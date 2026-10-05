@@ -36,9 +36,17 @@ Model :: struct {
 }
 
 Instance :: struct {
-	model:        ModelHandle,
-	transform:    Transform,
+	model:        ModelHandle, // INVALID_MODEL for a group root: no mesh, only a transform
+	transform:    Transform, // world space
 	casts_shadow: bool,
+}
+
+// Where an instance sits in the hierarchy. Kept beside the pool (Scene.instance_links, one per
+// slot), because Instance can't hold Handle(Instance).
+InstanceLink :: struct {
+	parent:   Maybe(InstanceHandle),
+	local:    Transform, // relative to parent; same as the world transform without a parent
+	children: [dynamic]InstanceHandle,
 }
 
 MAX_MODEL_INSTANCES :: 4096
@@ -74,6 +82,7 @@ model_system_create :: proc(engine: ^Engine) {
 	engine.model_system.model_map = make(map[string]ModelHandle)
 	engine.model_system.parts_map = make(map[string][]ModelPart)
 	engine.scene.instances = pool_init(MAX_MODEL_INSTANCES, Instance)
+	engine.scene.instance_links = make([]InstanceLink, MAX_MODEL_INSTANCES)
 }
 
 model_system_destroy :: proc(engine: ^Engine) {
@@ -97,6 +106,8 @@ model_system_destroy :: proc(engine: ^Engine) {
 		delete(parts)
 	}
 	delete(ms.parts_map)
+	for &link in engine.scene.instance_links do delete(link.children)
+	delete(engine.scene.instance_links)
 	pool_destroy(&engine.scene.instances)
 	delete(engine.scene.instance_changes)
 }
@@ -256,8 +267,8 @@ model_load_parts :: proc(
 	return parts
 }
 
-// Spawns one instance per part, placed as if the parts were children of transform.
-// Returns the handles in part order.
+// Spawns a group root at transform and one child instance per part. Moving the root moves every
+// part. Returns the part handles in part order.
 instance_spawn_parts :: proc(
 	engine: ^Engine,
 	parts: []ModelPart,
@@ -266,10 +277,10 @@ instance_spawn_parts :: proc(
 	allocator := context.temp_allocator,
 ) -> []InstanceHandle {
 	handles := make([]InstanceHandle, len(parts), allocator)
-	parent := transform_to_matrix(transform)
+	root := instance_alloc(engine, Instance{model = INVALID_MODEL, transform = transform})
+	instance_link(engine, root).local = transform
 	for part, i in parts {
-		part_transform := transform_from_matrix(parent * transform_to_matrix(part.transform))
-		handles[i] = instance_spawn(engine, part.model, part_transform, casts_shadow)
+		handles[i] = instance_spawn(engine, part.model, part.transform, casts_shadow, parent = root)
 	}
 	return handles
 }
@@ -279,10 +290,63 @@ instance_get :: proc(engine: ^Engine, handle: InstanceHandle) -> Instance {
 	return pool_get(&engine.scene.instances, handle)^
 }
 
+instance_link :: proc(engine: ^Engine, handle: InstanceHandle) -> ^InstanceLink {
+	assert(pool_is_valid(&engine.scene.instances, handle))
+	return &engine.scene.instance_links[handle.index]
+}
+
+// Sets the world transform. Children and attached lights follow.
 instance_set_transform :: proc(engine: ^Engine, handle: InstanceHandle, transform: Transform) {
+	link := instance_link(engine, handle)
+	link.local = transform
+	if parent, ok := link.parent.?; ok {
+		parent_world := transform_to_matrix(instance_get(engine, parent).transform)
+		link.local = transform_from_matrix(linalg.inverse(parent_world) * transform_to_matrix(transform))
+	}
 	instance := instance_get(engine, handle)
 	instance.transform = transform
 	instance_replace(engine, handle, instance)
+	instance_update_dependents(engine, handle)
+}
+
+// Makes child follow parent, keeping the child's world transform. Asserts on a cycle.
+instance_attach :: proc(engine: ^Engine, child, parent: InstanceHandle) {
+	for p := Maybe(InstanceHandle)(parent); p != nil; p = instance_link(engine, p.?).parent {
+		assert(p.? != child, "instance_attach: parent is the child or one of its descendants")
+	}
+	instance_detach(engine, child)
+	append(&instance_link(engine, parent).children, child)
+	instance_link(engine, child).parent = parent
+	instance_set_transform(engine, child, instance_get(engine, child).transform) // recompute local
+}
+
+// Removes child from its parent, keeping its world transform. No-op without a parent.
+instance_detach :: proc(engine: ^Engine, child: InstanceHandle) {
+	link := instance_link(engine, child)
+	parent, ok := link.parent.?
+	if !ok do return
+	siblings := &instance_link(engine, parent).children
+	for c, i in siblings do if c == child {
+		ordered_remove(siblings, i)
+		break
+	}
+	link.parent = nil
+	link.local = instance_get(engine, child).transform
+}
+
+// Recomputes the world transform of each child from its local, recursively, and moves the lights
+// attached to handle.
+@(private = "file")
+instance_update_dependents :: proc(engine: ^Engine, handle: InstanceHandle) {
+	instance := instance_get(engine, handle)
+	world := transform_to_matrix(instance.transform)
+	for child_handle in instance_link(engine, handle).children {
+		child := instance_get(engine, child_handle)
+		child.transform = transform_from_matrix(world * transform_to_matrix(instance_link(engine, child_handle).local))
+		instance_replace(engine, child_handle, child)
+		instance_update_dependents(engine, child_handle)
+	}
+	lights_follow(engine, handle, instance.transform)
 }
 
 instance_set_casts_shadow :: proc(engine: ^Engine, handle: InstanceHandle, casts_shadow: bool) {
@@ -303,6 +367,7 @@ instance_replace :: proc(engine: ^Engine, handle: InstanceHandle, instance: Inst
 // World-space bounding sphere: the model's sphere moved by the transform, radius scaled by the
 // largest axis scale.
 instance_world_sphere :: proc(engine: ^Engine, instance: Instance) -> BoundingSphere {
+	if instance.model == INVALID_MODEL do return {instance.transform.translation, 0} // group root
 	model := pool_get(&engine.model_system.models, instance.model)
 	center :=
 		transform_to_matrix(instance.transform) *
@@ -331,8 +396,9 @@ instance_change_record :: proc(engine: ^Engine, handle: InstanceHandle, old: May
 instance_spawn :: proc(
 	engine: ^Engine,
 	model: ModelHandle,
-	transform: Transform,
+	transform: Transform, // relative to parent when given, else world
 	casts_shadow := true,
+	parent: Maybe(InstanceHandle) = nil,
 ) -> InstanceHandle {
 	if model == INVALID_MODEL {
 		log.errorf("spawn: refusing to spawn an instance of an invalid model handle")
@@ -343,7 +409,29 @@ instance_spawn :: proc(
 		transform    = transform,
 		casts_shadow = casts_shadow,
 	}
+	if p, ok := parent.?; ok {
+		instance.transform = transform_from_matrix(
+			transform_to_matrix(instance_get(engine, p).transform) * transform_to_matrix(transform),
+		)
+	}
+	handle := instance_alloc(engine, instance)
+	link := instance_link(engine, handle)
+	link.local = transform
+	if p, ok := parent.?; ok {
+		link.parent = p
+		append(&instance_link(engine, p).children, handle)
+	}
+	return handle
+}
+
+@(private = "file")
+instance_alloc :: proc(engine: ^Engine, instance: Instance) -> InstanceHandle {
 	handle := pool_alloc(&engine.scene.instances, instance)
+	// A reused slot may hold a freed instance's link; keep its children allocation.
+	link := &engine.scene.instance_links[handle.index]
+	clear(&link.children)
+	link.parent = nil
+	link.local = instance.transform
 	instance_change_record(engine, handle, nil, instance)
 	return handle
 }

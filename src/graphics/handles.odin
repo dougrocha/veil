@@ -12,5 +12,6 @@ pool_init :: handles.pool_init
 pool_destroy :: handles.pool_destroy
 pool_alloc :: handles.pool_alloc
 pool_is_alive :: handles.pool_is_alive
+pool_is_valid :: handles.pool_is_valid
 pool_free :: handles.pool_free
 pool_get :: handles.pool_get
