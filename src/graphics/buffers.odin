@@ -5,19 +5,26 @@ import "core:math/rand"
 import "backend"
 
 FrameData :: struct {
-	scene_data_buffer: backend.GpuBuffer(SceneData),
-	particle_buffer:   backend.GpuBuffer(Particle),
-	transforms_buffer: backend.GpuBuffer(GpuTransform),
+	scene_data_buffer: backend.Buffer(SceneData),
+	particle_buffer:   backend.Buffer(Particle),
+	transforms_buffer: backend.Buffer(GpuTransform),
 }
 
 frame_data_create :: proc(engine: ^Engine) {
 	for i in 0 ..< backend.MAX_FRAMES_IN_FLIGHT {
-		engine.frame_data[i].scene_data_buffer = backend.buffer_create(SceneData, &engine.vk_ctx, 1, .MappedUniform)
+		engine.frame_data[i].scene_data_buffer = backend.buffer_create(
+			SceneData,
+			&engine.vk_ctx,
+			1,
+			{.Uniform},
+			.Shared,
+		)
 		engine.frame_data[i].transforms_buffer = backend.buffer_create(
 			GpuTransform,
 			&engine.vk_ctx,
 			MAX_MODEL_INSTANCES,
-			.MappedStorage,
+			{.Storage},
+			.Shared,
 		)
 		engine.frame_data[i].particle_buffer = create_particle_buffer(
 			&engine.vk_ctx,
@@ -35,7 +42,7 @@ frame_data_destroy :: proc(engine: ^Engine) {
 }
 
 // TODO: This code is half engine/game code, needs ot be looked at
-create_particle_buffer :: proc(ctx: ^backend.Context, extent: Rect2D) -> backend.GpuBuffer(Particle) {
+create_particle_buffer :: proc(ctx: ^backend.Context, extent: Rect2D) -> backend.Buffer(Particle) {
 	particles := make([]Particle, PARTICLE_COUNT, context.temp_allocator)
 
 	for &p in particles {
@@ -48,5 +55,5 @@ create_particle_buffer :: proc(ctx: ^backend.Context, extent: Rect2D) -> backend
 		p.color = {brightness * 0.6, brightness * 0.8, brightness, 0.8}
 	}
 
-	return backend.buffer_upload(ctx, particles, .ParticleSSBO)
+	return backend.buffer_upload(ctx, particles, {.Storage, .Vertex})
 }

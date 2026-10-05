@@ -228,8 +228,8 @@ dispatch_particles :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	frame_res_index := current_frame_res_index(engine)
 	last_frame := (frame_res_index + backend.MAX_FRAMES_IN_FLIGHT - 1) % backend.MAX_FRAMES_IN_FLIGHT
 	compute_pc := ParticlePushConstants {
-		particles_in  = engine.frame_data[last_frame].particle_buffer.ptr,
-		particles_out = engine.frame_data[frame_res_index].particle_buffer.ptr,
+		particles_in  = backend.buffer_address(&engine.vk_ctx, engine.frame_data[last_frame].particle_buffer),
+		particles_out = backend.buffer_address(&engine.vk_ctx, engine.frame_data[frame_res_index].particle_buffer),
 		delta_time    = engine.time_info.delta_time,
 	}
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
@@ -249,8 +249,8 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 
 	frame_res_index := current_frame_res_index(engine)
 	particle_pc := ParticlePushConstants {
-		scene_data    = engine.frame_data[frame_res_index].scene_data_buffer.ptr,
-		particles_out = engine.frame_data[frame_res_index].particle_buffer.ptr,
+		scene_data    = backend.buffer_address(&engine.vk_ctx, engine.frame_data[frame_res_index].scene_data_buffer),
+		particles_out = backend.buffer_address(&engine.vk_ctx, engine.frame_data[frame_res_index].particle_buffer),
 	}
 	backend.pipeline_bind(cmd, pipeline)
 	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &particle_pc)
@@ -259,7 +259,9 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 }
 
 update_transforms_buffer :: proc(engine: ^Engine) {
-	transforms := (^GpuTransform)(backend.buffer_mapped_ptr(current_frame_data(engine).transforms_buffer))
+	transforms := (^GpuTransform)(
+		backend.buffer_contents(&engine.vk_ctx, current_frame_data(engine).transforms_buffer),
+	)
 	for &instance, i in engine.scene.instances.values {
 		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
 		model_matrix := transform_to_matrix(instance.transform)
@@ -307,10 +309,10 @@ draw_shadow :: proc(
 			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform, skip_near = directional) do continue
 
 			pc := ShadowPushConstants {
-				scene_data       = frame.scene_data_buffer.ptr,
-				vertex_buffer    = mesh.vertex_buffer.ptr,
-				material_buffer  = engine.material_system.buffer.ptr,
-				transform_buffer = frame.transforms_buffer.ptr,
+				scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
+				vertex_buffer    = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer),
+				material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
+				transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
 				view_proj        = view_proj,
 				instance_index   = u32(slot_i),
 				light_type       = light_type,
@@ -318,7 +320,7 @@ draw_shadow :: proc(
 				material_index   = u32(mesh.material.index),
 			}
 			backend.pipeline_push(cmd, shadow_pipeline, {.Vertex, .Fragment}, &pc, index = 1)
-			backend.cmd_draw_indexed(cmd, mesh.index_buffer.buffer, mesh.index_count)
+			backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count)
 			stats_count_draw(engine, u64(mesh.index_count / 3))
 		}
 	}
@@ -363,15 +365,15 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 			}
 
 			pc := PushConstants {
-				scene_data       = frame.scene_data_buffer.ptr,
-				vertex_buffer    = mesh.vertex_buffer.ptr,
-				material_buffer  = engine.material_system.buffer.ptr,
-				transform_buffer = frame.transforms_buffer.ptr,
+				scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
+				vertex_buffer    = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer),
+				material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
+				transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
 				material_index   = u32(mesh.material.index),
 				instance_index   = u32(i),
 			}
 			backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc, index = 1)
-			backend.cmd_draw_indexed(cmd, mesh.index_buffer.buffer, mesh.index_count)
+			backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count)
 			stats_count_draw(engine, u64(mesh.index_count / 3))
 		}
 	}
@@ -427,7 +429,7 @@ set_skybox_texture :: proc(engine: ^Engine, handle: TextureHandle) {
 // Renders every active light's shadow maps. Each atlas is transitioned as a whole (all layers,
 // used or not) so the mesh pass always samples it in the layout the descriptor expects.
 draw_shadow_maps :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	scene_data := (^SceneData)(backend.buffer_mapped_ptr(current_frame_data(engine).scene_data_buffer))
+	scene_data := (^SceneData)(backend.buffer_contents(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer))
 	dir_count := min(int(engine.scene.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
 	spot_count := min(int(engine.scene.spot_light_count), MAX_SPOT_LIGHTS)
 	point_count := min(int(engine.scene.point_light_count), MAX_POINT_LIGHTS)
@@ -515,7 +517,7 @@ draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	skybox_frame_idx := current_frame_res_index(engine)
 	backend.pipeline_bind(cmd, pipeline, {engine.global_descriptor.sets[skybox_frame_idx]})
 	pc := SkyboxPushConstants {
-		scene_data = current_frame_data(engine).scene_data_buffer.ptr,
+		scene_data = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
 	}
 	backend.pipeline_push(cmd, pipeline, {.Vertex, .Fragment}, &pc)
 	backend.cmd_draw(cmd)

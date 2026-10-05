@@ -23,7 +23,7 @@ LinePushConstants :: struct {
 
 LineBatch :: struct {
 	vertices: [dynamic]LineVertex,
-	buffers:  [backend.MAX_FRAMES_IN_FLIGHT]backend.GpuBuffer(LineVertex),
+	buffers:  [backend.MAX_FRAMES_IN_FLIGHT]backend.Buffer(LineVertex),
 }
 
 LineRenderer :: struct {
@@ -108,7 +108,7 @@ line_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 @(private = "file")
 batch_create :: proc(engine: ^Engine, batch: ^LineBatch) {
 	for i in 0 ..< backend.MAX_FRAMES_IN_FLIGHT {
-		batch.buffers[i] = backend.buffer_create(LineVertex, &engine.vk_ctx, MAX_LINE_VERTICES, .MappedStorage)
+		batch.buffers[i] = backend.buffer_create(LineVertex, &engine.vk_ctx, MAX_LINE_VERTICES, {.Storage}, .Shared)
 	}
 	reserve(&batch.vertices, MAX_LINE_VERTICES)
 }
@@ -134,12 +134,16 @@ flush_batch :: proc(
 
 	frame_res_index := current_frame_res_index(engine)
 	buffer := &batch.buffers[frame_res_index]
-	mem.copy(backend.buffer_mapped_ptr(buffer^), raw_data(batch.vertices), len(batch.vertices) * size_of(LineVertex))
+	mem.copy(
+		backend.buffer_contents(&engine.vk_ctx, buffer^),
+		raw_data(batch.vertices),
+		len(batch.vertices) * size_of(LineVertex),
+	)
 
 	pipeline := get_pipeline(&engine.pipeline_registry, kind)
 	pc := LinePushConstants {
-		scene_data    = current_frame_data(engine).scene_data_buffer.ptr,
-		vertex_buffer = buffer.ptr,
+		scene_data    = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
+		vertex_buffer = backend.buffer_address(&engine.vk_ctx, buffer^),
 		screen_size   = {f32(engine.swapchain.extent.width), f32(engine.swapchain.extent.height)},
 		thickness     = LINE_THICKNESS_PX,
 	}

@@ -416,7 +416,7 @@ copy_image_to_image :: proc(cmd: CommandBuffer, src, dst: vk.Image, src_extent, 
 	)
 }
 
-copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: Image, width, height: u32) {
+copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: Buffer($T), img: Image, width, height: u32) {
 	region := vk.BufferImageCopy2 {
 		sType = .BUFFER_IMAGE_COPY_2,
 		bufferOffset = 0,
@@ -431,7 +431,7 @@ copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: Image, 
 		cmd.handle,
 		&vk.CopyBufferToImageInfo2 {
 			sType = .COPY_BUFFER_TO_IMAGE_INFO_2,
-			srcBuffer = buffer,
+			srcBuffer = buffer_slot(cmd.ctx, buffer).buffer,
 			dstImage = image_slot(cmd.ctx, img).image,
 			dstImageLayout = .TRANSFER_DST_OPTIMAL,
 			regionCount = 1,
@@ -440,7 +440,7 @@ copy_buffer_to_image :: proc(cmd: CommandBuffer, buffer: vk.Buffer, img: Image, 
 	)
 }
 
-copy_image_to_buffer :: proc(cmd: CommandBuffer, img: Image, buffer: vk.Buffer, width, height: u32) {
+copy_image_to_buffer :: proc(cmd: CommandBuffer, img: Image, buffer: Buffer($T), width, height: u32) {
 	region := vk.BufferImageCopy2 {
 		sType = .BUFFER_IMAGE_COPY_2,
 		bufferOffset = 0,
@@ -457,7 +457,7 @@ copy_image_to_buffer :: proc(cmd: CommandBuffer, img: Image, buffer: vk.Buffer, 
 			sType = .COPY_IMAGE_TO_BUFFER_INFO_2,
 			srcImage = image_slot(cmd.ctx, img).image,
 			srcImageLayout = .TRANSFER_SRC_OPTIMAL,
-			dstBuffer = buffer,
+			dstBuffer = buffer_slot(cmd.ctx, buffer).buffer,
 			regionCount = 1,
 			pRegions = &region,
 		},
@@ -466,7 +466,7 @@ copy_image_to_buffer :: proc(cmd: CommandBuffer, img: Image, buffer: vk.Buffer, 
 
 copy_buffer_to_cubemap :: proc(
 	cmd: CommandBuffer,
-	buffer: vk.Buffer,
+	buffer: Buffer($T),
 	img: Image,
 	face_w, face_h: u32,
 	face_size: u32,
@@ -485,7 +485,7 @@ copy_buffer_to_cubemap :: proc(
 		cmd.handle,
 		&vk.CopyBufferToImageInfo2 {
 			sType = .COPY_BUFFER_TO_IMAGE_INFO_2,
-			srcBuffer = buffer,
+			srcBuffer = buffer_slot(cmd.ctx, buffer).buffer,
 			dstImage = image_slot(cmd.ctx, img).image,
 			dstImageLayout = .TRANSFER_DST_OPTIMAL,
 			regionCount = 6,

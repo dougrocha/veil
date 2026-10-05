@@ -120,4 +120,5 @@ Context :: struct {
 	timeline_semaphore:              vk.Semaphore,
 	frame_sync:                      [MAX_FRAMES_IN_FLIGHT]FrameSync,
 	images:                          handles.Pool(ImageSlot),
+	buffers:                         handles.Pool(BufferSlot),
 }

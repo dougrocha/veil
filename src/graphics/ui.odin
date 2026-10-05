@@ -15,7 +15,7 @@ UI_Vertex :: struct {
 
 UI_Batch :: struct {
 	vertices: [dynamic]UI_Vertex,
-	buffers:  [backend.MAX_FRAMES_IN_FLIGHT]backend.GpuBuffer(UI_Vertex),
+	buffers:  [backend.MAX_FRAMES_IN_FLIGHT]backend.Buffer(UI_Vertex),
 }
 
 // One UI_Batch per font atlas in use this frame, keyed by the atlas's
@@ -66,13 +66,13 @@ ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 
 		buffer := &batch.buffers[frame_res_index]
 		mem.copy(
-			backend.buffer_mapped_ptr(buffer^),
+			backend.buffer_contents(&engine.vk_ctx, buffer^),
 			raw_data(batch.vertices),
 			len(batch.vertices) * size_of(UI_Vertex),
 		)
 
 		pc := UIPushConstants {
-			vertex_buffer = buffer.ptr,
+			vertex_buffer = backend.buffer_address(&engine.vk_ctx, buffer^),
 			screen_size   = {f32(engine.swapchain.extent.width), f32(engine.swapchain.extent.height)},
 			atlas_texture = atlas_texture,
 		}
@@ -88,7 +88,7 @@ ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 @(private = "file")
 batch_create :: proc(engine: ^Engine, batch: ^UI_Batch) {
 	for i in 0 ..< backend.MAX_FRAMES_IN_FLIGHT {
-		batch.buffers[i] = backend.buffer_create(UI_Vertex, &engine.vk_ctx, MAX_UI_VERTICES, .MappedStorage)
+		batch.buffers[i] = backend.buffer_create(UI_Vertex, &engine.vk_ctx, MAX_UI_VERTICES, {.Storage}, .Shared)
 	}
 	reserve(&batch.vertices, MAX_UI_VERTICES)
 }

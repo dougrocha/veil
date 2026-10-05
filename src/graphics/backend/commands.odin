@@ -78,8 +78,8 @@ cmd_draw_points :: proc(cmd: RenderEncoder, vertex_count: u32, instance_count: u
 	vk.CmdDraw(cmd.handle, vertex_count, instance_count, first_vertex, 0)
 }
 
-cmd_draw_indexed :: proc(cmd: CommandBuffer, index_buffer: vk.Buffer, index_count: u32) {
-	vk.CmdBindIndexBuffer(cmd.handle, index_buffer, 0, .UINT32)
+cmd_draw_indexed :: proc(cmd: CommandBuffer, index_buffer: Buffer(u32), index_count: u32) {
+	vk.CmdBindIndexBuffer(cmd.handle, buffer_slot(cmd.ctx, index_buffer).buffer, 0, .UINT32)
 	vk.CmdDrawIndexed(cmd.handle, index_count, 1, 0, 0, 0)
 }
 

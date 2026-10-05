@@ -34,7 +34,7 @@ MaterialSystemConfig :: struct {
 MaterialSystem :: struct {
 	materials:    Pool(Material),
 	material_map: map[string]MaterialHandle,
-	buffer:       backend.GpuBuffer(GpuMaterial),
+	buffer:       backend.Buffer(GpuMaterial),
 	config:       MaterialSystemConfig,
 }
 
@@ -47,7 +47,8 @@ material_system_create :: proc(engine: ^Engine, config: MaterialSystemConfig) {
 		GpuMaterial,
 		&engine.vk_ctx,
 		int(config.max_material_count),
-		.MappedStorage,
+		{.Storage},
+		.Shared,
 	)
 
 	material_create_default(engine)
@@ -109,7 +110,7 @@ material_create :: proc(
 	engine.material_system.material_map[name] = handle
 
 	offset := uintptr(handle.index) * size_of(GpuMaterial)
-	dst := uintptr(backend.buffer_mapped_ptr(engine.material_system.buffer)) + offset
+	dst := uintptr(backend.buffer_contents(&engine.vk_ctx, engine.material_system.buffer)) + offset
 	gpu_mat := GpuMaterial {
 		base_color                 = base_color,
 		perceptual_roughness       = perceptual_roughness,

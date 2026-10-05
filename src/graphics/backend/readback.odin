@@ -15,7 +15,7 @@ image_read_rgba8 :: proc(ctx: ^Context, img: Image, allocator := context.allocat
 	rgba_img := image_create(ctx, image_desc_default(extent, .Rgba8_Unorm, {.TransferDst, .TransferSrc}))
 	defer image_destroy(ctx, rgba_img)
 
-	staging := buffer_create(u8, ctx, size, .Readback)
+	staging := buffer_create(u8, ctx, size, {.Transfer_Dst}, .Readback)
 	defer buffer_destroy(ctx, staging)
 
 	{
@@ -46,10 +46,10 @@ image_read_rgba8 :: proc(ctx: ^Context, img: Image, allocator := context.allocat
 		)
 
 		image_barrier(cmd, rgba_img, .Transfer_Src, ImageAspectFlags{.Color})
-		copy_image_to_buffer(cmd, rgba_img, staging.buffer, width, height)
+		copy_image_to_buffer(cmd, rgba_img, staging, width, height)
 	}
 
 	out := make([]u8, size, allocator)
-	copy(out, (cast([^]u8)staging.alloc_info.mapped_data)[:size])
+	copy(out, (cast([^]u8)buffer_contents(ctx, staging))[:size])
 	return out
 }

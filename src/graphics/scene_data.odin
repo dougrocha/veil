@@ -97,5 +97,9 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		)
 	}
 
-	mem.copy(backend.buffer_mapped_ptr(engine.frame_data[frame_index].scene_data_buffer), &scene, size_of(SceneData))
+	mem.copy(
+		backend.buffer_contents(&engine.vk_ctx, engine.frame_data[frame_index].scene_data_buffer),
+		&scene,
+		size_of(SceneData),
+	)
 }

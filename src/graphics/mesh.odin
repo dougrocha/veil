@@ -11,8 +11,8 @@ import "shared:tinyobj"
 import "backend"
 
 Mesh :: struct {
-	vertex_buffer: backend.GpuBuffer(Vertex),
-	index_buffer:  backend.GpuBuffer(u32),
+	vertex_buffer: backend.Buffer(Vertex),
+	index_buffer:  backend.Buffer(u32),
 	index_count:   u32,
 	material:      MaterialHandle,
 	positions:     []Vec3,
@@ -151,8 +151,8 @@ model_register :: proc(
 	indices: []u32,
 	material: MaterialHandle = INVALID_MATERIAL,
 ) -> ModelHandle {
-	vertex_buf := backend.buffer_upload(&engine.vk_ctx, vertices, .Storage)
-	index_buf := backend.buffer_upload(&engine.vk_ctx, indices, .Index)
+	vertex_buf := backend.buffer_upload(&engine.vk_ctx, vertices, {.Storage})
+	index_buf := backend.buffer_upload(&engine.vk_ctx, indices, {.Index})
 
 	material_handle := material_get_default(engine) if material == INVALID_MATERIAL else material
 	positions := make([]Vec3, len(vertices))

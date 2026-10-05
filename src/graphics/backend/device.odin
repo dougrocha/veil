@@ -35,6 +35,7 @@ context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 	}
 	vma_init(ctx)
 	images_init(ctx)
+	buffers_init(ctx)
 
 	ctx.msaa_samples = vk_get_max_usable_sample_count(ctx)
 	// MoltenVK supports far less than a desktop GPU, so bindless array sizes must be
@@ -51,6 +52,7 @@ device_wait_idle :: proc(ctx: ^Context) {
 context_destroy :: proc(ctx: ^Context) {
 	vk.DestroyCommandPool(ctx.device, ctx.upload_pool, nil)
 	images_destroy(ctx)
+	buffers_destroy(ctx)
 	vma.destroy_allocator(ctx.vma_allocator)
 	vk.DestroyDevice(ctx.device, nil)
 	vk.DestroySurfaceKHR(ctx.instance, ctx.surface, nil)

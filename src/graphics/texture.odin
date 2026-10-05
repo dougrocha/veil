@@ -204,9 +204,9 @@ texture_create_builtin :: proc(engine: ^Engine) {
 	)
 
 	{
-		staging := backend.buffer_create(u8, &engine.vk_ctx, 6 * 4, .Staging)
+		staging := backend.buffer_create(u8, &engine.vk_ctx, 6 * 4, {.Transfer_Src}, .Upload)
 		defer backend.buffer_destroy(&engine.vk_ctx, staging)
-		black := ([^][4]u8)(backend.buffer_mapped_ptr(staging))
+		black := ([^][4]u8)(backend.buffer_contents(&engine.vk_ctx, staging))
 		for i in 0 ..< 6 do black[i] = {0, 0, 0, 0xFF}
 
 		cube := cubemap_upload(&engine.vk_ctx, staging, 1)
@@ -337,9 +337,9 @@ texture_upload :: proc(
 	h := u32(texture.extent.height)
 	image_size := w * h * u32(texture.channel_count)
 
-	staging := backend.buffer_create(u8, ctx, int(image_size), .Staging)
+	staging := backend.buffer_create(u8, ctx, int(image_size), {.Transfer_Src}, .Upload)
 	defer backend.buffer_destroy(ctx, staging)
-	mem.copy(backend.buffer_mapped_ptr(staging), pixels, int(image_size))
+	mem.copy(backend.buffer_contents(ctx, staging), pixels, int(image_size))
 
 	mip_levels := u32(math.floor(math.log2(f32(max(w, h)))) + 1)
 
@@ -354,7 +354,7 @@ texture_upload :: proc(
 	{
 		cmd := backend.immediate_submit(ctx)
 		backend.image_barrier(cmd, img, .Transfer_Dst, backend.ImageAspectFlags{.Color}, level_count = mip_levels)
-		backend.copy_buffer_to_image(cmd, staging.buffer, img, w, h)
+		backend.copy_buffer_to_image(cmd, staging, img, w, h)
 	}
 
 	backend.generate_mipmaps(ctx, img)
@@ -394,11 +394,11 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 		{3, 1}, // -Z
 	}
 
-	staging := backend.buffer_create(u8, &engine.vk_ctx, int(face_size * 6), .Staging)
+	staging := backend.buffer_create(u8, &engine.vk_ctx, int(face_size * 6), {.Transfer_Src}, .Upload)
 	defer backend.buffer_destroy(&engine.vk_ctx, staging)
 
 	src := ([^]u8)(pixels)
-	dst := ([^]u8)(backend.buffer_mapped_ptr(staging))
+	dst := ([^]u8)(backend.buffer_contents(&engine.vk_ctx, staging))
 
 	for face, i in face_positions {
 		col := face[0]
@@ -417,7 +417,7 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 // Uploads six tightly packed RGBA8 sRGB faces (+X, -X, +Y, -Y, +Z, -Z) of size x size
 // texels from staging into a cube image with a cube view.
 @(private = "file")
-cubemap_upload :: proc(ctx: ^backend.Context, staging: backend.GpuBuffer(u8), size: u32) -> Texture {
+cubemap_upload :: proc(ctx: ^backend.Context, staging: backend.Buffer(u8), size: u32) -> Texture {
 	face_size := size * size * 4
 
 	desc := backend.image_desc_default(backend.extent3d(size, size, 1), .Rgba8_Unorm_Srgb, {.TransferDst, .Sampled})
@@ -429,7 +429,7 @@ cubemap_upload :: proc(ctx: ^backend.Context, staging: backend.GpuBuffer(u8), si
 		cmd := backend.immediate_submit(ctx)
 
 		backend.image_barrier(cmd, img, .Transfer_Dst, backend.ImageAspectFlags{.Color}, layer_count = 6)
-		backend.copy_buffer_to_cubemap(cmd, staging.buffer, img, size, size, face_size)
+		backend.copy_buffer_to_cubemap(cmd, staging, img, size, size, face_size)
 		backend.image_barrier(cmd, img, .Shader_Read, backend.ImageAspectFlags{.Color}, layer_count = 6)
 	}
 
