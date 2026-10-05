@@ -43,13 +43,17 @@ Instance :: struct {
 
 MAX_MODEL_INSTANCES :: 4096
 
-// One setter or spawn call on an instance. Bounds are world-space spheres; a spawn has no old bounds.
+// What an instance change needs to know about an instance on one side of the change.
+InstanceState :: struct {
+	bounds:       BoundingSphere, // world space
+	casts_shadow: bool,
+}
+
+// One setter or spawn call on an instance. old is nil for a spawn.
 InstanceChange :: struct {
-	instance:         InstanceHandle,
-	old_bounds:       Maybe(BoundingSphere),
-	new_bounds:       BoundingSphere,
-	casts_shadow_old: bool,
-	casts_shadow_new: bool,
+	instance: InstanceHandle,
+	old:      Maybe(InstanceState),
+	new:      InstanceState,
 }
 
 // One spawnable piece of a file loaded with model_load_parts. transform places the piece
@@ -276,17 +280,24 @@ instance_get :: proc(engine: ^Engine, handle: InstanceHandle) -> Instance {
 }
 
 instance_set_transform :: proc(engine: ^Engine, handle: InstanceHandle, transform: Transform) {
-	instance := pool_get(&engine.scene.instances, handle)
-	old := instance^
+	instance := instance_get(engine, handle)
 	instance.transform = transform
-	instance_change_record(engine, handle, old, instance^)
+	instance_replace(engine, handle, instance)
 }
 
 instance_set_casts_shadow :: proc(engine: ^Engine, handle: InstanceHandle, casts_shadow: bool) {
-	instance := pool_get(&engine.scene.instances, handle)
-	old := instance^
+	instance := instance_get(engine, handle)
 	instance.casts_shadow = casts_shadow
-	instance_change_record(engine, handle, old, instance^)
+	instance_replace(engine, handle, instance)
+}
+
+// The one write path for a live instance; records the change.
+@(private = "file")
+instance_replace :: proc(engine: ^Engine, handle: InstanceHandle, instance: Instance) {
+	slot := pool_get(&engine.scene.instances, handle)
+	old := slot^
+	slot^ = instance
+	instance_change_record(engine, handle, old, instance)
 }
 
 // World-space bounding sphere: the model's sphere moved by the transform, radius scaled by the
@@ -301,18 +312,19 @@ instance_world_sphere :: proc(engine: ^Engine, instance: Instance) -> BoundingSp
 	return BoundingSphere{center.xyz, model.bounds.radius * max_scale}
 }
 
+@(private = "file")
+instance_state :: proc(engine: ^Engine, instance: Instance) -> InstanceState {
+	return InstanceState{bounds = instance_world_sphere(engine, instance), casts_shadow = instance.casts_shadow}
+}
+
 // Appends one change per call, never merged. old is nil for a spawn.
 @(private = "file")
 instance_change_record :: proc(engine: ^Engine, handle: InstanceHandle, old: Maybe(Instance), new: Instance) {
 	change := InstanceChange {
-		instance         = handle,
-		new_bounds       = instance_world_sphere(engine, new),
-		casts_shadow_new = new.casts_shadow,
+		instance = handle,
+		new      = instance_state(engine, new),
 	}
-	if o, ok := old.?; ok {
-		change.old_bounds = instance_world_sphere(engine, o)
-		change.casts_shadow_old = o.casts_shadow
-	}
+	if o, ok := old.?; ok do change.old = instance_state(engine, o)
 	append(&engine.scene.instance_changes, change)
 }
 

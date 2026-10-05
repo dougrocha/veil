@@ -141,8 +141,7 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	submit_start := time.tick_now()
 
 	backend.frame_end(&engine.vk_ctx, &engine.swapchain, cmd, engine.render_targets.draw)
-	// Placeholder until the shadow cache commit consumes them. Skipped frames return early above,
-	// so changes accumulate until a frame is recorded.
+	// Cleared once per recorded frame. Skipped frames return early above, so their changes carry over.
 	clear(&engine.scene.instance_changes)
 	stats_add_timings(
 		engine,

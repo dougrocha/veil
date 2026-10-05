@@ -112,7 +112,7 @@ Scene :: struct {
 	directional_light_count: u32,
 	spot_light_count:        u32,
 	instances:               Pool(Instance),
-	instance_changes:        [dynamic]InstanceChange, // since the last clear; read by the shadow cache
+	instance_changes:        [dynamic]InstanceChange, // since the last recorded frame
 	selection:               Selection,
 }
 
