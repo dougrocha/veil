@@ -30,6 +30,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 		color      = {1, 1, 1, 1},
 		brightness = 0.03,
 	}
+	engine.scene.background = Vec4{0, 0, 0, 1}
 
 	vk_ctx := &engine.vk_ctx
 	backend.context_init(vk_ctx, window) or_return
@@ -42,9 +43,6 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 
 	shader_system_create(engine, max_bindless_textures) or_return
 	texture_system_create(engine, {max_textures_count = max_bindless_textures})
-	// The skybox pass samples SceneData.skybox_cube every frame; with no skybox configured
-	// the sky renders black.
-	set_skybox_texture(engine, engine.texture_system.defaults[.Black_Cube])
 	material_system_create(engine, {max_material_count = MAX_MATERIALS})
 	model_system_create(engine)
 
@@ -315,9 +313,14 @@ mesh_draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: Draw
 	stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 }
 
-// Takes effect on the next recorded frame: it only changes the cube slot SceneData carries.
+// handle must be a cube texture. Replaces a background color.
 set_skybox_texture :: proc(engine: ^Engine, handle: TextureHandle) {
-	engine.skybox_cube = texture_cube_slot(engine, handle)
+	engine.scene.background = handle
+}
+
+// Replaces a skybox: the main pass clears to color and draws no sky.
+set_background_color :: proc(engine: ^Engine, color: Vec4) {
+	engine.scene.background = color
 }
 
 draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {

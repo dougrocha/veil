@@ -50,7 +50,6 @@ Engine :: struct {
 
 	// texture
 	texture_system:    TextureSystem,
-	skybox_cube:       u32, // bindless cube slot copied into SceneData each frame
 	shadows:           Shadows,
 
 	// simulation state — no Vulkan types
@@ -101,9 +100,16 @@ TimeInfo :: struct {
 	frame_count:      u32,
 }
 
+// What fills the pixels no geometry covers.
+Background :: union #no_nil {
+	Vec4, // clear color: the pass clears to it, no draw
+	TextureHandle, // sky cube: one fullscreen draw
+}
+
 Scene :: struct {
 	active_camera_name:      string,
 	ambient_light:           AmbientLight,
+	background:              Background,
 	point_lights:            [MAX_POINT_LIGHTS]PointLight,
 	directional_lights:      [MAX_DIRECTIONAL_LIGHTS]DirectionalLight,
 	spot_lights:             [MAX_SPOT_LIGHTS]SpotLight,

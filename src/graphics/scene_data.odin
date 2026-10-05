@@ -34,6 +34,9 @@ gpu_spot_light :: proc(light: SpotLight) -> GpuSpotLight {
 scene_data_buffer_update :: proc(engine: ^Engine) {
 	frame_index := backend.frame_slot(&engine.vk_ctx)
 	aspect := render_aspect(engine)
+	// With a color background nothing samples the sky cube; the black default keeps the slot valid.
+	sky := engine.texture_system.defaults[.Black_Cube]
+	if cube, ok := engine.scene.background.(TextureHandle); ok do sky = cube
 	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
 	scene := SceneData {
 		view = camera_get_view_matrix(active_camera^),
@@ -41,7 +44,7 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 		point_light_count = engine.scene.point_light_count,
 		directional_light_count = engine.scene.directional_light_count,
 		spot_light_count = engine.scene.spot_light_count,
-		skybox_cube = engine.skybox_cube,
+		skybox_cube = texture_cube_slot(engine, sky),
 		cam_pos_shadow_map_size = {active_camera.position.x, active_camera.position.y, active_camera.position.z, 0},
 		ambient_light = {
 			color_brightness = {

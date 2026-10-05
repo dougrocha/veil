@@ -147,6 +147,9 @@ shadows_enabled :: proc(engine: ^Engine) -> bool {
 
 @(private = "file")
 record_main :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+	// A sky covers every pixel left uncovered, so its clear value never shows.
+	clear_color, _ := engine.scene.background.(Vec4)
+	_, has_sky := engine.scene.background.(TextureHandle)
 	encoder := backend.begin_render_pass(
 		&engine.vk_ctx,
 		cmd,
@@ -154,15 +157,15 @@ record_main :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 			color = {image = engine.render_targets.color},
 			resolve = {image = engine.render_targets.hdr},
 			depth = {image = engine.render_targets.depth},
-			clear_color = {0.1, 0.1, 0.1, 1},
+			clear_color = clear_color,
 			load_op = .Clear,
 		},
 	)
 	defer backend.end_render_pass(encoder)
-	// Opaque, then the skybox where nothing opaque wrote depth, then transparent on top.
+	// Opaque, then the sky (if any) where nothing opaque wrote depth, then transparent on top.
 	view_list := view_draw_list(engine)
 	draw_meshes_opaque(engine, encoder, view_list)
-	draw_skybox(engine, encoder)
+	if has_sky do draw_skybox(engine, encoder)
 	draw_meshes_transparent(engine, encoder, view_list)
 	if engine.debug_settings.particles do draw_particles(engine, encoder)
 	line_renderer_flush(engine, encoder)
