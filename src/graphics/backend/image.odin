@@ -284,6 +284,10 @@ image_barrier_compute :: proc(
 	)
 }
 
+// Transitions every subresource in the range to dst from its own tracked state. Subresources
+// that share a state are grouped into as few rectangular ranges as possible (one for a uniform
+// range), and all groups go out in a single pipeline barrier. A group already in a read-only
+// dst is skipped; same-state writes keep their barrier, since it orders the previous write.
 image_barrier_gpu :: proc(
 	cmd: CommandBuffer,
 	img: Image,
@@ -295,40 +299,94 @@ image_barrier_gpu :: proc(
 	layer_count: u32 = 1,
 ) {
 	slot := image_slot(cmd.ctx, img)
-	src := layout_to_state_kind(slot.layout[image_layout_index(slot, base_mip_level, base_array_layer)])
-	dst := IMAGE_STATES[dst]
+	dst_state := IMAGE_STATES[dst]
+	aspect := image_aspect_to_vk(aspect_mask)
 
-	barrier := vk.ImageMemoryBarrier2 {
-		sType               = .IMAGE_MEMORY_BARRIER_2,
-		srcStageMask        = src.stage,
-		srcAccessMask       = src.access,
-		oldLayout           = src.layout,
-		dstStageMask        = dst.stage,
-		dstAccessMask       = dst.access,
-		newLayout           = dst.layout,
-		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-		image               = slot.image,
-		subresourceRange    = {
-			image_aspect_to_vk(aspect_mask),
-			base_mip_level,
-			level_count,
-			base_array_layer,
-			layer_count,
-		},
+	Group :: struct {
+		layout:                  vk.ImageLayout,
+		base_mip, level_count:   u32,
+		base_layer, layer_count: u32,
 	}
-	dep_info := vk.DependencyInfo {
-		sType                   = .DEPENDENCY_INFO,
-		imageMemoryBarrierCount = 1,
-		pImageMemoryBarriers    = &barrier,
+	groups := make([dynamic]Group, context.temp_allocator)
+
+	// Split each mip into runs of layers with the same layout. A mip whose runs match the
+	// previous mip's extends those groups instead of adding new ones.
+	prev_row_start := 0
+	for m in base_mip_level ..< base_mip_level + level_count {
+		row_start := len(groups)
+		run_start := base_array_layer
+		for l in base_array_layer ..< base_array_layer + layer_count {
+			layout := slot.layout[image_layout_index(slot, m, l)]
+			last := l + 1 == base_array_layer + layer_count
+			if !last && slot.layout[image_layout_index(slot, m, l + 1)] == layout do continue
+			append(&groups, Group{layout, m, 1, run_start, l + 1 - run_start})
+			run_start = l + 1
+		}
+
+		row := groups[row_start:]
+		prev := groups[prev_row_start:row_start]
+		if m > base_mip_level && len(row) == len(prev) {
+			same := true
+			for g, i in row {
+				p := prev[i]
+				if g.layout != p.layout || g.base_layer != p.base_layer || g.layer_count != p.layer_count {
+					same = false
+					break
+				}
+			}
+			if same {
+				for &p in prev do p.level_count += 1
+				resize(&groups, row_start)
+				continue
+			}
+		}
+		prev_row_start = row_start
 	}
-	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
+
+	barriers := make([dynamic]vk.ImageMemoryBarrier2, 0, len(groups), context.temp_allocator)
+	for g in groups {
+		if g.layout == dst_state.layout && image_state_read_only(dst) do continue
+		src := layout_to_state_kind(g.layout)
+		append(
+			&barriers,
+			vk.ImageMemoryBarrier2 {
+				sType = .IMAGE_MEMORY_BARRIER_2,
+				srcStageMask = src.stage,
+				srcAccessMask = src.access,
+				oldLayout = src.layout,
+				dstStageMask = dst_state.stage,
+				dstAccessMask = dst_state.access,
+				newLayout = dst_state.layout,
+				srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+				dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+				image = slot.image,
+				subresourceRange = {aspect, g.base_mip, g.level_count, g.base_layer, g.layer_count},
+			},
+		)
+	}
+	if len(barriers) > 0 {
+		dep_info := vk.DependencyInfo {
+			sType                   = .DEPENDENCY_INFO,
+			imageMemoryBarrierCount = u32(len(barriers)),
+			pImageMemoryBarriers    = raw_data(barriers),
+		}
+		vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
+	}
 
 	for m in base_mip_level ..< base_mip_level + level_count {
 		for l in base_array_layer ..< base_array_layer + layer_count {
-			slot.layout[image_layout_index(slot, m, l)] = dst.layout
+			slot.layout[image_layout_index(slot, m, l)] = dst_state.layout
 		}
 	}
+}
+
+@(private)
+image_state_read_only :: proc(state: ImageStateKind) -> bool {
+	#partial switch state {
+	case .Depth_Read, .Shader_Read, .Transfer_Src:
+		return true
+	}
+	return false
 }
 
 // for raw vk.Image handles with no Image slot (e.g. swapchain images), where the
