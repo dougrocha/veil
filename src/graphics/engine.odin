@@ -137,8 +137,8 @@ engine_destroy :: proc(self: ^Engine) {
 	virtual.arena_destroy(&self.frame_arena)
 }
 
-engine_render :: proc(app: ^App, delta_time: f32) {
-	engine := &app.engine
+// width/height: the window's drawable size this frame; used when the swapchain must be recreated.
+engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 	context.temp_allocator = virtual.arena_allocator(&engine.frame_arena)
 	defer free_all(context.temp_allocator)
 	// Batches are filled every tick; drain them even when this frame isn't drawn, or they overflow.
@@ -152,10 +152,10 @@ engine_render :: proc(app: ^App, delta_time: f32) {
 	engine.time_info.time += delta_time
 
 	// A minimized window has no drawable pixels; keep the old swapchain until it returns.
-	if app.width == 0 || app.height == 0 do return
+	if width == 0 || height == 0 do return
 
 	if engine.swapchain.require_recreate {
-		engine_resize(engine, app.width, app.height)
+		engine_resize(engine, width, height)
 	}
 
 	wait_start := time.tick_now()

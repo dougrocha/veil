@@ -200,7 +200,7 @@ main :: proc() {
 
 		if show_stats do gfx.stats_draw(&app.engine, &ui_font, 10, 24, 24)
 
-		gfx.engine_render(&app, delta_time)
+		gfx.engine_render(&app.engine, app.width, app.height, delta_time)
 	}
 }
 // 4K scanned PBR models with their texture sets.
