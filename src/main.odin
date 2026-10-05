@@ -174,14 +174,14 @@ main :: proc() {
 				if mouse_captured {
 					gfx.camera_process_mouse_movement(active_cam, ev.motion.xrel, -ev.motion.yrel)
 				} else if gizmo.dragging {
-					mouse_pos, viewport_size := mouse_to_pixels(app.window, ev.motion.x, ev.motion.y)
-					gfx.gizmo_mouse_move(&gizmo, &app.engine, active_cam^, mouse_pos, viewport_size)
+					mouse_pos, ok := mouse_to_pixels(app.window, &app.engine, ev.motion.x, ev.motion.y)
+					if ok do gfx.gizmo_mouse_move(&gizmo, &app.engine, active_cam^, mouse_pos)
 				}
 			case .MOUSE_BUTTON_DOWN:
 				if !mouse_captured && ev.button.button == sdl.BUTTON_LEFT {
-					mouse_pos, viewport_size := mouse_to_pixels(app.window, ev.button.x, ev.button.y)
-					if viewport_size.x <= 0 || viewport_size.y <= 0 do continue
-					if !gfx.gizmo_mouse_down(&gizmo, &app.engine, active_cam^, mouse_pos, viewport_size) {
+					mouse_pos, ok := mouse_to_pixels(app.window, &app.engine, ev.button.x, ev.button.y)
+					if !ok do continue
+					if !gfx.gizmo_mouse_down(&gizmo, &app.engine, active_cam^, mouse_pos) {
 						hit := gfx.pick(&app.engine, mouse_pos)
 						app.engine.scene.selection = nil
 						if hit != gfx.INVALID_INSTANCE {
@@ -231,15 +231,13 @@ main :: proc() {
 	}
 }
 // 4K scanned PBR models with their texture sets.
-// SDL reports logical window coordinates; rendering and picking use pixels.
-mouse_to_pixels :: proc(window: ^sdl.Window, x, y: f32) -> (gfx.Vec2, gfx.Vec2) {
+// SDL reports logical window coordinates; picking and the gizmo work in render extent pixels.
+mouse_to_pixels :: proc(window: ^sdl.Window, engine: ^gfx.Engine, x, y: f32) -> (pos: gfx.Vec2, ok: bool) {
 	window_w, window_h: c.int
-	pixel_w, pixel_h: c.int
 	_ = sdl.GetWindowSize(window, &window_w, &window_h)
-	_ = sdl.GetWindowSizeInPixels(window, &pixel_w, &pixel_h)
-	viewport := gfx.Vec2{f32(pixel_w), f32(pixel_h)}
-	if window_w <= 0 || window_h <= 0 do return {}, viewport
-	return {x * viewport.x / f32(window_w), y * viewport.y / f32(window_h)}, viewport
+	viewport := gfx.render_viewport(engine)
+	if window_w <= 0 || window_h <= 0 || viewport.x <= 0 || viewport.y <= 0 do return {}, false
+	return {x * viewport.x / f32(window_w), y * viewport.y / f32(window_h)}, true
 }
 
 process_input :: proc(camera: ^gfx.Camera, dt: f32) {

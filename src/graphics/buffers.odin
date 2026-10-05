@@ -37,7 +37,7 @@ frame_data_create :: proc(engine: ^Engine) {
 		)
 		engine.frame_data[i].particle_buffer = create_particle_buffer(
 			&engine.vk_ctx,
-			Rect2D{extent = {u32(engine.swapchain.extent.width), u32(engine.swapchain.extent.height)}},
+			Rect2D{extent = {u32(render_extent(engine).width), u32(render_extent(engine).height)}},
 		)
 	}
 }

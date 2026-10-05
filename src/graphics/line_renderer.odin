@@ -145,7 +145,7 @@ flush_batch :: proc(
 	pc := LinePushConstants {
 		scene_data    = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
 		vertex_buffer = backend.buffer_address(&engine.vk_ctx, buffer^),
-		screen_size   = {f32(engine.swapchain.extent.width), f32(engine.swapchain.extent.height)},
+		screen_size   = render_viewport(engine),
 		thickness     = LINE_THICKNESS_PX,
 	}
 	backend.pipeline_bind(cmd, pipeline)

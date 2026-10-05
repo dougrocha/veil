@@ -47,8 +47,8 @@ debug_view_flush :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	pipeline := get_pipeline(&engine.pipeline_registry, .Debug_View)
 	backend.pipeline_bind(encoder, pipeline)
 
-	width := i32(engine.swapchain.extent.width)
-	height := i32(engine.swapchain.extent.height)
+	width := i32(render_extent(engine).width)
+	height := i32(render_extent(engine).height)
 	for &req in q.requests[:q.count] {
 		// Clip to the target; a zero-size or off-screen scissor is invalid.
 		x0, y0 := max(req.rect.offset.x, 0), max(req.rect.offset.y, 0)

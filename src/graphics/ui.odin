@@ -73,7 +73,7 @@ ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 
 		pc := UIPushConstants {
 			vertex_buffer = backend.buffer_address(&engine.vk_ctx, buffer^),
-			screen_size   = {f32(engine.swapchain.extent.width), f32(engine.swapchain.extent.height)},
+			screen_size   = render_viewport(engine),
 			atlas_texture = atlas_texture,
 		}
 		backend.pipeline_bind(cmd, pipeline)

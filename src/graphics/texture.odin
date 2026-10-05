@@ -98,9 +98,9 @@ texture_destroy :: proc(ctx: ^backend.Context, t: Texture) {
 texture_system_destroy :: proc(engine: ^Engine) {
 	ts := &engine.texture_system
 	for &texture, i in ts.textures.values {
-		if pool_is_alive(&ts.textures, Index(i)) && .External not_in texture.flags {
-			texture_destroy(&engine.vk_ctx, texture)
-		}
+		if !pool_is_alive(&ts.textures, Index(i)) do continue
+		assert(.External not_in texture.flags, "external texture still registered; its owner must unregister it")
+		texture_destroy(&engine.vk_ctx, texture)
 	}
 	pool_destroy(&ts.textures)
 	for sampler in ts.samplers {
@@ -156,7 +156,7 @@ texture_register_external :: proc(engine: ^Engine, img: backend.Image, mip: Mayb
 }
 
 // Points an external texture's slot at the recreated image. The caller must make sure no
-// in-flight frame still uses the old one (render_targets_resize waits for idle). Passing a mip
+// in-flight frame still uses the old one (render_targets_sync waits for idle). Passing a mip
 // replaces the stored one; nil keeps it.
 texture_update_external :: proc(engine: ^Engine, handle: TextureHandle, img: backend.Image, mip: Maybe(u32) = nil) {
 	ts := &engine.texture_system
@@ -165,6 +165,14 @@ texture_update_external :: proc(engine: ^Engine, handle: TextureHandle, img: bac
 	t.image = img
 	if mip != nil do t.view_mip = mip
 	texture_write_slot(engine, handle)
+}
+
+// Frees an external texture's handle. The image stays with its owner; the slot is left stale until
+// reused by a future registration.
+texture_unregister_external :: proc(engine: ^Engine, handle: TextureHandle) {
+	ts := &engine.texture_system
+	assert(.External in pool_get(&ts.textures, handle).flags, "texture_unregister_external on an owned texture")
+	pool_free(&ts.textures, handle)
 }
 
 texture_create_builtin :: proc(engine: ^Engine) {

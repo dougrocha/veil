@@ -3,17 +3,87 @@ package graphics
 import "backend"
 
 RenderTargets :: struct {
-	extent: backend.Extent2D,
-	color:  backend.Image,
-	depth:  backend.Image,
-	hdr:    backend.Image, // main pass resolve target, sampled by the tonemap
-	draw:   backend.Image, // tonemapped LDR result; UI draws on top, then it's blitted to the swapchain
-	bloom:  backend.Image, // half-res mip chain; mip_levels may be below BLOOM_MAX_MIPS for tiny windows
+	extent:         backend.Extent2D,
+	color:          backend.Image,
+	depth:          backend.Image,
+	hdr:            backend.Image, // main pass resolve target, sampled by the tonemap
+	draw:           backend.Image, // tonemapped LDR result; UI draws on top, then it's blitted to the swapchain
+	bloom:          backend.Image, // half-res mip chain; mip_levels may be below BLOOM_MAX_MIPS for tiny windows
+
+	// Texture handles for the sampled targets. They keep their bindless slots across resizes; only
+	// the image behind them changes.
+	hdr_texture:    TextureHandle,
+	bloom_textures: [BLOOM_MAX_MIPS]TextureHandle, // one per bloom mip
 }
 
 BLOOM_MAX_MIPS :: 8
 
-render_targets_create :: proc(ctx: ^backend.Context, extent: backend.Extent2D) -> RenderTargets {
+// Fixed slots in the bindless storage array.
+STORAGE_SLOT_DRAW :: 0
+STORAGE_SLOT_BLOOM :: 1 // bloom mip i is at STORAGE_SLOT_BLOOM + i
+#assert(STORAGE_SLOT_BLOOM + BLOOM_MAX_MIPS <= BINDLESS_STORAGE_IMAGE_COUNT)
+
+// Creates the targets at the swapchain's extent and gives them their texture and storage slots.
+// Needs the texture system.
+render_targets_create :: proc(engine: ^Engine) {
+	targets := &engine.render_targets
+	targets^ = render_targets_images_create(&engine.vk_ctx, engine.swapchain.extent)
+	targets.hdr_texture = texture_register_external(engine, targets.hdr)
+	bloom_mips := backend.image_desc(&engine.vk_ctx, targets.bloom).mip_levels
+	for &handle, i in targets.bloom_textures {
+		handle = texture_register_external(engine, targets.bloom, bloom_slot_mip(bloom_mips, u32(i)))
+	}
+	storage_images_write(engine)
+}
+
+// Destroys the images and frees their texture handles. Call before texture_system_destroy.
+render_targets_destroy :: proc(engine: ^Engine) {
+	targets := &engine.render_targets
+	texture_unregister_external(engine, targets.hdr_texture)
+	for handle in targets.bloom_textures do texture_unregister_external(engine, handle)
+	render_targets_images_destroy(&engine.vk_ctx, targets)
+}
+
+// The size the passes draw at. Everything that draws or maps into screen space uses it.
+render_extent :: proc(engine: ^Engine) -> backend.Extent2D {
+	return engine.render_targets.extent
+}
+
+// The render extent as a float vector, for screen-space math (UI, lines, picking).
+render_viewport :: proc(engine: ^Engine) -> Vec2 {
+	extent := render_extent(engine)
+	return {f32(extent.width), f32(extent.height)}
+}
+
+render_aspect :: proc(engine: ^Engine) -> f32 {
+	extent := render_extent(engine)
+	return f32(extent.width) / f32(extent.height)
+}
+
+// Call once per frame after frame_begin. When the swapchain was recreated at a new extent, recreates
+// the targets at that extent and points their texture handles and storage slots at the new images.
+// Waits for idle on resize: in-flight frames may still read the slots being rewritten.
+render_targets_sync :: proc(engine: ^Engine) {
+	targets := &engine.render_targets
+	if targets.extent == engine.swapchain.extent do return
+
+	backend.device_wait_idle(&engine.vk_ctx)
+	render_targets_images_destroy(&engine.vk_ctx, targets)
+	images := render_targets_images_create(&engine.vk_ctx, engine.swapchain.extent)
+	images.hdr_texture = targets.hdr_texture
+	images.bloom_textures = targets.bloom_textures
+	targets^ = images
+
+	texture_update_external(engine, targets.hdr_texture, targets.hdr)
+	bloom_mips := backend.image_desc(&engine.vk_ctx, targets.bloom).mip_levels
+	for handle, i in targets.bloom_textures {
+		texture_update_external(engine, handle, targets.bloom, bloom_slot_mip(bloom_mips, u32(i)))
+	}
+	storage_images_write(engine)
+}
+
+@(private = "file")
+render_targets_images_create :: proc(ctx: ^backend.Context, extent: backend.Extent2D) -> RenderTargets {
 	extent_3d := backend.Extent3D{extent.width, extent.height, 1}
 	return RenderTargets {
 		extent = extent,
@@ -42,7 +112,8 @@ render_targets_create :: proc(ctx: ^backend.Context, extent: backend.Extent2D) -
 	}
 }
 
-render_targets_destroy :: proc(ctx: ^backend.Context, targets: ^RenderTargets) {
+@(private = "file")
+render_targets_images_destroy :: proc(ctx: ^backend.Context, targets: ^RenderTargets) {
 	backend.image_destroy(ctx, targets.color)
 	backend.image_destroy(ctx, targets.depth)
 	backend.image_destroy(ctx, targets.hdr)
@@ -76,12 +147,24 @@ bloom_target_create :: proc(ctx: ^backend.Context, extent: backend.Extent2D) -> 
 	return backend.image_create(ctx, desc)
 }
 
-// Resizes the targets to the swapchain's extent, then repoints every descriptor at them.
-// The backend has already recreated the swapchain. Waits for idle: the bindless slots the new
-// targets reuse may still be read by a frame in flight.
-render_targets_resize :: proc(engine: ^Engine) {
-	backend.device_wait_idle(&engine.vk_ctx)
-	render_targets_destroy(&engine.vk_ctx, &engine.render_targets)
-	engine.render_targets = render_targets_create(&engine.vk_ctx, engine.swapchain.extent)
-	post_targets_update(engine)
+// Every bloom slot needs a valid view, but a tiny window allocates fewer than BLOOM_MAX_MIPS
+// levels. Slots past the last level alias it; bloom_levels never dispatches them.
+@(private = "file")
+bloom_slot_mip :: proc(mip_levels: u32, slot: u32) -> u32 {
+	return min(slot, mip_levels - 1)
+}
+
+@(private = "file")
+storage_images_write :: proc(engine: ^Engine) {
+	targets := &engine.render_targets
+	bloom_mips := backend.image_desc(&engine.vk_ctx, targets.bloom).mip_levels
+	backend.bindless_write_storage(&engine.vk_ctx, STORAGE_SLOT_DRAW, targets.draw)
+	for i in 0 ..< u32(BLOOM_MAX_MIPS) {
+		backend.bindless_write_storage(
+			&engine.vk_ctx,
+			STORAGE_SLOT_BLOOM + i,
+			targets.bloom,
+			bloom_slot_mip(bloom_mips, i),
+		)
+	}
 }

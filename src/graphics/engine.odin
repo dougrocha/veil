@@ -35,7 +35,6 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	backend.context_init(vk_ctx, window) or_return
 
 	engine.swapchain = backend.swapchain_create(vk_ctx, width, height)
-	engine.render_targets = render_targets_create(vk_ctx, engine.swapchain.extent)
 
 	// The cube array and the 2 fixed depth slots count against the same per-stage sampled-image limit.
 	max_bindless_textures := min(MAX_TEXTURES, vk_ctx.max_bindless_textures_per_stage - BINDLESS_CUBE_COUNT - 2)
@@ -55,14 +54,13 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	bloom_down_handle := shader_load(engine, "bloom_down", COMPUTE_ENTRIES) or_return
 	bloom_up_handle := shader_load(engine, "bloom_up", COMPUTE_ENTRIES) or_return
 
-	frame_data_create(engine)
-
 	texture_system_create(engine, {max_textures_count = max_bindless_textures})
 	material_system_create(engine, {max_material_count = MAX_MATERIALS})
 	model_system_create(engine)
 
 	global_resources_create(engine)
-	post_targets_create(engine)
+	render_targets_create(engine)
+	frame_data_create(engine) // particle spawn area is sized by the render extent
 	gpu_profiler_create(engine)
 	shadow_cache_create(engine)
 
@@ -108,16 +106,15 @@ engine_destroy :: proc(self: ^Engine) {
 
 	shadow_cache_destroy(self)
 	gpu_profiler_destroy(self)
-	// post_targets_create only registers external textures; texture_system_destroy frees them.
+	frame_data_destroy(self)
+	render_targets_destroy(self)
 	global_resources_destroy(self)
 
 	model_system_destroy(self)
 	material_system_destroy(self)
 	texture_system_destroy(self)
-	frame_data_destroy(self)
 	shader_system_destroy(self)
 
-	render_targets_destroy(&self.vk_ctx, &self.render_targets)
 	backend.swapchain_destroy(&self.vk_ctx, &self.swapchain)
 	backend.context_destroy(&self.vk_ctx)
 
@@ -147,9 +144,7 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 
 	// The swapchain may have just been recreated; the targets follow its extent, which can differ
 	// from the window size.
-	if engine.render_targets.extent != engine.swapchain.extent {
-		render_targets_resize(engine)
-	}
+	render_targets_sync(engine)
 
 	engine.time_info.frame_count += 1
 	gpu_profiler_collect(engine)
@@ -303,10 +298,7 @@ draw_meshes :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	backend.pipeline_bind(cmd, mesh_pipeline)
 
 	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
-	frustum := frustum_create_from_camera(
-		active_camera,
-		f32(engine.swapchain.extent.width) / f32(engine.swapchain.extent.height),
-	)
+	frustum := frustum_create_from_camera(active_camera, render_aspect(engine))
 
 	draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: DrawBatch) {
 		frame := current_frame_data(engine)

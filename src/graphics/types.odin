@@ -51,8 +51,6 @@ Engine :: struct {
 	// texture
 	texture_system:    TextureSystem,
 	skybox_cube:       u32, // bindless cube slot copied into SceneData each frame
-	hdr_texture:       TextureHandle, // external texture for render_targets.hdr; stable across resizes
-	bloom_textures:    [BLOOM_MAX_MIPS]TextureHandle, // one external texture per bloom mip
 	shadow_atlas:      ShadowAtlas,
 	shadow_2d_atlas:   ShadowAtlas,
 

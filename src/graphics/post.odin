@@ -4,11 +4,6 @@ import "core:fmt"
 
 import "backend"
 
-// Fixed slots in the bindless storage array.
-STORAGE_SLOT_DRAW :: 0
-STORAGE_SLOT_BLOOM :: 1 // bloom mip i is at STORAGE_SLOT_BLOOM + i
-#assert(STORAGE_SLOT_BLOOM + BLOOM_MAX_MIPS <= BINDLESS_STORAGE_IMAGE_COUNT)
-
 TONEMAP_EXPOSURE :: 1.0 // default for debug_settings.exposure
 // Keep in sync with numthreads in tonemap.slang, bloom_down.slang and bloom_up.slang.
 POST_GROUP_SIZE :: 8
@@ -19,50 +14,6 @@ BLOOM_DEFAULT_STRENGTH :: 0.15
 // roughly the same share of the screen at any resolution and never collapses into a 1x1 haze.
 BLOOM_MIN_MIP_SIZE :: 8
 BLOOM_UPSAMPLE_RADIUS :: 1.0
-
-post_targets_create :: proc(engine: ^Engine) {
-	targets := &engine.render_targets
-	bloom_mips := backend.image_desc(&engine.vk_ctx, targets.bloom).mip_levels
-	engine.hdr_texture = texture_register_external(engine, targets.hdr)
-	for &handle, i in engine.bloom_textures {
-		handle = texture_register_external(engine, targets.bloom, bloom_slot_mip(bloom_mips, u32(i)))
-	}
-	storage_images_write(engine)
-}
-
-// Called by render_targets_resize after it recreates the render targets. The images have new
-// handles; texture handles and storage slots stay the same and are pointed at them.
-post_targets_update :: proc(engine: ^Engine) {
-	targets := &engine.render_targets
-	bloom_mips := backend.image_desc(&engine.vk_ctx, targets.bloom).mip_levels
-	texture_update_external(engine, engine.hdr_texture, targets.hdr)
-	for handle, i in engine.bloom_textures {
-		texture_update_external(engine, handle, targets.bloom, bloom_slot_mip(bloom_mips, u32(i)))
-	}
-	storage_images_write(engine)
-}
-
-// Every bloom slot needs a valid view, but a tiny window allocates fewer than BLOOM_MAX_MIPS
-// levels. Slots past the last level alias it; bloom_levels never dispatches them.
-@(private = "file")
-bloom_slot_mip :: proc(mip_levels: u32, slot: u32) -> u32 {
-	return min(slot, mip_levels - 1)
-}
-
-@(private = "file")
-storage_images_write :: proc(engine: ^Engine) {
-	targets := &engine.render_targets
-	bloom_mips := backend.image_desc(&engine.vk_ctx, targets.bloom).mip_levels
-	backend.bindless_write_storage(&engine.vk_ctx, STORAGE_SLOT_DRAW, targets.draw)
-	for i in 0 ..< u32(BLOOM_MAX_MIPS) {
-		backend.bindless_write_storage(
-			&engine.vk_ctx,
-			STORAGE_SLOT_BLOOM + i,
-			targets.bloom,
-			bloom_slot_mip(bloom_mips, i),
-		)
-	}
-}
 
 // Active bloom levels: as many as fit before a mip's short side drops below BLOOM_MIN_MIP_SIZE,
 // capped by the debug setting and by what the bloom target was allocated with.
@@ -115,12 +66,12 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		}
 		if i == 0 {
 			src_size = {hdr_extent.width, hdr_extent.height}
-			pc.src_texture = u32(engine.hdr_texture.index)
+			pc.src_texture = u32(targets.hdr_texture.index)
 			pc.karis = 1
 		} else {
 			backend.image_barrier(encoder, bloom, .Shader_Read, color, base_mip_level = i - 1)
 			src_size = mip_extent(bloom_desc, i - 1)
-			pc.src_texture = u32(engine.bloom_textures[i - 1].index)
+			pc.src_texture = u32(targets.bloom_textures[i - 1].index)
 		}
 		pc.src_texel_size = {1 / f32(src_size.x), 1 / f32(src_size.y)}
 		backend.image_barrier(encoder, bloom, .General, color, base_mip_level = i)
@@ -138,7 +89,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 		// dst was last read by the downsample into src; the upsample reads and writes it in place.
 		backend.image_barrier(encoder, bloom, .General, color, base_mip_level = dst)
 		pc := BloomPushConstants {
-			src_texture    = u32(engine.bloom_textures[src].index),
+			src_texture    = u32(targets.bloom_textures[src].index),
 			dst_storage    = STORAGE_SLOT_BLOOM + dst,
 			src_texel_size = {1 / f32(src_size.x), 1 / f32(src_size.y)},
 			radius         = BLOOM_UPSAMPLE_RADIUS,
@@ -160,17 +111,18 @@ dispatch_tonemap :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 
 	pipeline := get_pipeline(&engine.pipeline_registry, .Tonemap_Compute)
 	pc := TonemapPushConstants {
-		hdr_texture    = u32(engine.hdr_texture.index),
+		hdr_texture    = u32(targets.hdr_texture.index),
 		out_storage    = STORAGE_SLOT_DRAW,
 		exposure       = engine.debug_settings.exposure,
-		bloom_texture  = u32(engine.bloom_textures[0].index),
+		bloom_texture  = u32(targets.bloom_textures[0].index),
 		bloom_strength = engine.debug_settings.bloom_strength / f32(bloom_levels(engine)),
 	}
 
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
 	backend.pipeline_bind_compute(encoder, pipeline)
 	backend.pipeline_push_compute(encoder, &pc)
-	dispatch_post(encoder, {engine.swapchain.extent.width, engine.swapchain.extent.height})
+	extent := render_extent(engine)
+	dispatch_post(encoder, {extent.width, extent.height})
 	backend.end_compute_pass(encoder)
 }
 

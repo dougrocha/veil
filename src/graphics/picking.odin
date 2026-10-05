@@ -28,7 +28,7 @@ ray_triangle_hit :: proc(origin, dir, a, b, c: Vec3) -> (f32, bool) {
 // returns the closest instance whose triangles it hits.
 pick :: proc(engine: ^Engine, mouse_pos: Vec2) -> InstanceHandle {
 	cam := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
-	viewport_size := Vec2{f32(engine.swapchain.extent.width), f32(engine.swapchain.extent.height)}
+	viewport_size := render_viewport(engine)
 
 	ray_origin, ray_dir := screen_to_world_ray(cam^, mouse_pos, viewport_size)
 

@@ -144,8 +144,8 @@ frame_dump_capture :: proc(engine: ^Engine) -> (done: bool) {
 	path := fmt.tprintf("%s_%03d.png", fd.prefix, index)
 	path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
 
-	width := i32(engine.swapchain.extent.width)
-	height := i32(engine.swapchain.extent.height)
+	width := i32(render_extent(engine).width)
+	height := i32(render_extent(engine).height)
 	// Drop alpha: the draw target's alpha is a blending artifact, not something a
 	// screenshot should carry.
 	rgb := make([]u8, int(width) * int(height) * 3, context.temp_allocator)

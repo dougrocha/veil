@@ -406,7 +406,8 @@ gizmo_cancel :: proc(gc: ^GizmoController) {
 
 // Picks an axis of the selected instance's gizmo and starts dragging it. Returns false when
 // nothing was hit (or nothing is selected), so the caller can fall back to selecting an object.
-gizmo_mouse_down :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mouse_pos, viewport: Vec2) -> bool {
+gizmo_mouse_down :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mouse_pos: Vec2) -> bool {
+	viewport := render_viewport(engine)
 	axis: GizmoAxis = .None
 	if selected_instance(&engine.scene) != INVALID_INSTANCE {
 		selected := instance_get(engine, selected_instance(&engine.scene))
@@ -454,7 +455,8 @@ gizmo_mouse_down :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mou
 }
 
 // Applies an in-progress drag to the selected instance. Does nothing when not dragging.
-gizmo_mouse_move :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mouse_pos, viewport: Vec2) {
+gizmo_mouse_move :: proc(gc: ^GizmoController, engine: ^Engine, cam: Camera, mouse_pos: Vec2) {
+	viewport := render_viewport(engine)
 	if !gc.dragging do return
 	selected := instance_get(engine, selected_instance(&engine.scene))
 
