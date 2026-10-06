@@ -85,8 +85,8 @@ load_sponza :: proc(engine: ^gfx.Engine) {
 	}
 	// Steep sun through the open roof, tilted across the short (z) axis so one arcade is lit
 	// and the gallery columns cast long shadows on the floor.
-	gfx.spawn_directional_light(
-		engine,
+	gfx.light_spawn_directional(
+		&engine.scene,
 		gfx.DirectionalLight {
 			direction               = linalg.normalize(gfx.Vec3{0.2, -1.0, 0.35}),
 			color                   = {1.0, 0.92, 0.8},
@@ -101,7 +101,7 @@ load_sponza :: proc(engine: ^gfx.Engine) {
 	torches := [?]gfx.Vec3{{3.9, 1.92, -1.6}, {-4.95, 1.92, -1.6}, {3.9, 1.92, 1.0}, {-4.95, 1.92, 1.0}}
 	for pos in torches {
 		gfx.light_spawn_point(
-			engine,
+			&engine.scene,
 			gfx.PointLight {
 				pos = pos,
 				range = 8.0,
@@ -158,7 +158,7 @@ load_bloom_test :: proc(engine: ^gfx.Engine) {
 		// shadow_near is past the shape's extent (cube corner ~0.61) so it clips out of its own
 		// shadow map instead of blocking its light.
 		light := gfx.light_spawn_point(
-			engine,
+			&engine.scene,
 			gfx.PointLight {
 				pos = pos,
 				range = 6.0,
@@ -172,7 +172,7 @@ load_bloom_test :: proc(engine: ^gfx.Engine) {
 			},
 		)
 		// The light moves with its shape.
-		gfx.light_attach_point(engine, light, shape)
+		gfx.light_attach_point(&engine.scene, light, shape)
 	}
 
 	floor_mat := gfx.material_create(
@@ -242,8 +242,8 @@ load_transparency_test :: proc(engine: ^gfx.Engine) {
 		gfx.instance_spawn(engine, model, gfx.transform_create(translation = glass.pos))
 	}
 
-	gfx.spawn_directional_light(
-		engine,
+	gfx.light_spawn_directional(
+		&engine.scene,
 		gfx.DirectionalLight {
 			direction = linalg.normalize(gfx.Vec3{-0.4, -1, -0.3}),
 			color = {1, 1, 1},
@@ -285,7 +285,7 @@ load_shadow_test :: proc(engine: ^gfx.Engine) {
 	gfx.instance_spawn(engine, pillar, gfx.transform_create(translation = {2, 1, 0}))
 
 	gfx.light_spawn_point(
-		engine,
+		&engine.scene,
 		gfx.PointLight {
 			pos                = {0, 0.5, 0}, // sphere center
 			range              = 12,
@@ -344,8 +344,8 @@ load_cornell_box :: proc(engine: ^gfx.Engine) {
 	sphere := gfx.primitive_sphere(engine, "cornell_sphere", sphere_mat, radius = 0.25)
 	gfx.instance_spawn(engine, sphere, gfx.transform_create(translation = {0.4, 0.3, -0.3}))
 
-	gfx.spawn_spot_light(
-		engine,
+	gfx.light_spawn_spot(
+		&engine.scene,
 		gfx.SpotLight {
 			pos = {0, 0.8, 0},
 			direction = {0, -1, 0},

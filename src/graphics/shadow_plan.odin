@@ -123,8 +123,8 @@ shadow_entry_invalidated :: proc(
 	if entry.key != key do return true
 	bound := BoundingSphere{light_pos, light_range}
 	for change in changes {
-		if change.new.casts_shadow && spheres_overlap(change.new.bounds, bound) do return true
-		if old, ok := change.old.?; ok && old.casts_shadow && spheres_overlap(old.bounds, bound) do return true
+		if change.kind != .Despawn && change.new.casts_shadow && spheres_overlap(change.new.bounds, bound) do return true
+		if change.kind != .Spawn && change.old.casts_shadow && spheres_overlap(change.old.bounds, bound) do return true
 	}
 	return false
 }

@@ -97,6 +97,9 @@ engine_render :: proc(engine: ^Engine, width, height: u32, delta_time: f32) {
 		ui_renderer_clear(engine)
 		debug_view_clear(engine)
 	}
+	// Every frame, drawn or skipped: the pool is CPU-only (each frame rewrites its own transforms
+	// buffer), so slots are safe to reuse once this frame has read the scene.
+	defer instance_sweep_destroyed(&engine.scene)
 
 	engine.time_info.delta_time = delta_time
 	engine.time_info.time += delta_time
@@ -202,7 +205,7 @@ update_transforms_buffer :: proc(engine: ^Engine) {
 		backend.buffer_contents(&engine.vk_ctx, current_frame_data(engine).transforms_buffer),
 	)
 	for instance, i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
+		if !pool_is_alive(&engine.scene.instances, Index(i)) || instance.pending_destroy do continue
 		model_matrix := transform_to_matrix(instance.transform)
 		normal3 := linalg.transpose(linalg.inverse(linalg.matrix3_from_matrix4(model_matrix)))
 

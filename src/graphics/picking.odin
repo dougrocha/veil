@@ -36,11 +36,11 @@ pick :: proc(engine: ^Engine, mouse_pos: Vec2) -> InstanceHandle {
 	closest_instance := INVALID_INSTANCE
 
 	for instance, i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, Index(i)) do continue
+		if !pool_is_alive(&engine.scene.instances, Index(i)) || instance.pending_destroy do continue
 		if instance.model == INVALID_MODEL do continue // group root
 
 		model := pool_get(&engine.model_system.models, instance.model)
-		sphere := instance_world_sphere(engine, instance)
+		sphere := instance_world_sphere(instance)
 
 		to_center := sphere.center - ray_origin
 		proj_length := linalg.dot(to_center, ray_dir)

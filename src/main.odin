@@ -17,6 +17,7 @@ App :: struct {
 	width:           u32,
 	height:          u32,
 	engine:          gfx.Engine,
+	world:           World,
 	last_frame_time: time.Time,
 }
 
@@ -74,6 +75,9 @@ main :: proc() {
 	assert(font_ok, "no default system font found")
 	// Declared after engine_destroy's defer, so it runs first.
 	defer gfx.font_destroy(&app.engine, &ui_font)
+
+	world_create(&app.world)
+	defer world_destroy(&app.world)
 
 	app.last_frame_time = time.now()
 
@@ -168,7 +172,7 @@ main :: proc() {
 					} else {
 						target := gfx.Vec3{0, 0, 0}
 						if gfx.selected_instance(&app.engine.scene) != gfx.INVALID_INSTANCE {
-							selected := gfx.instance_get(&app.engine, gfx.selected_instance(&app.engine.scene))
+							selected := gfx.instance_get(&app.engine.scene, gfx.selected_instance(&app.engine.scene))
 							target = selected.transform.translation
 						}
 						gfx.camera_orbit_begin(active_cam, target)
@@ -190,7 +194,7 @@ main :: proc() {
 						app.engine.scene.selection = nil
 						if hit != gfx.INVALID_INSTANCE {
 							app.engine.scene.selection = hit
-							instance := gfx.instance_get(&app.engine, hit)
+							instance := gfx.instance_get(&app.engine.scene, hit)
 							model := gfx.pool_get(&app.engine.model_system.models, instance.model)
 							log.infof("selected: %v", model.name)
 						}
@@ -232,6 +236,7 @@ main :: proc() {
 		if show_stats do gfx.stats_draw(&app.engine, &ui_font, 10, 24, 24)
 
 		gfx.engine_render(&app.engine, app.width, app.height, delta_time)
+		world_sweep(&app.world) // after engine_render, which sweeps the scene
 	}
 }
 // 4K scanned PBR models with their texture sets.

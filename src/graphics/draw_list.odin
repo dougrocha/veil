@@ -62,7 +62,7 @@ build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, c
 	transparent_meshes := make([dynamic]TransparentMesh, context.temp_allocator)
 
 	for instance, slot_i in view.instances.values {
-		if !pool_is_alive(view.instances, Index(slot_i)) do continue
+		if !pool_is_alive(view.instances, Index(slot_i)) || instance.pending_destroy do continue
 		if instance.model == INVALID_MODEL do continue // group root
 		if kind != .View && !instance.casts_shadow do continue
 

@@ -7,14 +7,6 @@ import "backend"
 
 PARTICLE_COUNT :: 8192
 
-Vec2 :: [2]f32
-Vec3 :: [3]f32
-Vec4 :: [4]f32
-Quat :: quaternion128
-
-Mat4x4 :: matrix[4, 4]f32
-Mat4x3 :: matrix[4, 3]f32
-
 // Screen-space rect, vk.Rect2D-shaped but backend-agnostic so callers don't need to import vk.
 Rect2D :: struct {
 	offset: [2]i32,
@@ -23,52 +15,38 @@ Rect2D :: struct {
 
 Extent2D :: backend.Extent2D
 
-vec3_splat :: proc(v: f32) -> Vec3 {return {v, v, v}}
-
 Engine :: struct {
+	// renderer
 	vk_ctx:            backend.Context,
-
-	// swapchain
 	swapchain:         backend.Swapchain,
 	render_targets:    RenderTargets,
-
-	// shaders
 	shader_system:     ShaderSystem,
-
-	// graphics pipeline
 	pipeline_registry: PipelineRegistry,
-
-	// frame and sync resources
 	frame_data:        [backend.MAX_FRAMES_IN_FLIGHT]FrameData,
-
-	// buffers
 	model_system:      ModelSystem,
 	material_system:   MaterialSystem,
-
-	// timers
-	time_info:         TimeInfo,
-
-	// texture
 	texture_system:    TextureSystem,
 	shadows:           Shadows,
 
-	// simulation state — no Vulkan types
+	// world state
 	scene:             Scene,
 	camera_system:     CameraSystem,
+
+	// runtime info
+	time_info:         TimeInfo,
 	stats:             Stats,
+
+	// debug
 	gpu_profiler:      GpuProfiler,
-
-	// debug capture
 	frame_dump:        FrameDump,
-
-	// other stuff
 	line_renderer:     LineRenderer,
 	ui_renderer:       UIRenderer,
 	debug_views:       DebugViewQueue,
 	debug_settings:    DebugSettings,
 
-	// Temp allocator for engine_render, reset at the end of every frame. Kept apart from the
+	// Temp allocator for the engine loop, reset at the end of every frame. Kept apart from the
 	// game loop's context.temp_allocator so each side resets on its own schedule.
+	// TODO: make sure this is a good idea
 	frame_arena:       virtual.Arena,
 }
 
@@ -98,40 +76,6 @@ PostControl :: enum {
 TimeInfo :: struct {
 	time, delta_time: f32,
 	frame_count:      u32,
-}
-
-// What fills the pixels no geometry covers.
-Background :: union #no_nil {
-	Vec4, // clear color: the pass clears to it, no draw
-	TextureHandle, // sky cube: one fullscreen draw
-}
-
-Scene :: struct {
-	active_camera_name:      string,
-	ambient_light:           AmbientLight,
-	background:              Background,
-	point_lights:            [MAX_POINT_LIGHTS]PointLight,
-	directional_lights:      [MAX_DIRECTIONAL_LIGHTS]DirectionalLight,
-	spot_lights:             [MAX_SPOT_LIGHTS]SpotLight,
-	point_light_count:       u32,
-	directional_light_count: u32,
-	spot_light_count:        u32,
-	instances:               Pool(Instance),
-	instance_links:          []InstanceLink, // by pool slot
-	instance_changes:        [dynamic]InstanceChange, // since the last recorded frame
-	selection:               Selection,
-}
-
-scene_create :: proc(scene: ^Scene) {
-	scene.instances = pool_init(MAX_MODEL_INSTANCES, Instance)
-	scene.instance_links = make([]InstanceLink, MAX_MODEL_INSTANCES)
-}
-
-scene_destroy :: proc(scene: ^Scene) {
-	for &link in scene.instance_links do delete(link.children)
-	delete(scene.instance_links)
-	pool_destroy(&scene.instances)
-	delete(scene.instance_changes)
 }
 
 AlphaMode :: enum {
@@ -214,73 +158,6 @@ ParticlePushConstants :: struct {
 	particles_in:  backend.GPUPtr(Particle),
 	particles_out: backend.GPUPtr(Particle),
 	delta_time:    f32,
-}
-
-Transform :: struct {
-	translation: Vec3,
-	rotation:    Quat,
-	scale:       Vec3,
-}
-
-transform_create :: proc(
-	translation: Vec3 = {0.0, 0.0, 0.0},
-	rotation: Quat = linalg.QUATERNIONF32_IDENTITY,
-	scale: Vec3 = {1.0, 1.0, 1.0},
-) -> Transform {
-	return Transform{translation = translation, rotation = rotation, scale = scale}
-}
-
-// Maps a point from local space to world space: scale, then rotate, then translate.
-transform_point :: proc(transform: Transform, p: Vec3) -> Vec3 {
-	return transform.translation + linalg.quaternion_mul_vector3(transform.rotation, p * transform.scale)
-}
-
-// Builds the model matrix by combining translation, rotation, and scale
-transform_to_matrix :: proc(transform: Transform) -> Mat4x4 {
-	translation := linalg.matrix4_translate(transform.translation)
-	rotation := linalg.matrix4_from_quaternion(transform.rotation)
-	scale := linalg.matrix4_scale(transform.scale)
-
-	return translation * rotation * scale
-}
-
-// Splits an affine matrix back into TRS. Shear (a non-uniformly scaled parent with a rotated
-// child) can't be represented and is lost.
-transform_from_matrix :: proc(m: Mat4x4) -> Transform {
-	x := Vec3{m[0, 0], m[1, 0], m[2, 0]}
-	y := Vec3{m[0, 1], m[1, 1], m[2, 1]}
-	z := Vec3{m[0, 2], m[1, 2], m[2, 2]}
-	scale := Vec3{linalg.length(x), linalg.length(y), linalg.length(z)}
-	if linalg.dot(linalg.cross(x, y), z) < 0 do scale.x = -scale.x // mirrored
-	x /= scale.x if scale.x != 0 else 1
-	y /= scale.y if scale.y != 0 else 1
-	z /= scale.z if scale.z != 0 else 1
-	rotation := matrix[3, 3]f32{
-		x.x, y.x, z.x,
-		x.y, y.y, z.y,
-		x.z, y.z, z.z,
-	}
-	return Transform {
-		translation = {m[0, 3], m[1, 3], m[2, 3]},
-		rotation = linalg.quaternion_from_matrix3(rotation),
-		scale = scale,
-	}
-}
-
-transform_global_scale :: proc(transform: Transform) -> Vec3 {
-	return transform.scale
-}
-
-transform_right :: proc(transform: Transform) -> Vec3 {
-	return linalg.quaternion_mul_vector3(transform.rotation, Vec3{1, 0, 0})
-}
-
-transform_up :: proc(transform: Transform) -> Vec3 {
-	return linalg.quaternion_mul_vector3(transform.rotation, Vec3{0, 1, 0})
-}
-
-transform_forward :: proc(transform: Transform) -> Vec3 {
-	return linalg.quaternion_mul_vector3(transform.rotation, Vec3{0, 0, -1})
 }
 
 

@@ -90,7 +90,7 @@ pick_test_run :: proc(engine: ^Engine) {
 		log.infof("pick test (%v, %v) -> MISS", x, y)
 		return
 	}
-	instance := instance_get(engine, hit)
+	instance := instance_get(&engine.scene, hit)
 	model := pool_get(&engine.model_system.models, instance.model)
 	log.infof(
 		"pick test (%v, %v) -> instance %v (%s) at %v",
