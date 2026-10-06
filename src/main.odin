@@ -60,8 +60,8 @@ main :: proc() {
 	}
 	defer sdl.DestroyWindow(app.window)
 
-	mouse_captured := true
-	_ = sdl.SetWindowRelativeMouseMode(app.window, true)
+	// Starts free so the window doesn't grab the cursor on launch; Esc toggles mouse look.
+	mouse_captured := false
 
 	init_ok := gfx.engine_create(&app.engine, app.window, app.width, app.height)
 	if !init_ok {
@@ -90,7 +90,8 @@ main :: proc() {
 	// load_bloom_test(&app.engine, &app.scene)
 	// load_pbr_showcase(&app.engine, &app.scene)
 	// load_shadow_test(&app.engine, &app.scene)
-	load_cornell_box(&app.engine, &app.scene)
+	// load_cornell_box(&app.engine, &app.scene)
+	load_max_instances(&app.engine, &app.scene)
 
 	gizmo: gfx.GizmoController
 	show_stats := true
