@@ -64,6 +64,7 @@ DebugSettings :: struct {
 	bloom_strength:                             f32,
 	exposure:                                   f32, // CPU-only; tonemap push constant
 	post_control:                               PostControl, // which value the arrow keys adjust
+	present_mode:                               backend.PresentMode, // CPU-only; read once at swapchain create
 }
 
 PostControl :: enum {

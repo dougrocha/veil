@@ -70,6 +70,15 @@ LoadOp :: enum u8 {
 	Dont_Care,
 }
 
+// Fifo is vsync and always supported; swapchain_create falls back to it when the surface lacks
+// the requested mode. Mailbox and Immediate don't wait for vblank (Immediate tears), so frame
+// times show the real cost instead of the refresh interval.
+PresentMode :: enum {
+	Fifo,
+	Mailbox,
+	Immediate,
+}
+
 SWAPCHAIN_FORMAT :: vk.Format.B8G8R8A8_SRGB
 DEPTH_FORMAT :: Format.D32_Sfloat
 DRAW_FORMAT :: Format.Rgba16_Sfloat

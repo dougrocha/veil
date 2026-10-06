@@ -23,7 +23,7 @@ FrameCounters :: struct {
 // CPU milliseconds per engine_render phase.
 CpuTimings :: struct {
 	frame:  f64, // frame-to-frame, includes the game loop outside engine_render
-	wait:   f64, // frame fence + swapchain acquire; high when GPU- or present-bound
+	wait:   f64, // frame fence + swapchain acquire; high when GPU-bound, or vsync-bound under Fifo (VEIL_PRESENT_MODE)
 	record: f64, // scene data upload, transforms, command recording
 	submit: f64, // queue submit + present
 }

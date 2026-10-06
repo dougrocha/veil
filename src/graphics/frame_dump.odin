@@ -57,6 +57,22 @@ debug_env_init :: proc(engine: ^Engine) {
 		log.infof("light mask set via VEIL_LIGHTS=%s -> 0b%b", value, mask)
 	}
 
+	// For profiling: Fifo caps fps at the refresh rate and puts the vsync wait into frame times.
+	if value, found := os.lookup_env("VEIL_PRESENT_MODE", context.allocator); found {
+		defer delete(value)
+		switch strings.to_lower(strings.trim_space(value), context.temp_allocator) {
+		case "fifo":
+			engine.debug_settings.present_mode = .Fifo
+		case "mailbox":
+			engine.debug_settings.present_mode = .Mailbox
+		case "immediate":
+			engine.debug_settings.present_mode = .Immediate
+		case:
+			log.warnf("VEIL_PRESENT_MODE: unknown mode %q (fifo, mailbox, immediate), using fifo", value)
+		}
+		log.infof("present mode requested via VEIL_PRESENT_MODE: %v", engine.debug_settings.present_mode)
+	}
+
 	if value, found := os.lookup_env("VEIL_CASCADES", context.allocator); found {
 		defer delete(value)
 		if value != "0" {

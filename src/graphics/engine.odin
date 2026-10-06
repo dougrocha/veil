@@ -28,7 +28,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	vk_ctx := &engine.vk_ctx
 	backend.context_init(vk_ctx, window) or_return
 
-	engine.swapchain = backend.swapchain_create(vk_ctx, width, height)
+	engine.swapchain = backend.swapchain_create(vk_ctx, width, height, engine.debug_settings.present_mode)
 
 	// The cube array and the 2 fixed depth slots count against the same per-stage sampled-image limit.
 	limits := backend.limits(vk_ctx)

@@ -14,25 +14,67 @@ Swapchain :: struct {
 	requested:           Extent2D, // window size it was built for; extent can differ
 	extent:              Extent2D,
 	current_image_index: u32,
+	present_mode:        PresentMode, // resolved against the surface at create, kept across recreation
 }
 
 // Creates the swapchain and its images. Render targets are the caller's; size them to swapchain.extent.
-swapchain_create :: proc(ctx: ^Context, width, height: u32) -> Swapchain {
-	return swapchain_build(ctx, width, height, 0)
+// present_mode falls back to Fifo (with a warning) if the surface doesn't support it.
+swapchain_create :: proc(ctx: ^Context, width, height: u32, present_mode: PresentMode = .Fifo) -> Swapchain {
+	mode := present_mode
+	if !present_mode_supported(ctx, mode) {
+		log.warnf("present mode %v not supported by the surface, falling back to Fifo", mode)
+		mode = .Fifo
+	}
+	if mode != .Fifo do log.infof("present mode: %v", mode)
+	return swapchain_build(ctx, width, height, mode, 0)
 }
 
 // Replaces the swapchain, handing the old one to the driver as oldSwapchain so it can reuse
 // resources. The caller must ensure no frame is still using the old swapchain.
 swapchain_recreate :: proc(ctx: ^Context, swapchain: ^Swapchain, width, height: u32) {
-	new_swapchain := swapchain_build(ctx, width, height, swapchain.handle)
+	new_swapchain := swapchain_build(ctx, width, height, swapchain.present_mode, swapchain.handle)
 	swapchain_destroy(ctx, swapchain)
 	swapchain^ = new_swapchain
 }
 
 @(private = "file")
-swapchain_build :: proc(ctx: ^Context, width, height: u32, old_handle: vk.SwapchainKHR) -> Swapchain {
+present_mode_to_vk :: proc(mode: PresentMode) -> vk.PresentModeKHR {
+	switch mode {
+	case .Fifo:
+		return .FIFO
+	case .Mailbox:
+		return .MAILBOX
+	case .Immediate:
+		return .IMMEDIATE
+	}
+	return .FIFO
+}
+
+@(private = "file")
+present_mode_supported :: proc(ctx: ^Context, mode: PresentMode) -> bool {
+	if mode == .Fifo do return true // required by the spec
+
+	count: u32
+	vk_check(vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.physical_device, ctx.surface, &count, nil))
+	modes := make([]vk.PresentModeKHR, count, context.temp_allocator)
+	vk_check(vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.physical_device, ctx.surface, &count, raw_data(modes)))
+
+	for m in modes[:count] {
+		if m == present_mode_to_vk(mode) do return true
+	}
+	return false
+}
+
+@(private = "file")
+swapchain_build :: proc(
+	ctx: ^Context,
+	width, height: u32,
+	present_mode: PresentMode,
+	old_handle: vk.SwapchainKHR,
+) -> Swapchain {
 	swapchain: Swapchain
 	swapchain.requested = {width, height}
+	swapchain.present_mode = present_mode
 
 	surface_caps: vk.SurfaceCapabilitiesKHR
 	vk_check(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.physical_device, ctx.surface, &surface_caps))
@@ -48,6 +90,11 @@ swapchain_build :: proc(ctx: ^Context, width, height: u32, old_handle: vk.Swapch
 	}
 
 	requested_image_count := max(2, surface_caps.minImageCount)
+	// Without vsync, a spare image lets acquire return while one image is queued and another is
+	// on screen; with only the minimum, Mailbox blocks on the display like Fifo.
+	if present_mode != .Fifo {
+		requested_image_count = max(requested_image_count, surface_caps.minImageCount + 1)
+	}
 	if surface_caps.maxImageCount > 0 {
 		requested_image_count = min(requested_image_count, surface_caps.maxImageCount)
 	}
@@ -64,7 +111,7 @@ swapchain_build :: proc(ctx: ^Context, width, height: u32, old_handle: vk.Swapch
 		imageSharingMode = .EXCLUSIVE,
 		preTransform     = surface_caps.currentTransform,
 		compositeAlpha   = {.OPAQUE},
-		presentMode      = .FIFO,
+		presentMode      = present_mode_to_vk(present_mode),
 		clipped          = true,
 		oldSwapchain     = old_handle,
 	}
