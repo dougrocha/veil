@@ -1,5 +1,6 @@
 package main
 
+import "core:fmt"
 import "core:math/linalg"
 
 import gfx "graphics"
@@ -366,5 +367,108 @@ load_cornell_box :: proc(engine: ^gfx.Engine, scene: ^gfx.Scene) {
 	scene.ambient_light = gfx.AmbientLight {
 		color      = {1, 1, 1, 1},
 		brightness = 0.03,
+	}
+}
+
+// Capacity stress test: a floor plus cubes and spheres on a 64 x 64 grid, filling the scene to
+// MAX_MODEL_INSTANCES, and every light array filled to its cap. Point lights are in a ring over the
+// grid, spots at its corners pointing down, both directional lights cast cascades.
+load_max_instances :: proc(engine: ^gfx.Engine, scene: ^gfx.Scene) {
+	GRID :: 64
+	SPACING :: f32(1.25)
+	#assert(GRID * GRID == gfx.MAX_MODEL_INSTANCES)
+	half_extent := f32(GRID - 1) * SPACING / 2
+
+	floor_mat := gfx.material_create(engine, "max_floor", base_color = {0.5, 0.5, 0.5, 1}, perceptual_roughness = 0.8)
+	floor := gfx.primitive_plane(engine, "max_floor", floor_mat, half_size = {half_extent + 2, half_extent + 2})
+	gfx.instance_spawn(scene, floor, gfx.transform_create())
+
+	// One cube and one sphere model per color; primitives are cached by name.
+	colors := [?]gfx.Vec3 {
+		{0.9, 0.2, 0.2},
+		{0.2, 0.8, 0.3},
+		{0.2, 0.4, 0.9},
+		{0.9, 0.8, 0.2},
+		{0.8, 0.3, 0.8},
+		{0.2, 0.8, 0.8},
+		{0.9, 0.5, 0.1},
+		{0.8, 0.8, 0.8},
+	}
+	cubes, spheres: [len(colors)]gfx.ModelHandle
+	for color, i in colors {
+		mat := gfx.material_create(
+			engine,
+			fmt.tprintf("max_shape_%d", i),
+			base_color = {color.r, color.g, color.b, 1},
+			perceptual_roughness = 0.5,
+		)
+		cubes[i] = gfx.primitive_cube(engine, fmt.tprintf("max_cube_%d", i), mat, half_size = {0.3, 0.3, 0.3})
+		spheres[i] = gfx.primitive_sphere(engine, fmt.tprintf("max_sphere_%d", i), mat, radius = 0.3)
+	}
+
+	// The floor takes one slot, so the last grid cell stays empty.
+	for cell in 0 ..< GRID * GRID - 1 {
+		x, z := cell % GRID, cell / GRID
+		color := (x / 4 + z / 4) % len(colors)
+		model := cubes[color] if (x + z) % 2 == 0 else spheres[color]
+		pos := gfx.Vec3{f32(x) * SPACING - half_extent, 0.3, f32(z) * SPACING - half_extent}
+		gfx.instance_spawn(scene, model, gfx.transform_create(translation = pos))
+	}
+
+	for i in 0 ..< gfx.MAX_POINT_LIGHTS {
+		angle := f32(i) / gfx.MAX_POINT_LIGHTS * linalg.TAU
+		gfx.light_spawn_point(
+			scene,
+			gfx.PointLight {
+				pos = {linalg.cos(angle) * 16, 2.5, linalg.sin(angle) * 16},
+				range = 10,
+				shadow_near = 0.1,
+				color = colors[i],
+				constant = 1,
+				linear = 0.14,
+				quadratic = 0.07,
+				diffuse_intensity = 3,
+				specular_intensity = 0.5,
+			},
+		)
+	}
+	for i in 0 ..< gfx.MAX_SPOT_LIGHTS {
+		corner := gfx.Vec2{-1 if i % 2 == 0 else 1, -1 if i / 2 == 0 else 1} * (half_extent - 8)
+		gfx.light_spawn_spot(
+			scene,
+			gfx.SpotLight {
+				pos = {corner.x, 6, corner.y},
+				direction = {0, -1, 0},
+				range = 10,
+				shadow_near = 0.1,
+				inner_cutoff = linalg.cos(linalg.to_radians(f32(30))),
+				outer_cutoff = linalg.cos(linalg.to_radians(f32(40))),
+				constant = 1,
+				linear = 0.09,
+				quadratic = 0.032,
+				color = {1, 1, 1},
+				diffuse_intensity = 4,
+				specular_intensity = 0.5,
+			},
+		)
+	}
+	sun_directions := [gfx.MAX_DIRECTIONAL_LIGHTS]gfx.Vec3{{0.3, -1, 0.4}, {-0.5, -1, -0.2}}
+	for direction, i in sun_directions {
+		gfx.light_spawn_directional(
+			scene,
+			gfx.DirectionalLight {
+				direction = linalg.normalize(direction),
+				color = {1, 0.95, 0.85},
+				diffuse_intensity = 0.8 if i == 0 else 0.3,
+				specular_intensity = 0.3,
+				shadow_maximum_distance = 60,
+			},
+		)
+	}
+
+	engine.camera_system.default_camera = gfx.camera_create({0, 30, half_extent + 20}, yaw = -90, pitch = -40)
+	scene.ambient_light = gfx.AmbientLight {
+		color      = {1, 1, 1, 1},
+		brightness = 0.05,
 	}
 }
