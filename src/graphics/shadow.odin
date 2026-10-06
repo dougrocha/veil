@@ -9,6 +9,7 @@ Shadows :: struct {
 	point_atlas: ShadowAtlas, // cube array, Depth_Cube_Array slot
 	atlas_2d:    ShadowAtlas, // directional + spot, Depth_2D_Array slot
 	cache:       ShadowCache,
+	casters:     ShadowCasters,
 	plan:        ShadowPlan, // this frame's; views live in the frame arena
 }
 
@@ -24,6 +25,7 @@ shadows_create :: proc(ctx: ^backend.Context, shadows: ^Shadows) {
 shadows_destroy :: proc(ctx: ^backend.Context, shadows: ^Shadows) {
 	shadow_atlas_destroy(ctx, &shadows.atlas_2d)
 	shadow_atlas_destroy(ctx, &shadows.point_atlas)
+	shadow_casters_destroy(&shadows.casters)
 }
 
 ShadowParams :: struct {
@@ -158,6 +160,7 @@ shadow_plan_update :: proc(engine: ^Engine, scene: ^Scene) {
 	camera := camera_system_get_camera(&engine.camera_system, scene.active_camera_name)
 	mask := engine.debug_settings.light_mask if shadows_enabled(engine) else 0
 	shadow_cache_sync_scene(&engine.shadows.cache, scene)
+	shadow_casters_sync(&engine.shadows.casters, scene_view(engine, scene), scene)
 	engine.shadows.plan = shadow_plan(scene, camera^, render_aspect(engine), &engine.shadows.cache, mask)
 }
 

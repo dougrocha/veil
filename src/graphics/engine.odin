@@ -250,11 +250,10 @@ draw_shadow :: proc(
 
 	frame := current_frame_data(engine)
 
-	frustum := frustum_from_view_proj(view_proj)
-	kind := DrawListKind.Shadow_Directional if directional else .Shadow
-	list := build_draw_list(scene_view(engine, scene), frustum, kind, {})
+	frustums := []Frustum{frustum_from_view_proj(view_proj)}
+	runs := shadow_casters_filter(&engine.shadows.casters, &scene.instances, frustums, skip_near = directional)
 
-	for batch in draw_runs_upload(engine, list.opaque) {
+	for batch in draw_runs_upload(engine, runs) {
 		mesh := batch.mesh
 		pc := ShadowPushConstants {
 			view_proj        = view_proj,
@@ -278,7 +277,7 @@ draw_shadow :: proc(
 view_draw_list :: proc(engine: ^Engine, scene: ^Scene) -> DrawList {
 	active_camera := camera_system_get_camera(&engine.camera_system, scene.active_camera_name)
 	frustum := frustum_create_from_camera(active_camera, render_aspect(engine))
-	list := build_draw_list(scene_view(engine, scene), frustum, .View, active_camera.position)
+	list := build_draw_list(scene_view(engine, scene), frustum, active_camera.position)
 	engine.stats.counters.instances_drawn += list.instances_visible
 	engine.stats.counters.meshes_culled += list.meshes_culled
 	return list

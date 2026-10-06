@@ -10,12 +10,6 @@ SceneView :: struct {
 	materials: ^Pool(Material),
 }
 
-DrawListKind :: enum {
-	View, // camera: every instance; opaque/mask meshes batched, transparent meshes back to front
-	Shadow, // shadow casters only; transparent meshes cast solid shadows, batched with the rest
-	Shadow_Directional, // as Shadow, but casters in front of the near plane are kept (depth-clamped)
-}
-
 // A visible mesh of one instance. instance is the slot index in the instances pool, which is also
 // the transform index the vertex shader reads.
 DrawItem :: struct {
@@ -36,21 +30,19 @@ DrawList :: struct {
 	meshes_culled:     u32, // meshes of visible instances whose AABB failed the frustum test
 }
 
-// Culls the scene against frustum and returns what a pass of the given kind draws. Allocates with
-// the temp allocator and touches nothing outside its arguments: no GPU, no stats.
+// Culls the scene against the camera's frustum and returns what the main pass draws. Allocates with
+// the temp allocator and touches nothing outside its arguments: no GPU, no stats. Shadow views
+// filter the shadow caster list instead (shadow_casters.odin).
 //
 // Rules, matching what the passes did before:
-// - Skip dead pool slots. Shadow kinds skip instances that don't cast shadows.
+// - Skip dead pool slots.
 // - Cull each instance by its model's bounding volume (volume_is_on_frustum), then each mesh by its
-//   AABB (aabb_is_on_frustum). Shadow_Directional passes skip_near = true to both.
+//   AABB (aabb_is_on_frustum).
 // - Opaque and mask meshes go to opaque, grouped with draw_runs_from_items.
-// - Shadow kinds treat transparent meshes as opaque: they cast a solid shadow (as in Bevy; opt out per
-//   instance with casts_shadow). View sorts its visible transparent meshes back to front across all
-//   instances, by distance from camera_pos to each mesh's world-space AABB center.
+// - Visible transparent meshes are sorted back to front across all instances, by distance from
+//   camera_pos to each mesh's world-space AABB center.
 // - Count instances_visible and meshes_culled (opaque and transparent AABB misses both count).
-build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, camera_pos: Vec3) -> DrawList {
-	skip_near := kind == .Shadow_Directional
-
+build_draw_list :: proc(view: SceneView, frustum: Frustum, camera_pos: Vec3) -> DrawList {
 	opaque_items := make([dynamic]DrawItem, context.temp_allocator)
 	transparent_items := make([dynamic]DrawItem, context.temp_allocator)
 	instances_viewed, culled: u32
@@ -64,17 +56,16 @@ build_draw_list :: proc(view: SceneView, frustum: Frustum, kind: DrawListKind, c
 	for instance, slot_i in view.instances.values {
 		if !pool_is_alive(view.instances, Index(slot_i)) || instance.pending_destroy do continue
 		if instance.model == INVALID_MODEL do continue // group root
-		if kind != .View && !instance.casts_shadow do continue
 
 		model := pool_get(view.models, instance.model)
 
-		if !volume_is_on_frustum(frustum, model.bounds, instance.transform, skip_near) do continue
+		if !volume_is_on_frustum(frustum, model.bounds, instance.transform) do continue
 
 		for &mesh in model.meshes {
 			material := pool_get(view.materials, mesh.material)
 
-			transparent := kind == .View && material.alpha_mode == .Blend
-			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform, skip_near) {
+			transparent := material.alpha_mode == .Blend
+			if !aabb_is_on_frustum(frustum, mesh.bounds, instance.transform) {
 				culled += 1
 				continue
 			}

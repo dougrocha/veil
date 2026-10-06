@@ -201,14 +201,26 @@ sphere_is_on_frustum :: proc(
 	transform: Transform,
 	skip_near := false,
 ) -> bool {
+	return global_sphere_is_on_frustum(frustum, sphere_to_global(volume, transform), skip_near)
+}
+
+aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, transform: Transform, skip_near := false) -> bool {
+	return global_aabb_is_on_frustum(frustum, aabb_to_global(volume, transform), skip_near)
+}
+
+// The world-space sphere sphere_is_on_frustum tests. Lets a caller test one volume against many
+// frustums without recomputing it.
+sphere_to_global :: proc(volume: BoundingSphere, transform: Transform) -> BoundingSphere {
 	global_scale := transform_global_scale(transform)
 
 	global_center := transform_to_matrix(transform) * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
 
 	max_scale := max(global_scale.x, global_scale.y, global_scale.z)
 
-	global_sphere := BoundingSphere{global_center.xyz, volume.radius * max_scale}
+	return BoundingSphere{global_center.xyz, volume.radius * max_scale}
+}
 
+global_sphere_is_on_frustum :: proc(frustum: Frustum, global_sphere: BoundingSphere, skip_near := false) -> bool {
 	for plane, i in frustum.planes {
 		if skip_near && i == FRUSTUM_NEAR_PLANE do continue
 		if !sphere_is_on_or_forward(global_sphere, plane) {
@@ -219,7 +231,8 @@ sphere_is_on_frustum :: proc(
 	return true
 }
 
-aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, transform: Transform, skip_near := false) -> bool {
+// The world-space AABB aabb_is_on_frustum tests, enclosing the transformed box.
+aabb_to_global :: proc(volume: AABB, transform: Transform) -> AABB {
 	global_center := transform_to_matrix(transform) * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
 
 	extents := volume.extents * linalg.abs(transform_global_scale(transform))
@@ -242,8 +255,10 @@ aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, transform: Transform,
 		abs(linalg.dot(Vec3{0, 0, 1}, up)) +
 		abs(linalg.dot(Vec3{0, 0, 1}, forward))
 
-	global_aabb := AABB{global_center.xyz, {new_ii, new_ij, new_ik}}
+	return AABB{global_center.xyz, {new_ii, new_ij, new_ik}}
+}
 
+global_aabb_is_on_frustum :: proc(frustum: Frustum, global_aabb: AABB, skip_near := false) -> bool {
 	for plane, i in frustum.planes {
 		if skip_near && i == FRUSTUM_NEAR_PLANE do continue
 		if !plane_is_on_or_forward(global_aabb, plane) {
