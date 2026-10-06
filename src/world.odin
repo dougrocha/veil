@@ -8,7 +8,7 @@ MAX_ENTITIES :: 1024
 // A game object. A live entity's render_instance is always a live, unmarked instance, or
 // INVALID_INSTANCE when it has none.
 Entity :: struct {
-	render_instance:   gfx.InstanceHandle,
+	render_instance: gfx.InstanceHandle,
 	pending_destroy: bool, // marked by entity_destroy: skip it; world_sweep frees it
 }
 
@@ -71,12 +71,10 @@ world_sweep :: proc(world: ^World) {
 
 // Example: a turret entity whose instance hangs off a ship entity's instance. Destroying the ship
 // takes the turret with it, on both sides.
-world_example :: proc(engine: ^gfx.Engine, world: ^World, ship_model, turret_model: gfx.ModelHandle) {
-	scene := &engine.scene
-
-	ship_instance := gfx.instance_spawn(engine, ship_model, gfx.transform_create())
+world_example :: proc(world: ^World, scene: ^gfx.Scene, ship_model, turret_model: gfx.ModelHandle) {
+	ship_instance := gfx.instance_spawn(scene, ship_model, gfx.transform_create())
 	turret_instance := gfx.instance_spawn(
-		engine,
+		scene,
 		turret_model,
 		gfx.transform_create(translation = {0, 1, 0}),
 		parent = ship_instance,
@@ -91,6 +89,6 @@ world_example :: proc(engine: ^gfx.Engine, world: ^World, ship_model, turret_mod
 	assert(gfx.instance_is_pending(scene, turret_instance))
 
 	// Then, in the frame loop:
-	//   gfx.engine_render(engine, ...)  frees the instances (scene sweep)
+	//   gfx.engine_render(engine, scene, ...)  frees the instances (scene sweep)
 	//   world_sweep(world)              frees the entities (game sweep)
 }

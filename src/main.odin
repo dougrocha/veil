@@ -17,6 +17,7 @@ App :: struct {
 	width:           u32,
 	height:          u32,
 	engine:          gfx.Engine,
+	scene:           gfx.Scene,
 	world:           World,
 	last_frame_time: time.Time,
 }
@@ -76,17 +77,20 @@ main :: proc() {
 	// Declared after engine_destroy's defer, so it runs first.
 	defer gfx.font_destroy(&app.engine, &ui_font)
 
+	// After the engine, which owns the models the scene's instances point at.
+	gfx.scene_create(&app.scene, &app.engine)
+	defer gfx.scene_destroy(&app.scene)
 	world_create(&app.world)
 	defer world_destroy(&app.world)
 
 	app.last_frame_time = time.now()
 
-	// load_sponza(&app.engine)
-	// load_transparency_test(&app.engine)
-	// load_bloom_test(&app.engine)
-	// load_pbr_showcase(&app.engine)
-	// load_shadow_test(&app.engine)
-	load_cornell_box(&app.engine)
+	// load_sponza(&app.engine, &app.scene)
+	// load_transparency_test(&app.engine, &app.scene)
+	// load_bloom_test(&app.engine, &app.scene)
+	// load_pbr_showcase(&app.engine, &app.scene)
+	// load_shadow_test(&app.engine, &app.scene)
+	load_cornell_box(&app.engine, &app.scene)
 
 	gizmo: gfx.GizmoController
 	show_stats := true
@@ -96,7 +100,7 @@ main :: proc() {
 		defer free_all(context.temp_allocator)
 
 		ev: sdl.Event
-		active_cam := gfx.camera_system_get_camera(&app.engine.camera_system, app.engine.scene.active_camera_name)
+		active_cam := gfx.camera_system_get_camera(&app.engine.camera_system, app.scene.active_camera_name)
 
 		for sdl.PollEvent(&ev) {
 			#partial switch ev.type {
@@ -171,8 +175,8 @@ main :: proc() {
 						active_cam.control_type = .Free
 					} else {
 						target := gfx.Vec3{0, 0, 0}
-						if gfx.selected_instance(&app.engine.scene) != gfx.INVALID_INSTANCE {
-							selected := gfx.instance_get(&app.engine.scene, gfx.selected_instance(&app.engine.scene))
+						if gfx.selected_instance(&app.scene) != gfx.INVALID_INSTANCE {
+							selected := gfx.instance_get(&app.scene, gfx.selected_instance(&app.scene))
 							target = selected.transform.translation
 						}
 						gfx.camera_orbit_begin(active_cam, target)
@@ -183,18 +187,18 @@ main :: proc() {
 					gfx.camera_process_mouse_movement(active_cam, ev.motion.xrel, -ev.motion.yrel)
 				} else if gizmo.dragging {
 					mouse_pos, ok := mouse_to_pixels(app.window, &app.engine, ev.motion.x, ev.motion.y)
-					if ok do gfx.gizmo_mouse_move(&gizmo, &app.engine, active_cam^, mouse_pos)
+					if ok do gfx.gizmo_mouse_move(&gizmo, &app.engine, &app.scene, active_cam^, mouse_pos)
 				}
 			case .MOUSE_BUTTON_DOWN:
 				if !mouse_captured && ev.button.button == sdl.BUTTON_LEFT {
 					mouse_pos, ok := mouse_to_pixels(app.window, &app.engine, ev.button.x, ev.button.y)
 					if !ok do continue
-					if !gfx.gizmo_mouse_down(&gizmo, &app.engine, active_cam^, mouse_pos) {
-						hit := gfx.pick(&app.engine, mouse_pos)
-						app.engine.scene.selection = nil
+					if !gfx.gizmo_mouse_down(&gizmo, &app.engine, &app.scene, active_cam^, mouse_pos) {
+						hit := gfx.pick(&app.engine, &app.scene, mouse_pos)
+						app.scene.selection = nil
 						if hit != gfx.INVALID_INSTANCE {
-							app.engine.scene.selection = hit
-							instance := gfx.instance_get(&app.engine.scene, hit)
+							app.scene.selection = hit
+							instance := gfx.instance_get(&app.scene, hit)
 							model := gfx.pool_get(&app.engine.model_system.models, instance.model)
 							log.infof("selected: %v", model.name)
 						}
@@ -216,13 +220,13 @@ main :: proc() {
 
 		process_input(active_cam, delta_time)
 
-		gfx.gizmo_draw(&gizmo, &app.engine)
+		gfx.gizmo_draw(&gizmo, &app.engine, &app.scene)
 
 		// Debug texture views are queued per frame like UI text. Example: show the selection's
 		// textures (material maps, or a light's shadow maps) as a column of 128px tiles.
 		//
-		// app.engine.scene.selection = gfx.DirectionalLightIndex(0)
-		// for tex, i in gfx.entity_textures(&app.engine, app.engine.scene.selection) {
+		// app.scene.selection = gfx.DirectionalLightIndex(0)
+		// for tex, i in gfx.entity_textures(&app.engine, &app.scene, app.scene.selection) {
 		// 	rect := gfx.Rect2D {
 		// 		offset = {10, 50 + i32(i) * 136},
 		// 		extent = {128, 128},
@@ -235,7 +239,7 @@ main :: proc() {
 
 		if show_stats do gfx.stats_draw(&app.engine, &ui_font, 10, 24, 24)
 
-		gfx.engine_render(&app.engine, app.width, app.height, delta_time)
+		gfx.engine_render(&app.engine, &app.scene, app.width, app.height, delta_time)
 		world_sweep(&app.world) // after engine_render, which sweeps the scene
 	}
 }

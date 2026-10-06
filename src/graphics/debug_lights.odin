@@ -6,10 +6,9 @@ import "core:math/linalg"
 // Draws an icon for every light, in the light's color: point = small marker + range circles,
 // spot = marker + cone to range, directional = arrow from the camera's view center. Lines are
 // depth tested, so they hide behind geometry. Toggled by debug_settings.show_lights.
-debug_lights_draw :: proc(engine: ^Engine) {
+debug_lights_draw :: proc(engine: ^Engine, scene: ^Scene) {
 	if !engine.debug_settings.show_lights do return
 	lr := &engine.line_renderer
-	scene := &engine.scene
 
 	for light in scene.point_lights[:scene.point_light_count] {
 		color := Vec4{light.color.r, light.color.g, light.color.b, 1}

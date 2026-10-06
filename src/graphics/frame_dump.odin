@@ -68,7 +68,7 @@ debug_env_init :: proc(engine: ^Engine) {
 
 // VEIL_PICK_TEST="x,y" runs pick() once at that pixel and logs the hit, so the
 // unprojection can be checked headlessly instead of by clicking.
-pick_test_run :: proc(engine: ^Engine) {
+pick_test_run :: proc(engine: ^Engine, scene: ^Scene) {
 	value, found := os.lookup_env("VEIL_PICK_TEST", context.allocator)
 	if !found do return
 	defer delete(value)
@@ -85,12 +85,12 @@ pick_test_run :: proc(engine: ^Engine) {
 		return
 	}
 
-	hit := pick(engine, Vec2{x, y})
+	hit := pick(engine, scene, Vec2{x, y})
 	if hit == INVALID_INSTANCE {
 		log.infof("pick test (%v, %v) -> MISS", x, y)
 		return
 	}
-	instance := instance_get(&engine.scene, hit)
+	instance := instance_get(scene, hit)
 	model := pool_get(&engine.model_system.models, instance.model)
 	log.infof(
 		"pick test (%v, %v) -> instance %v (%s) at %v",

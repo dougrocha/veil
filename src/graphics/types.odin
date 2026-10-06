@@ -29,7 +29,6 @@ Engine :: struct {
 	shadows:           Shadows,
 
 	// world state
-	scene:             Scene,
 	camera_system:     CameraSystem,
 
 	// runtime info

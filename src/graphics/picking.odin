@@ -26,8 +26,8 @@ ray_triangle_hit :: proc(origin, dir, a, b, c: Vec3) -> (f32, bool) {
 
 // Casts a ray from the active camera through mouse_pos (screen-space pixels) and
 // returns the closest instance whose triangles it hits.
-pick :: proc(engine: ^Engine, mouse_pos: Vec2) -> InstanceHandle {
-	cam := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
+pick :: proc(engine: ^Engine, scene: ^Scene, mouse_pos: Vec2) -> InstanceHandle {
+	cam := camera_system_get_camera(&engine.camera_system, scene.active_camera_name)
 	viewport_size := render_viewport(engine)
 
 	ray_origin, ray_dir := screen_to_world_ray(cam^, mouse_pos, viewport_size)
@@ -35,8 +35,8 @@ pick :: proc(engine: ^Engine, mouse_pos: Vec2) -> InstanceHandle {
 	closest_dist: f32 = math.F32_MAX
 	closest_instance := INVALID_INSTANCE
 
-	for instance, i in engine.scene.instances.values {
-		if !pool_is_alive(&engine.scene.instances, Index(i)) || instance.pending_destroy do continue
+	for instance, i in scene.instances.values {
+		if !pool_is_alive(&scene.instances, Index(i)) || instance.pending_destroy do continue
 		if instance.model == INVALID_MODEL do continue // group root
 
 		model := pool_get(&engine.model_system.models, instance.model)
@@ -69,7 +69,7 @@ pick :: proc(engine: ^Engine, mouse_pos: Vec2) -> InstanceHandle {
 					closest_dist = hit_t
 					closest_instance = InstanceHandle {
 						index      = Index(i),
-						generation = engine.scene.instances.generations[i],
+						generation = scene.instances.generations[i],
 					}
 				}
 			}

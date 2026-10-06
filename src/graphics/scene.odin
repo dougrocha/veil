@@ -25,11 +25,20 @@ Scene :: struct {
 	instance_changes:        [dynamic]InstanceChange, // since the last recorded frame
 	pending_destroy:         [dynamic]InstanceHandle, // marked by instance_destroy, freed by the sweep
 	selection:               Selection,
+	models:                  ^Pool(Model), // the engine's; instance_spawn reads model bounds from it
 }
 
-scene_create :: proc(scene: ^Scene) {
+// The engine owns the models the instances point at, so it must outlive the scene.
+scene_create :: proc(scene: ^Scene, engine: ^Engine) {
 	scene.instances = pool_init(MAX_MODEL_INSTANCES, Instance)
 	scene.instance_links = make([]InstanceLink, MAX_MODEL_INSTANCES)
+	scene.models = &engine.model_system.models
+	scene.active_camera_name = DEFAULT_CAMERA_NAME
+	scene.ambient_light = AmbientLight {
+		color      = {1, 1, 1, 1},
+		brightness = 0.03,
+	}
+	scene.background = Vec4{0, 0, 0, 1}
 }
 
 scene_destroy :: proc(scene: ^Scene) {
@@ -40,13 +49,23 @@ scene_destroy :: proc(scene: ^Scene) {
 	delete(scene.pending_destroy)
 }
 
+// handle must be a cube texture. Replaces a background color.
+set_skybox_texture :: proc(scene: ^Scene, handle: TextureHandle) {
+	scene.background = handle
+}
+
+// Replaces a skybox: the main pass clears to color and draws no sky.
+set_background_color :: proc(scene: ^Scene, color: Vec4) {
+	scene.background = color
+}
+
 InstanceHandle :: Handle(Instance)
 
 INVALID_INSTANCE :: InstanceHandle{}
 
 Instance :: struct {
-	model:        ModelHandle, // INVALID_MODEL for a group root: no mesh, only a transform
-	bounds:       BoundingSphere, // model space, copied from the model at spawn; radius 0 for a group root
+	model:           ModelHandle, // INVALID_MODEL for a group root: no mesh, only a transform
+	bounds:          BoundingSphere, // model space, copied from the model at spawn; radius 0 for a group root
 	transform:       Transform, // world space
 	casts_shadow:    bool,
 	pending_destroy: bool, // marked by instance_destroy: skipped everywhere, freed by the sweep
@@ -85,17 +104,17 @@ InstanceChange :: struct {
 // Spawns a group root at transform and one child instance per part. Moving the root moves every
 // part. Returns the part handles in part order.
 instance_spawn_parts :: proc(
-	engine: ^Engine,
+	scene: ^Scene,
 	parts: []ModelPart,
 	transform: Transform,
 	casts_shadow := true,
 	allocator := context.temp_allocator,
 ) -> []InstanceHandle {
 	handles := make([]InstanceHandle, len(parts), allocator)
-	root := instance_alloc(&engine.scene, Instance{model = INVALID_MODEL, transform = transform})
-	instance_link(&engine.scene, root).local = transform
+	root := instance_alloc(scene, Instance{model = INVALID_MODEL, transform = transform})
+	instance_link(scene, root).local = transform
 	for part, i in parts {
-		handles[i] = instance_spawn(engine, part.model, part.transform, casts_shadow, parent = root)
+		handles[i] = instance_spawn(scene, part.model, part.transform, casts_shadow, parent = root)
 	}
 	return handles
 }
@@ -236,12 +255,7 @@ instance_state :: proc(scene: ^Scene, instance: Instance) -> InstanceState {
 
 // Appends one change per call, never merged. old is unused for a spawn, new for a despawn.
 @(private = "file")
-instance_change_record :: proc(
-	scene: ^Scene,
-	kind: InstanceChangeKind,
-	handle: InstanceHandle,
-	old, new: Instance,
-) {
+instance_change_record :: proc(scene: ^Scene, kind: InstanceChangeKind, handle: InstanceHandle, old, new: Instance) {
 	change := InstanceChange {
 		kind     = kind,
 		instance = handle,
@@ -252,7 +266,7 @@ instance_change_record :: proc(
 }
 
 instance_spawn :: proc(
-	engine: ^Engine,
+	scene: ^Scene,
 	model: ModelHandle,
 	transform: Transform, // relative to parent when given, else world
 	casts_shadow := true,
@@ -264,22 +278,22 @@ instance_spawn :: proc(
 	}
 	instance := Instance {
 		model        = model,
-		bounds       = pool_get(&engine.model_system.models, model).bounds,
+		bounds       = pool_get(scene.models, model).bounds,
 		transform    = transform,
 		casts_shadow = casts_shadow,
 	}
 	if p, ok := parent.?; ok {
-		assert(!instance_get(&engine.scene, p).pending_destroy, "spawn: parent is being destroyed")
+		assert(!instance_get(scene, p).pending_destroy, "spawn: parent is being destroyed")
 		instance.transform = transform_from_matrix(
-			transform_to_matrix(instance_get(&engine.scene, p).transform) * transform_to_matrix(transform),
+			transform_to_matrix(instance_get(scene, p).transform) * transform_to_matrix(transform),
 		)
 	}
-	handle := instance_alloc(&engine.scene, instance)
-	link := instance_link(&engine.scene, handle)
+	handle := instance_alloc(scene, instance)
+	link := instance_link(scene, handle)
 	link.local = transform
 	if p, ok := parent.?; ok {
 		link.parent = p
-		append(&instance_link(&engine.scene, p).children, handle)
+		append(&instance_link(scene, p).children, handle)
 	}
 	return handle
 }

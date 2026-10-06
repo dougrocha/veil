@@ -31,16 +31,16 @@ EntityTexture :: struct {
 // material), shadow-map views for a light. Labels are allocated with `allocator`.
 entity_textures :: proc(
 	engine: ^Engine,
+	scene: ^Scene,
 	selection: Selection,
 	allocator := context.temp_allocator,
 ) -> []EntityTexture {
 	out := make([dynamic]EntityTexture, allocator)
-	scene := &engine.scene
 
 	switch s in selection {
 	case InstanceHandle:
 		if !pool_is_valid(&scene.instances, s) || instance_get(scene, s).pending_destroy do break
-		model := pool_get(&engine.model_system.models, instance_get(&engine.scene, s).model)
+		model := pool_get(&engine.model_system.models, instance_get(scene, s).model)
 		seen := make(map[MaterialHandle]struct{}, allocator = context.temp_allocator)
 		for mesh in model.meshes {
 			if mesh.material in seen do continue

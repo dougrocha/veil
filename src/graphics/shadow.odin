@@ -154,22 +154,28 @@ compute_spot_light_view_proj :: proc(light: SpotLight) -> Mat4x4 {
 
 // Plans this frame's shadow work. Lights of a masked type, or every light when the shadow passes
 // are off, render nothing but still have their cache entries invalidated.
-shadow_plan_update :: proc(engine: ^Engine) {
-	camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
+shadow_plan_update :: proc(engine: ^Engine, scene: ^Scene) {
+	camera := camera_system_get_camera(&engine.camera_system, scene.active_camera_name)
 	mask := engine.debug_settings.light_mask if shadows_enabled(engine) else 0
-	engine.shadows.plan = shadow_plan(&engine.scene, camera^, render_aspect(engine), &engine.shadows.cache, mask)
+	engine.shadows.plan = shadow_plan(scene, camera^, render_aspect(engine), &engine.shadows.cache, mask)
 }
 
-record_shadow_2d :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	record_shadow_views(engine, cmd, .Atlas_2D, &engine.shadows.atlas_2d)
+record_shadow_2d :: proc(engine: ^Engine, scene: ^Scene, cmd: backend.CommandBuffer) {
+	record_shadow_views(engine, scene, cmd, .Atlas_2D, &engine.shadows.atlas_2d)
 }
 
-record_shadow_point :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	record_shadow_views(engine, cmd, .Cube, &engine.shadows.point_atlas)
+record_shadow_point :: proc(engine: ^Engine, scene: ^Scene, cmd: backend.CommandBuffer) {
+	record_shadow_views(engine, scene, cmd, .Cube, &engine.shadows.point_atlas)
 }
 
 @(private = "file")
-record_shadow_views :: proc(engine: ^Engine, cmd: backend.CommandBuffer, kind: ShadowAtlasKind, atlas: ^ShadowAtlas) {
+record_shadow_views :: proc(
+	engine: ^Engine,
+	scene: ^Scene,
+	cmd: backend.CommandBuffer,
+	kind: ShadowAtlasKind,
+	atlas: ^ShadowAtlas,
+) {
 	for view in engine.shadows.plan.views {
 		if view.atlas != kind do continue
 		// The executor has already put the atlas in .Depth_Write.
@@ -183,7 +189,7 @@ record_shadow_views :: proc(engine: ^Engine, cmd: backend.CommandBuffer, kind: S
 			},
 		)
 		engine.stats.counters.shadow_views += 1
-		draw_shadow(engine, encoder, view.light_type, view.light_index, view.view_proj)
+		draw_shadow(engine, scene, encoder, view.light_type, view.light_index, view.view_proj)
 		backend.end_render_pass(encoder)
 	}
 }

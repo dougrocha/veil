@@ -44,7 +44,7 @@ dispatch_post :: proc(encoder: backend.ComputeEncoder, size: [2]u32) {
 // CoD:AW-style chain. Downsamples hdr -> mip 0 -> ... -> mip L-1 (each overwrites its target),
 // then upsamples back up, each step adding the smaller mip into the next larger one. Mip 0 ends
 // up holding every blur radius and is what the tonemap composites.
-dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+dispatch_bloom :: proc(engine: ^Engine, _: ^Scene, cmd: backend.CommandBuffer) {
 	targets := &engine.render_targets
 	bloom := targets.bloom
 	bloom_desc := backend.image_desc(&engine.vk_ctx, bloom)
@@ -102,7 +102,7 @@ dispatch_bloom :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 
 // Tonemaps the HDR target (plus bloom) into the LDR draw target. Everything drawn into draw
 // afterwards (debug view, UI) skips the tonemap, and present_blit only has to sRGB-encode.
-dispatch_tonemap :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+dispatch_tonemap :: proc(engine: ^Engine, _: ^Scene, cmd: backend.CommandBuffer) {
 	targets := &engine.render_targets
 
 	pipeline := compute_pipeline(engine, .Tonemap)

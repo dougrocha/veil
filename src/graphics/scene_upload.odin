@@ -31,27 +31,27 @@ gpu_spot_light :: proc(light: SpotLight) -> GpuSpotLight {
 	}
 }
 
-scene_data_buffer_update :: proc(engine: ^Engine) {
+scene_data_buffer_update :: proc(engine: ^Engine, scene: ^Scene) {
 	frame_index := backend.frame_slot(&engine.vk_ctx)
 	aspect := render_aspect(engine)
 	// With a color background nothing samples the sky cube; the black default keeps the slot valid.
 	sky := engine.texture_system.defaults[.Black_Cube]
-	if cube, ok := engine.scene.background.(TextureHandle); ok do sky = cube
-	active_camera := camera_system_get_camera(&engine.camera_system, engine.scene.active_camera_name)
-	scene := SceneData {
+	if cube, ok := scene.background.(TextureHandle); ok do sky = cube
+	active_camera := camera_system_get_camera(&engine.camera_system, scene.active_camera_name)
+	data := SceneData {
 		view = camera_get_view_matrix(active_camera^),
 		proj = camera_get_projection_matrix(active_camera^, aspect),
-		point_light_count = engine.scene.point_light_count,
-		directional_light_count = engine.scene.directional_light_count,
-		spot_light_count = engine.scene.spot_light_count,
+		point_light_count = scene.point_light_count,
+		directional_light_count = scene.directional_light_count,
+		spot_light_count = scene.spot_light_count,
 		skybox_cube = texture_cube_slot(engine, sky),
 		cam_pos_shadow_map_size = {active_camera.position.x, active_camera.position.y, active_camera.position.z, 0},
 		ambient_light = {
 			color_brightness = {
-				engine.scene.ambient_light.color.x,
-				engine.scene.ambient_light.color.y,
-				engine.scene.ambient_light.color.z,
-				engine.scene.ambient_light.brightness,
+				scene.ambient_light.color.x,
+				scene.ambient_light.color.y,
+				scene.ambient_light.color.z,
+				scene.ambient_light.brightness,
 			},
 		},
 		debug_settings = {
@@ -61,25 +61,25 @@ scene_data_buffer_update :: proc(engine: ^Engine) {
 			_reserved = 0,
 		},
 	}
-	scene.time_info = {
+	data.time_info = {
 		time        = engine.time_info.time,
 		delta_time  = engine.time_info.delta_time,
 		frame_count = engine.time_info.frame_count,
 		_reserved   = 0,
 	}
-	scene.cam_pos_shadow_map_size.w = f32(SHADOW_MAP_SIZE)
-	for i in 0 ..< MAX_POINT_LIGHTS do scene.point_lights[i] = gpu_point_light(engine.scene.point_lights[i])
-	for i in 0 ..< MAX_DIRECTIONAL_LIGHTS do scene.directional_lights[i] = gpu_directional_light(engine.scene.directional_lights[i])
-	for i in 0 ..< MAX_SPOT_LIGHTS do scene.spot_lights[i] = gpu_spot_light(engine.scene.spot_lights[i])
+	data.cam_pos_shadow_map_size.w = f32(SHADOW_MAP_SIZE)
+	for i in 0 ..< MAX_POINT_LIGHTS do data.point_lights[i] = gpu_point_light(scene.point_lights[i])
+	for i in 0 ..< MAX_DIRECTIONAL_LIGHTS do data.directional_lights[i] = gpu_directional_light(scene.directional_lights[i])
+	for i in 0 ..< MAX_SPOT_LIGHTS do data.spot_lights[i] = gpu_spot_light(scene.spot_lights[i])
 
 	plan := &engine.shadows.plan
-	scene.shadow_2d_view_proj = plan.shadow_2d_view_proj
-	scene.point_light_view_proj = plan.point_view_proj
-	scene.shadow_cascade_data = plan.cascade_data
+	data.shadow_2d_view_proj = plan.shadow_2d_view_proj
+	data.point_light_view_proj = plan.point_view_proj
+	data.shadow_cascade_data = plan.cascade_data
 
 	mem.copy(
 		backend.buffer_contents(&engine.vk_ctx, engine.frame_data[frame_index].scene_data_buffer),
-		&scene,
+		&data,
 		size_of(SceneData),
 	)
 }
