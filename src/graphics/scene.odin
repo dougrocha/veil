@@ -11,6 +11,7 @@ Background :: union #no_nil {
 }
 
 Scene :: struct {
+	epoch:                   u64, // unique per scene contents; changes when they are wholesale replaced
 	active_camera_name:      string,
 	ambient_light:           AmbientLight,
 	background:              Background,
@@ -30,6 +31,7 @@ Scene :: struct {
 
 // The engine owns the models the instances point at, so it must outlive the scene.
 scene_create :: proc(scene: ^Scene, engine: ^Engine) {
+	scene_epoch_advance(scene)
 	scene.instances = pool_init(MAX_MODEL_INSTANCES, Instance)
 	scene.instance_links = make([]InstanceLink, MAX_MODEL_INSTANCES)
 	scene.models = &engine.model_system.models
@@ -47,6 +49,19 @@ scene_destroy :: proc(scene: ^Scene) {
 	pool_destroy(&scene.instances)
 	delete(scene.instance_changes)
 	delete(scene.pending_destroy)
+}
+
+// Drawn from one counter for every scene, so two scenes never share an epoch and a renderer cache
+// can't mistake one for the other. 0 is never handed out.
+@(private = "file")
+scene_epoch_counter: u64
+
+// Call whenever the scene's contents are replaced wholesale (create, clear, level load), so caches
+// built against the old contents are dropped instead of patched through instance changes.
+@(private = "file")
+scene_epoch_advance :: proc(scene: ^Scene) {
+	scene_epoch_counter += 1
+	scene.epoch = scene_epoch_counter
 }
 
 // handle must be a cube texture. Replaces a background color.

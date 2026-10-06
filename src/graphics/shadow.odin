@@ -157,6 +157,7 @@ compute_spot_light_view_proj :: proc(light: SpotLight) -> Mat4x4 {
 shadow_plan_update :: proc(engine: ^Engine, scene: ^Scene) {
 	camera := camera_system_get_camera(&engine.camera_system, scene.active_camera_name)
 	mask := engine.debug_settings.light_mask if shadows_enabled(engine) else 0
+	shadow_cache_sync_scene(&engine.shadows.cache, scene)
 	engine.shadows.plan = shadow_plan(scene, camera^, render_aspect(engine), &engine.shadows.cache, mask)
 }
 

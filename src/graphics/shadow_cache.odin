@@ -3,7 +3,8 @@ package graphics
 // Point and spot shadow maps depend only on the light's shadow frustum and the shadow casters, so
 // they are re-rendered only when one of those changes. Directional cascades follow the camera and
 // render every frame. Lights are compared by key; casters report changes through the scene's
-// instance changes. shadow_cache_commit and shadow_cache_invalidate are the only writers.
+// instance changes, which only describe edits within one scene epoch; a new epoch drops every
+// entry. shadow_cache_sync_scene, shadow_cache_commit and shadow_cache_invalidate are the only writers.
 
 PointShadowKey :: struct {
 	pos:         Vec3,
@@ -25,8 +26,9 @@ ShadowCacheEntry :: struct($Key: typeid) {
 }
 
 ShadowCache :: struct {
-	point: [MAX_POINT_LIGHTS]ShadowCacheEntry(PointShadowKey),
-	spot:  [MAX_SPOT_LIGHTS]ShadowCacheEntry(SpotShadowKey),
+	scene_epoch: u64, // the Scene.epoch the entries were rendered against; 0 before the first frame
+	point:       [MAX_POINT_LIGHTS]ShadowCacheEntry(PointShadowKey),
+	spot:        [MAX_SPOT_LIGHTS]ShadowCacheEntry(SpotShadowKey),
 }
 
 point_shadow_key :: proc(light: PointLight) -> PointShadowKey {
@@ -41,6 +43,14 @@ spot_shadow_key :: proc(light: SpotLight) -> SpotShadowKey {
 shadow_cache_invalidate :: proc(cache: ^ShadowCache) {
 	for &entry in cache.point do entry.valid = false
 	for &entry in cache.spot do entry.valid = false
+}
+
+// Drops every entry when the scene's contents were replaced since the last plan, e.g. a different
+// scene or a reloaded level: their casters left without recording Despawn changes.
+shadow_cache_sync_scene :: proc(cache: ^ShadowCache, scene: ^Scene) {
+	if cache.scene_epoch == scene.epoch do return
+	shadow_cache_invalidate(cache)
+	cache.scene_epoch = scene.epoch
 }
 
 // Applies a recorded plan: clears the entries it invalidated, then marks the lights it rendered
