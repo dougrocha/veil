@@ -14,8 +14,8 @@ STATS_WINDOW_SECONDS :: 0.5
 FrameCounters :: struct {
 	draw_calls:          u32,
 	triangles:           u64,
-	instances_drawn:     u32, // main pass, after frustum culling
-	meshes_culled:       u32, // main pass, meshes of drawn instances rejected by their AABB
+	draws_visible:       u32, // main pass, after frustum culling
+	meshes_culled:       u32, // main pass, meshes of visible draws rejected by their AABB
 	shadow_views:        u32, // cascades + spot maps + cube faces rendered
 	shadow_views_cached: u32, // spot maps + cube faces reused from an earlier frame
 }
@@ -24,7 +24,7 @@ FrameCounters :: struct {
 CpuTimings :: struct {
 	frame:  f64, // frame-to-frame, includes the game loop outside engine_render
 	wait:   f64, // frame fence + swapchain acquire; high when GPU-bound, or vsync-bound under Fifo (VEIL_PRESENT_MODE)
-	record: f64, // scene data upload, transforms, command recording
+	record: f64, // input data upload, transforms, command recording
 	submit: f64, // queue submit + present
 }
 
@@ -37,6 +37,7 @@ GpuScopeStat :: struct {
 }
 
 Stats :: struct {
+	latest:       CpuTimings, // raw timings for the most recently submitted frame
 	counters:     FrameCounters, // accumulating for the frame being recorded
 	last:         FrameCounters, // last fully recorded frame
 
@@ -64,6 +65,7 @@ Stats :: struct {
 
 // Sampled once per frame (last frame's values), not averaged.
 MemoryStats :: struct {
+	latest:      CpuTimings, // raw timings for the most recently submitted frame
 	heap_allocs: i64, // heap allocations since the previous frame (whole loop, game + engine)
 	heap_bytes:  i64,
 	heap_live:   i64, // bytes currently allocated on the tracked heap
@@ -109,6 +111,7 @@ stats_count_draw :: proc(engine: ^Engine, triangles: u64 = 0) {
 
 stats_add_timings :: proc(engine: ^Engine, t: CpuTimings) {
 	s := &engine.stats
+	s.latest = t
 	if s.window_count == 0 {
 		s.window_min = t.frame
 		s.window_max = t.frame
@@ -161,8 +164,9 @@ tick_ms :: proc(start: time.Tick) -> f64 {
 	return time.duration_milliseconds(time.tick_since(start))
 }
 
-// Queues the stats panel as UI text at (x, y), one line per `line_height` pixels.
-stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32) {
+// Queues the stats panel as UI text at (x, y), one line per `line_height` pixels, followed by the
+// caller's extra lines.
+stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32, extra: []string = nil) {
 	s := &engine.stats
 	c := &s.last
 	lines := [?]string {
@@ -175,10 +179,10 @@ stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32) {
 			max(s.avg.frame - s.avg.wait - s.avg.record - s.avg.submit, 0),
 		),
 		fmt.tprintf(
-			"draws %d  tris %.2fM  instances %d  meshes culled %d  shadow views %d (%d cached)",
+			"draws %d  tris %.2fM  visible %d  meshes culled %d  shadow views %d (%d cached)",
 			c.draw_calls,
 			f64(c.triangles) / 1e6,
-			c.instances_drawn,
+			c.draws_visible,
 			c.meshes_culled,
 			c.shadow_views,
 			c.shadow_views_cached,
@@ -211,7 +215,9 @@ stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32) {
 		fmt_bytes(i64(m.vram_budget)),
 	)
 
-	all_lines := [?]string{lines[0], lines[1], gpu_line, lines[2], mem_line, post_control_line(engine)}
+	all_lines := make([dynamic]string, context.temp_allocator)
+	append(&all_lines, lines[0], lines[1], gpu_line, lines[2], mem_line)
+	append(&all_lines, ..extra)
 	for line, i in all_lines {
 		ly := y + f32(i) * line_height
 		// drop shadow keeps it readable over bright and dark scenes

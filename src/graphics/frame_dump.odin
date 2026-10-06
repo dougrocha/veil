@@ -23,38 +23,38 @@ FrameDump :: struct {
 debug_env_init :: proc(engine: ^Engine) {
 	if value, found := os.lookup_env("VEIL_PARTICLES", context.allocator); found {
 		defer delete(value)
-		engine.debug_settings.particles = value != "0"
-		log.infof("particles enabled via VEIL_PARTICLES: %v", engine.debug_settings.particles)
+		engine.settings.particles = value != "0"
+		log.infof("particles enabled via VEIL_PARTICLES: %v", engine.settings.particles)
 	}
 
 	if value, found := os.lookup_env("VEIL_NO_SHADOWS", context.allocator); found {
 		defer delete(value)
 		if value != "0" {
-			engine.debug_settings.disable_shadows = 1
+			engine.settings.shadows = false
 			log.infof("shadows disabled via VEIL_NO_SHADOWS")
 		}
 	}
 
 	if value, found := os.lookup_env("VEIL_LIGHTS", context.allocator); found {
 		defer delete(value)
-		mask: u32
+		lights: LightTypes
 		for name in strings.split(value, ",", context.temp_allocator) {
 			switch strings.to_lower(strings.trim_space(name), context.temp_allocator) {
 			case "point":
-				mask |= u32(LightMask.Point)
+				lights += {.Point}
 			case "dir", "directional", "sun":
-				mask |= u32(LightMask.Directional)
+				lights += {.Directional}
 			case "spot":
-				mask |= u32(LightMask.Spot)
+				lights += {.Spot}
 			case "all":
-				mask |= LIGHT_MASK_ALL
+				lights = LIGHT_TYPES_ALL
 			case "none":
 			case:
 				log.warnf("VEIL_LIGHTS: unknown light type %q", name)
 			}
 		}
-		engine.debug_settings.light_mask = mask
-		log.infof("light mask set via VEIL_LIGHTS=%s -> 0b%b", value, mask)
+		engine.settings.lights = lights
+		log.infof("lights set via VEIL_LIGHTS=%s -> %v", value, lights)
 	}
 
 	// For profiling: Fifo caps fps at the refresh rate and puts the vsync wait into frame times.
@@ -62,21 +62,21 @@ debug_env_init :: proc(engine: ^Engine) {
 		defer delete(value)
 		switch strings.to_lower(strings.trim_space(value), context.temp_allocator) {
 		case "fifo":
-			engine.debug_settings.present_mode = .Fifo
+			engine.config.present_mode = .Fifo
 		case "mailbox":
-			engine.debug_settings.present_mode = .Mailbox
+			engine.config.present_mode = .Mailbox
 		case "immediate":
-			engine.debug_settings.present_mode = .Immediate
+			engine.config.present_mode = .Immediate
 		case:
 			log.warnf("VEIL_PRESENT_MODE: unknown mode %q (fifo, mailbox, immediate), using fifo", value)
 		}
-		log.infof("present mode requested via VEIL_PRESENT_MODE: %v", engine.debug_settings.present_mode)
+		log.infof("present mode requested via VEIL_PRESENT_MODE: %v", engine.config.present_mode)
 	}
 
 	if value, found := os.lookup_env("VEIL_CASCADES", context.allocator); found {
 		defer delete(value)
 		if value != "0" {
-			engine.debug_settings.show_cascades = 1
+			engine.settings.cascade_colors = true
 			log.infof("cascade debug colors enabled via VEIL_CASCADES")
 		}
 	}
@@ -84,7 +84,7 @@ debug_env_init :: proc(engine: ^Engine) {
 
 // VEIL_PICK_TEST="x,y" runs pick() once at that pixel and logs the hit, so the
 // unprojection can be checked headlessly instead of by clicking.
-pick_test_run :: proc(engine: ^Engine, scene: ^Scene) {
+pick_test_run :: proc(engine: ^Engine, packet: ^FramePacket) {
 	value, found := os.lookup_env("VEIL_PICK_TEST", context.allocator)
 	if !found do return
 	defer delete(value)
@@ -101,21 +101,14 @@ pick_test_run :: proc(engine: ^Engine, scene: ^Scene) {
 		return
 	}
 
-	hit := pick(engine, scene, Vec2{x, y})
-	if hit == INVALID_INSTANCE {
+	id, hit := pick(engine, packet.camera, Vec2{x, y})
+	if !hit {
 		log.infof("pick test (%v, %v) -> MISS", x, y)
 		return
 	}
-	instance := instance_get(scene, hit)
-	model := pool_get(&engine.model_system.models, instance.model)
-	log.infof(
-		"pick test (%v, %v) -> instance %v (%s) at %v",
-		x,
-		y,
-		hit.index,
-		model.name,
-		instance.transform.translation,
-	)
+	record := engine.prev_draws.records[id]
+	model := pool_get(&engine.model_system.models, record.model)
+	log.infof("pick test (%v, %v) -> draw %v (%s) at %v", x, y, id, model.name, matrix_translation(record.world))
 }
 
 frame_dump_init :: proc(engine: ^Engine) {
@@ -156,7 +149,7 @@ frame_dump_capture :: proc(engine: ^Engine) -> (done: bool) {
 	pixels := backend.image_read_rgba8(&engine.vk_ctx, engine.render_targets.draw)
 	defer delete(pixels)
 
-	index := int(engine.time_info.frame_count) - 1 // the frame just submitted
+	index := int(engine.frame_count) - 1 // the frame just submitted
 	path := fmt.tprintf("%s_%03d.png", fd.prefix, index)
 	path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
 

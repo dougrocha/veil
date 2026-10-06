@@ -2,6 +2,20 @@ package graphics
 
 import "backend"
 
+@(shader_shared)
+DebugViewMode :: enum u32 {
+	Texture_2D,
+	Shadow_Cube_Face,
+	Shadow_2D,
+}
+
+@(shader_shared)
+DebugViewPushConstants :: struct #max_field_align(16) {
+	mode:  DebugViewMode,
+	index: u32, // bindless texture index (Texture_2D) or light_index (Shadow_Cube_Face / Shadow_2D)
+	face:  u32, // cube face_index (Shadow_Cube_Face only)
+}
+
 MAX_DEBUG_VIEWS :: 64
 
 DebugViewRequest :: struct {

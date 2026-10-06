@@ -5,6 +5,35 @@ import "core:math/linalg"
 
 import "backend"
 
+@(shader_shared)
+MAX_POINT_SHADOW_LIGHTS :: 8
+@(shader_shared)
+SHADOW_MAP_CASCADE_COUNT :: 4
+@(shader_shared)
+POINT_SHADOW_MAP_SIZE :: 1024 // per cube face
+@(shader_shared)
+MAX_SHADOW_2D_SLOTS :: (MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + MAX_SPOT_LIGHTS
+
+@(shader_shared)
+GpuShadowCascadeData :: struct #max_field_align(16) {
+	split: Vec4,
+	bias:  Vec4,
+}
+
+@(shader_shared)
+ShadowPushConstants :: struct #max_field_align(16) {
+	view_proj:        Mat4x4,
+	scene_data:       backend.GPUPtr(SceneData),
+	vertex_buffer:    backend.GPUPtr(Vertex),
+	material_buffer:  backend.GPUPtr(GpuMaterial),
+	transform_buffer: backend.GPUPtr(GpuTransform),
+	instance_ids:     backend.GPUPtr(u32), // see instancing.odin
+	instance_offset:  u32,
+	light_type:       LightType,
+	light_index:      u32,
+	material_index:   u32,
+}
+
 Shadows :: struct {
 	point_atlas: ShadowAtlas, // cube array, Depth_Cube_Array slot
 	atlas_2d:    ShadowAtlas, // directional + spot, Depth_2D_Array slot
@@ -16,7 +45,7 @@ Shadows :: struct {
 // Writes the atlases into their fixed bindless slots, so the bindless table must exist
 // (texture_system_create).
 shadows_create :: proc(ctx: ^backend.Context, shadows: ^Shadows) {
-	shadows.point_atlas = shadow_atlas_create(ctx, POINT_SHADOW_MAP_SIZE, MAX_POINT_LIGHTS * 6, cube = true)
+	shadows.point_atlas = shadow_atlas_create(ctx, POINT_SHADOW_MAP_SIZE, MAX_POINT_SHADOW_LIGHTS * 6, cube = true)
 	backend.bindless_write_fixed(ctx, .Depth_Cube_Array, shadows.point_atlas.image, shadows.point_atlas.sampler)
 	shadows.atlas_2d = shadow_atlas_create(ctx, SHADOW_MAP_SIZE, MAX_SHADOW_2D_SLOTS, cube = false)
 	backend.bindless_write_fixed(ctx, .Depth_2D_Array, shadows.atlas_2d.image, shadows.atlas_2d.sampler)
@@ -36,11 +65,6 @@ DirectionalShadowData :: struct {
 	view_proj: [SHADOW_MAP_CASCADE_COUNT]Mat4x4,
 	splits:    Vec4,
 	bias:      Vec4,
-}
-
-ShadowCascadeData :: struct {
-	split: Vec4,
-	bias:  Vec4,
 }
 
 CUBE_FACE_DIRS := [6]struct {
@@ -154,28 +178,34 @@ compute_spot_light_view_proj :: proc(light: SpotLight) -> Mat4x4 {
 	return spot_proj * spot_view
 }
 
-// Plans this frame's shadow work. Lights of a masked type, or every light when the shadow passes
-// are off, render nothing but still have their cache entries invalidated.
-shadow_plan_update :: proc(engine: ^Engine, scene: ^Scene) {
-	camera := camera_system_get_camera(&engine.camera_system, scene.active_camera_name)
-	mask := engine.debug_settings.light_mask if shadows_enabled(engine) else 0
-	shadow_cache_sync_scene(&engine.shadows.cache, scene)
-	shadow_casters_sync(&engine.shadows.casters, scene_view(engine, scene), scene)
-	engine.shadows.plan = shadow_plan(scene, camera^, render_aspect(engine), &engine.shadows.cache, mask)
+// Plans this frame's shadow work. Lights of a type turned off, or every light when shadows are off,
+// render nothing but still have their cache entries invalidated.
+shadow_plan_update :: proc(engine: ^Engine, packet: ^FramePacket) {
+	shadow_lights := engine.settings.lights if engine.settings.shadows else {}
+	changes := engine.prev_draws.changes[:]
+	shadow_casters_sync(&engine.shadows.casters, draw_input(engine), changes)
+	engine.shadows.plan = shadow_plan(
+		packet.lights,
+		changes,
+		packet.camera,
+		render_aspect(engine),
+		&engine.shadows.cache,
+		shadow_lights,
+	)
 }
 
-record_shadow_2d :: proc(engine: ^Engine, scene: ^Scene, cmd: backend.CommandBuffer) {
-	record_shadow_views(engine, scene, cmd, .Atlas_2D, &engine.shadows.atlas_2d)
+record_shadow_2d :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
+	record_shadow_views(engine, packet, cmd, .Atlas_2D, &engine.shadows.atlas_2d)
 }
 
-record_shadow_point :: proc(engine: ^Engine, scene: ^Scene, cmd: backend.CommandBuffer) {
-	record_shadow_views(engine, scene, cmd, .Cube, &engine.shadows.point_atlas)
+record_shadow_point :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
+	record_shadow_views(engine, packet, cmd, .Cube, &engine.shadows.point_atlas)
 }
 
 @(private = "file")
 record_shadow_views :: proc(
 	engine: ^Engine,
-	scene: ^Scene,
+	packet: ^FramePacket,
 	cmd: backend.CommandBuffer,
 	kind: ShadowAtlasKind,
 	atlas: ^ShadowAtlas,
@@ -193,7 +223,7 @@ record_shadow_views :: proc(
 			},
 		)
 		engine.stats.counters.shadow_views += 1
-		draw_shadow(engine, scene, encoder, view.light_type, view.light_index, view.view_proj)
+		draw_shadow(engine, packet, encoder, view.light_type, view.light_index, view.view_proj)
 		backend.end_render_pass(encoder)
 	}
 }

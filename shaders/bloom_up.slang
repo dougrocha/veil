@@ -25,13 +25,13 @@ float3 upsample(Texture2D<float4> src, SamplerState s, float2 uv, float2 texel, 
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void compute_main(uint3 id : SV_DispatchThreadID) {
-    RWTexture2D<float4> dst = gpu_storage(pc.dst_storage);
+    RWTexture2D<float4> dst = pc.dst_storage.get();
     uint width, height;
     dst.GetDimensions(width, height);
     if (id.x >= width || id.y >= height) return;
 
     float2 uv = (float2(id.xy) + 0.5) / float2(width, height);
-    float3 blurred = upsample(gpu_texture(pc.src_texture), gpu_sampler(SAMPLER_LINEAR_CLAMP), uv, pc.src_texel_size, pc.radius);
+    float3 blurred = upsample(pc.src_texture.get(), gpu_sampler(SAMPLER_LINEAR_CLAMP), uv, pc.src_texel_size, pc.radius);
     // dst still holds its own downsampled level; adding keeps that radius and stacks the wider one.
     dst[id.xy] = float4(dst[id.xy].rgb + blurred, 1.0);
 }

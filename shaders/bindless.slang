@@ -5,16 +5,17 @@
 #define BINDLESS_TEXTURE_COUNT 1024
 #endif
 
-// The bindless table: set 0 of every pipeline (backend/bindless.odin). Shaders go through
-// gpu_texture / gpu_sampler / gpu_cube instead of touching the bindings directly, so how an
-// index resolves to a descriptor (e.g. NonUniformResourceIndex, descriptor heap) can change here.
-// Texture and cube indices come from the texture system; sampler indices are the fixed
-// SAMPLER_* constants from gpu_types.odin.
+// The bindless table: set 0 of every pipeline (backend/bindless.odin). Shaders go through the
+// typed indices (TextureIndex.get(), CubeIndex.get()) and gpu_sampler instead of touching the
+// bindings directly, so how an index resolves to a descriptor (e.g. NonUniformResourceIndex,
+// descriptor heap) can change here. Texture and cube indices come from the texture system; sampler
+// indices are the fixed SAMPLER_* constants from gpu_types.odin. gpu_texture takes a bare uint for
+// the few places whose index isn't typed (debug_view picks it by mode).
 //
-//   binding 0  Texture2D[]             gpu_texture
+//   binding 0  Texture2D[]             TextureIndex.get(), gpu_texture
 //   binding 1  SamplerState[]          gpu_sampler
-//   binding 2  TextureCube[]           gpu_cube
-//   binding 3  RWTexture2D[]           gpu_storage (storage.slang, compute only)
+//   binding 2  TextureCube[]           CubeIndex.get()
+//   binding 3  RWTexture2D[]           StorageImageIndex.get() (storage.slang, compute only)
 //   binding 4  depth cube array        declared by its users (mesh: comparison, debug_view: plain)
 //   binding 5  depth 2D array          declared by its users
 import types;
@@ -31,6 +32,14 @@ SamplerState gpu_sampler(uint index) {
     return samplers[index];
 }
 
-TextureCube<float4> gpu_cube(uint index) {
-    return cubes[index];
+extension TextureIndex {
+    Texture2D<float4> get() {
+        return textures[value];
+    }
+}
+
+extension CubeIndex {
+    TextureCube<float4> get() {
+        return cubes[value];
+    }
 }

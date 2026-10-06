@@ -2,12 +2,7 @@
 [[vk_binding(4, 0)]] SamplerCubeArray shadow_cubes;
 [[vk_binding(5, 0)]] Sampler2DArray shadow_2d_maps;
 
-struct PushConstants {
-    uint mode; // 0 = 2D texture, 1 = shadow cube face, 2 = 2D shadow (dir/spot)
-    uint index; // bindless texture index (mode 0) or light_index (mode 1/2)
-    uint face; // cube face_index (mode 1 only)
-};
-[[vk_push_constant]] PushConstants pc;
+[[vk_push_constant]] DebugViewPushConstants pc;
 
 struct VSOutput {
     float4 pos : SV_Position;
@@ -38,14 +33,14 @@ float3 face_dir(uint face, float2 uv) {
 
 [shader("fragment")]
 float4 fragment_main(VSOutput input) : SV_TARGET {
-    if (pc.mode == 1) {
+    if (pc.mode == DEBUG_VIEW_MODE_SHADOW_CUBE_FACE) {
         float2 uv = input.uv * 2.0 - 1.0;
         float3 dir = face_dir(pc.face, uv);
         float depth = shadow_cubes.Sample(float4(dir, float(pc.index))).r;
         return float4(depth, depth, depth, 1.0);
     }
 
-    if (pc.mode == 2) {
+    if (pc.mode == DEBUG_VIEW_MODE_SHADOW_2D) {
         float depth = shadow_2d_maps.Sample(float3(input.uv, float(pc.index))).r;
         return float4(depth, depth, depth, 1.0);
     }

@@ -1,13 +1,6 @@
 #include "bindless.slang"
 #include "storage.slang"
 
-struct TonemapPushConstants {
-    uint hdr_texture; // bindless sampled index of the HDR image
-    uint out_storage; // bindless storage index of the LDR draw image
-    float exposure;
-    uint bloom_texture; // bindless sampled index of bloom mip 0 (half res)
-    float bloom_strength; // pre-normalized: setting / bloom level count
-};
 [[vk_push_constant]] TonemapPushConstants pc;
 
 float3 ACESFilm(float3 x) {
@@ -36,15 +29,15 @@ float3 tonemap(float3 hdrColor, float exposure) {
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void compute_main(uint3 id : SV_DispatchThreadID) {
-    RWTexture2D<float4> out_image = gpu_storage(pc.out_storage);
+    RWTexture2D<float4> out_image = pc.out_storage.get();
     uint width, height;
     out_image.GetDimensions(width, height);
     if (id.x >= width || id.y >= height) return;
 
-    float4 hdr = gpu_texture(pc.hdr_texture).Load(int3(id.xy, 0));
+    float4 hdr = pc.hdr_texture.get().Load(int3(id.xy, 0));
     // Bloom is half res, so sample it with UVs and let bilinear filtering upscale it.
     float2 uv = (float2(id.xy) + 0.5) / float2(width, height);
-    float3 bloom = gpu_texture(pc.bloom_texture).SampleLevel(gpu_sampler(SAMPLER_LINEAR_CLAMP), uv, 0).rgb;
+    float3 bloom = pc.bloom_texture.get().SampleLevel(gpu_sampler(SAMPLER_LINEAR_CLAMP), uv, 0).rgb;
 
     // TODO: could use lerp later
     float3 scene = hdr.rgb + bloom * pc.bloom_strength;

@@ -4,17 +4,31 @@ import "core:math/rand"
 
 import "backend"
 
+@(shader_shared)
+Particle :: struct #max_field_align(16) {
+	position: Vec4,
+	velocity: Vec4,
+	color:    Vec4,
+}
+
+@(shader_shared)
+ParticlePushConstants :: struct #max_field_align(16) {
+	scene_data:    backend.GPUPtr(SceneData),
+	particles_in:  backend.GPUPtr(Particle),
+	particles_out: backend.GPUPtr(Particle),
+	delta_time:    f32,
+}
+
 FrameData :: struct {
 	scene_data_buffer:   backend.Buffer(SceneData),
 	particle_buffer:     backend.Buffer(Particle),
 	transforms_buffer:   backend.Buffer(GpuTransform),
 	instance_ids_buffer: backend.Buffer(u32),
 	instance_id_count:   u32, // ids written this frame
-	transforms_epoch:    u64, // the Scene.epoch transforms_buffer holds; 0 before its first write
-	transforms_dirty:    [MAX_MODEL_INSTANCES / 64]u64, // pool slots changed since transforms_buffer was written
+	transforms_dirty:    [MAX_DRAWS / 64]u64, // draw ids changed since transforms_buffer was written
 }
 
-#assert(MAX_MODEL_INSTANCES % 64 == 0)
+#assert(MAX_DRAWS % 64 == 0)
 
 frame_data_create :: proc(engine: ^Engine) {
 	for i in 0 ..< backend.MAX_FRAMES_IN_FLIGHT {
@@ -28,7 +42,7 @@ frame_data_create :: proc(engine: ^Engine) {
 		engine.frame_data[i].transforms_buffer = backend.buffer_create(
 			GpuTransform,
 			&engine.vk_ctx,
-			MAX_MODEL_INSTANCES,
+			MAX_DRAWS,
 			{.Storage},
 			.Shared,
 		)

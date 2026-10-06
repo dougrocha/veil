@@ -11,25 +11,34 @@ import sdl "vendor:sdl3"
 
 import "backend"
 
+@(shader_shared)
+SkyboxPushConstants :: struct #max_field_align(16) {
+	scene_data: backend.GPUPtr(SceneData),
+}
+
 // Init failure is fatal: on false the caller exits without engine_destroy and the OS and
 // driver reclaim whatever was created. Don't retry or keep running after a failed create.
-engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) -> (ok: bool) {
+engine_create :: proc(
+	engine: ^Engine,
+	window: ^sdl.Window,
+	width, height: u32,
+	config := EngineConfig{},
+) -> (
+	ok: bool,
+) {
 	if err := virtual.arena_init_growing(&engine.frame_arena); err != nil {
 		log.errorf("Failed to create engine frame arena: %v", err)
 		return false
 	}
-	engine.camera_system = camera_system_create({max_camera_count = 10})
-	engine.debug_settings.light_mask = LIGHT_MASK_ALL
-	engine.debug_settings.bloom_max_levels = BLOOM_DEFAULT_LEVELS
-	engine.debug_settings.bloom_strength = BLOOM_DEFAULT_STRENGTH
-	engine.debug_settings.exposure = TONEMAP_EXPOSURE
+	engine.config = config
+	engine.settings = RENDER_SETTINGS_DEFAULT
 	frame_dump_init(engine)
 	debug_env_init(engine)
 
 	vk_ctx := &engine.vk_ctx
 	backend.context_init(vk_ctx, window) or_return
 
-	engine.swapchain = backend.swapchain_create(vk_ctx, width, height, engine.debug_settings.present_mode)
+	engine.swapchain = backend.swapchain_create(vk_ctx, width, height, engine.config.present_mode)
 
 	// The cube array and the 2 fixed depth slots count against the same per-stage sampled-image limit.
 	limits := backend.limits(vk_ctx)
@@ -43,6 +52,7 @@ engine_create :: proc(engine: ^Engine, window: ^sdl.Window, width, height: u32) 
 	shadows_create(vk_ctx, &engine.shadows)
 	render_targets_create(engine)
 	frame_data_create(engine)
+	draw_history_create(&engine.prev_draws)
 	gpu_profiler_create(engine)
 
 	pipelines_create(engine) or_return
@@ -62,6 +72,7 @@ engine_destroy :: proc(self: ^Engine) {
 	pipelines_destroy(self)
 
 	gpu_profiler_destroy(self)
+	draw_history_destroy(&self.prev_draws)
 	frame_data_destroy(self)
 	render_targets_destroy(self)
 	shadows_destroy(&self.vk_ctx, &self.shadows)
@@ -75,13 +86,12 @@ engine_destroy :: proc(self: ^Engine) {
 	backend.context_destroy(&self.vk_ctx)
 
 	frame_dump_destroy(self)
-	camera_system_destroy(&self.camera_system)
 	virtual.arena_destroy(&self.frame_arena)
 }
 
-// Draws scene from its active camera. width/height: the window's drawable size this frame; used when
+// Draws packet from its camera. width/height: the window's drawable size this frame; used when
 // the swapchain must be recreated.
-engine_render :: proc(engine: ^Engine, scene: ^Scene, width, height: u32, delta_time: f32) {
+engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32) -> bool {
 	context.temp_allocator = virtual.arena_allocator(&engine.frame_arena)
 	defer free_all(context.temp_allocator)
 	defer stats_memory_sample(engine) // deferred later, so it runs before free_all
@@ -91,52 +101,48 @@ engine_render :: proc(engine: ^Engine, scene: ^Scene, width, height: u32, delta_
 		ui_renderer_clear(engine)
 		debug_view_clear(engine)
 	}
-	// Every frame, drawn or skipped: the pool is CPU-only (each frame rewrites its own transforms
-	// buffer), so slots are safe to reuse once this frame has read the scene.
-	defer instance_sweep_destroyed(scene)
-
-	engine.time_info.delta_time = delta_time
-	engine.time_info.time += delta_time
+	// Wall clock, not packet time: a paused or slowed game still renders at the real rate.
+	frame_ms: f64
+	if engine.last_render != {} do frame_ms = tick_ms(engine.last_render)
+	engine.last_render = time.tick_now()
+	// Before frame_begin, so a skipped frame still keeps the packet; its changes carry over.
+	draw_history_sync(engine, packet)
 
 	wait_start := time.tick_now()
 	cmd, ok := backend.frame_begin(&engine.vk_ctx, &engine.swapchain, width, height)
-	if !ok do return
+	if !ok do return false
 
 	// The swapchain may have just been recreated; the targets follow its extent, which can differ
 	// from the window size.
 	render_targets_sync(engine)
 
-	engine.time_info.frame_count += 1
+	engine.frame_count += 1
 	gpu_profiler_collect(engine)
 	wait_ms := tick_ms(wait_start)
 	record_start := time.tick_now()
 
 	// Reload first: a shadow shader reload invalidates the cache, and the plan must see it.
 	shader_poll_hotreload(engine)
-	shadow_plan_update(engine, scene)
-	scene_data_buffer_update(engine, scene)
-	update_transforms_buffer(engine, scene)
+	shadow_plan_update(engine, packet)
+	scene_data_buffer_update(engine, packet)
+	update_transforms_buffer(engine)
 
-	debug_lights_draw(engine, scene)
 	instance_ids_reset(engine)
-	record_frame(engine, scene, cmd)
+	record_frame(engine, packet, cmd)
 	record_ms := tick_ms(record_start)
 	submit_start := time.tick_now()
 
 	backend.frame_end(&engine.vk_ctx, &engine.swapchain, cmd, engine.render_targets.draw)
 	// Once per recorded frame, shadow passes on or off. Skipped frames return early above, so their
 	// changes carry over.
-	shadow_cache_commit(&engine.shadows.cache, &engine.shadows.plan, scene)
+	shadow_cache_commit(&engine.shadows.cache, &engine.shadows.plan, packet.lights)
+	clear(&engine.prev_draws.changes)
 	engine.shadows.plan.views = nil // frame arena memory, freed when engine_render returns
-	clear(&scene.instance_changes)
-	stats_add_timings(
-		engine,
-		{frame = f64(delta_time) * 1000, wait = wait_ms, record = record_ms, submit = tick_ms(submit_start)},
-	)
+	stats_add_timings(engine, {frame = frame_ms, wait = wait_ms, record = record_ms, submit = tick_ms(submit_start)})
 
 	if engine.frame_dump.enabled {
 		backend.device_wait_idle(&engine.vk_ctx)
-		pick_test_run(engine, scene)
+		pick_test_run(engine, packet)
 		if frame_dump_capture(engine) {
 			quit := sdl.Event {
 				type = .QUIT,
@@ -144,11 +150,12 @@ engine_render :: proc(engine: ^Engine, scene: ^Scene, width, height: u32, delta_
 			_ = sdl.PushEvent(&quit)
 		}
 	}
+	return true
 }
 
-scene_view :: proc(engine: ^Engine, scene: ^Scene) -> SceneView {
+draw_input :: proc(engine: ^Engine) -> DrawInput {
 	return {
-		instances = &scene.instances,
+		draws = draw_history_live(&engine.prev_draws),
 		models = &engine.model_system.models,
 		materials = &engine.material_system.materials,
 	}
@@ -158,7 +165,7 @@ current_frame_data :: #force_inline proc(engine: ^Engine) -> ^FrameData {
 	return &engine.frame_data[backend.frame_slot(&engine.vk_ctx)]
 }
 
-dispatch_particles :: proc(engine: ^Engine, _: ^Scene, cmd: backend.CommandBuffer) {
+dispatch_particles :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
 	pipeline := compute_pipeline(engine, .Particle)
 
 	frame_res_index := backend.frame_slot(&engine.vk_ctx)
@@ -166,7 +173,7 @@ dispatch_particles :: proc(engine: ^Engine, _: ^Scene, cmd: backend.CommandBuffe
 	compute_pc := ParticlePushConstants {
 		particles_in  = backend.buffer_address(&engine.vk_ctx, engine.frame_data[last_frame].particle_buffer),
 		particles_out = backend.buffer_address(&engine.vk_ctx, engine.frame_data[frame_res_index].particle_buffer),
-		delta_time    = engine.time_info.delta_time,
+		delta_time    = packet.delta_time,
 	}
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
 	// particles_in was written by the previous frame's dispatch in an earlier submission.
@@ -194,38 +201,26 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	stats_count_draw(engine)
 }
 
-// Each frame slot has its own transforms buffer, so every instance change marks its pool slot dirty
-// in all of them; a buffer is then patched only where its own marks say. A new scene epoch rewrites
-// every live instance instead: the replaced contents recorded no changes.
-update_transforms_buffer :: proc(engine: ^Engine, scene: ^Scene) {
-	for change in scene.instance_changes {
-		word, bit := change.instance.index / 64, change.instance.index % 64
-		for &frame in engine.frame_data do frame.transforms_dirty[word] |= 1 << bit
-	}
-
+// Each frame slot has its own transforms buffer, so draw_history_sync marks every changed id dirty in
+// all of them; a buffer is then patched only where its own marks say.
+update_transforms_buffer :: proc(engine: ^Engine) {
 	frame := current_frame_data(engine)
 	transforms := (^GpuTransform)(backend.buffer_contents(&engine.vk_ctx, frame.transforms_buffer))
-	if frame.transforms_epoch != scene.epoch {
-		frame.transforms_epoch = scene.epoch
-		frame.transforms_dirty = {}
-		for i in 0 ..< len(scene.instances.values) do transform_write(scene, transforms, i)
-		return
-	}
 	for &word, word_i in frame.transforms_dirty {
 		for word != 0 {
 			bit := int(intrinsics.count_trailing_zeros(word))
 			word &= word - 1
-			transform_write(scene, transforms, word_i * 64 + bit)
+			transform_write(engine, transforms, word_i * 64 + bit)
 		}
 	}
 }
 
-// Skips a free or dying slot: nothing draws it, and a reused slot records a Spawn change.
+// Skips a free id: nothing draws it, and reusing it records a Spawn change.
 @(private = "file")
-transform_write :: proc(scene: ^Scene, transforms: ^GpuTransform, slot: int) {
-	instance := &scene.instances.values[slot]
-	if !pool_is_alive(&scene.instances, Index(slot)) || instance.pending_destroy do return
-	model_matrix := transform_to_matrix(instance.transform)
+transform_write :: proc(engine: ^Engine, transforms: ^GpuTransform, slot: int) {
+	record := engine.prev_draws.records[slot]
+	if record.model == INVALID_MODEL do return
+	model_matrix := record.world
 	normal3 := linalg.transpose(linalg.inverse(linalg.matrix3_from_matrix4(model_matrix)))
 
 	mem.ptr_offset(transforms, slot)^ = GpuTransform {
@@ -236,9 +231,9 @@ transform_write :: proc(scene: ^Scene, transforms: ^GpuTransform, slot: int) {
 
 draw_shadow :: proc(
 	engine: ^Engine,
-	scene: ^Scene,
+	packet: ^FramePacket,
 	cmd: backend.RenderEncoder,
-	light_type: ShadowLightType,
+	light_type: LightType,
 	light_i: u32,
 	view_proj: Mat4x4,
 ) {
@@ -251,7 +246,12 @@ draw_shadow :: proc(
 	frame := current_frame_data(engine)
 
 	frustums := []Frustum{frustum_from_view_proj(view_proj)}
-	runs := shadow_casters_filter(&engine.shadows.casters, &scene.instances, frustums, skip_near = directional)
+	runs := shadow_casters_filter(
+		&engine.shadows.casters,
+		draw_history_live(&engine.prev_draws),
+		frustums,
+		skip_near = directional,
+	)
 
 	for batch in draw_runs_upload(engine, runs) {
 		mesh := batch.mesh
@@ -274,11 +274,10 @@ draw_shadow :: proc(
 }
 
 // The camera's draw list for this frame. Counts its culling stats.
-view_draw_list :: proc(engine: ^Engine, scene: ^Scene) -> DrawList {
-	active_camera := camera_system_get_camera(&engine.camera_system, scene.active_camera_name)
-	frustum := frustum_create_from_camera(active_camera, render_aspect(engine))
-	list := build_draw_list(scene_view(engine, scene), frustum, active_camera.position)
-	engine.stats.counters.instances_drawn += list.instances_visible
+view_draw_list :: proc(engine: ^Engine, packet: ^FramePacket) -> DrawList {
+	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
+	list := build_draw_list(draw_input(engine), frustum, packet.camera.position)
+	engine.stats.counters.draws_visible += list.draws_visible
 	engine.stats.counters.meshes_culled += list.meshes_culled
 	return list
 }
@@ -320,7 +319,7 @@ mesh_double_sided :: proc(engine: ^Engine, mesh: ^Mesh) -> bool {
 mesh_draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: DrawBatch) {
 	frame := current_frame_data(engine)
 	mesh := batch.mesh
-	pc := PushConstants {
+	pc := MeshPushConstants {
 		scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
 		vertex_buffer    = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer),
 		material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
@@ -351,13 +350,13 @@ draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	ui_renderer_flush(engine, cmd)
 }
 
-record_frame :: proc(engine: ^Engine, scene: ^Scene, cmd: backend.CommandBuffer) {
+record_frame :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
 	stats_record_begin(engine)
 	defer stats_record_end(engine)
 	engine.stats.counters.shadow_views_cached = engine.shadows.plan.views_cached
 	gpu_profiler_reset(engine, cmd)
 
 	frame_scope := gpu_scope_begin(engine, cmd, "frame")
-	run_passes(engine, scene, cmd)
+	run_passes(engine, packet, cmd)
 	gpu_scope_end(engine, cmd, frame_scope)
 }

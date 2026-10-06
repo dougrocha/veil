@@ -1,17 +1,6 @@
 import types;
 
-struct LineVertex {
-    float4 pos; // xyz
-    float4 color;
-};
-
-struct PushConstants {
-    SceneData* scene_data;
-    LineVertex* vertex_buffer;
-    float2 screen_size;
-    float thickness;
-};
-[[vk_push_constant]] PushConstants pc;
+[[vk_push_constant]] LinePushConstants pc;
 
 struct VSOutput {
     float4 pos : SV_Position;
@@ -30,8 +19,8 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
     let v0 = pc.vertex_buffer[segment * 2 + 0];
     let v1 = pc.vertex_buffer[segment * 2 + 1];
 
-    float4 clip0 = mul(pc.scene_data.proj, mul(pc.scene_data.view, float4(v0.pos.xyz, 1.0)));
-    float4 clip1 = mul(pc.scene_data.proj, mul(pc.scene_data.view, float4(v1.pos.xyz, 1.0)));
+    float4 clip0 = mul(pc.scene_data.proj, mul(pc.scene_data.view, float4(v0.position.xyz, 1.0)));
+    float4 clip1 = mul(pc.scene_data.proj, mul(pc.scene_data.view, float4(v1.position.xyz, 1.0)));
     float4 color0 = v0.color;
     float4 color1 = v1.color;
 

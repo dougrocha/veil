@@ -221,7 +221,7 @@ gltf_load_primitive :: proc(
 	mirrored := linalg.determinant(linear) < 0
 
 	vertex_count := uint(pos_acc.count)
-	vertices := make([]Vertex, vertex_count, context.temp_allocator)
+	vertices := make([]MeshVertex, vertex_count, context.temp_allocator)
 	positions := make([]Vec3, vertex_count)
 
 	for i in 0 ..< vertex_count {
@@ -275,7 +275,7 @@ gltf_load_primitive :: proc(
 	}
 
 	mesh = Mesh {
-		vertex_buffer = backend.buffer_upload(&engine.vk_ctx, vertices, {.Storage}),
+		vertex_buffer = vertex_buffer_upload(engine, vertices),
 		index_buffer  = backend.buffer_upload(&engine.vk_ctx, indices, {.Index}),
 		index_count   = u32(len(indices)),
 		material      = prim_mat,

@@ -2,22 +2,25 @@ package graphics
 
 import "backend"
 
-MAX_LINE_VERTICES :: 65536
-
-LINE_THICKNESS_PX :: 3.0
-
-LineVertex :: struct {
+@(shader_shared)
+LineVertex :: struct #max_field_align(16) {
 	position: Vec3,
 	_pad0:    f32,
 	color:    Vec4,
 }
 
-LinePushConstants :: struct {
+// Shared by line.slang and sector.slang.
+@(shader_shared)
+LinePushConstants :: struct #max_field_align(16) {
 	scene_data:    backend.GPUPtr(SceneData),
 	vertex_buffer: backend.GPUPtr(LineVertex),
 	screen_size:   Vec2,
 	thickness:     f32,
 }
+
+MAX_LINE_VERTICES :: 65536
+
+LINE_THICKNESS_PX :: 3.0
 
 LineRenderer :: struct {
 	tested:  TransientBatch(LineVertex),

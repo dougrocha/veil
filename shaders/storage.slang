@@ -5,6 +5,8 @@ import types;
 
 [[vk_binding(3, 0)]] [format("rgba16f")] RWTexture2D<float4> storage_images[BINDLESS_STORAGE_IMAGE_COUNT];
 
-RWTexture2D<float4> gpu_storage(uint index) {
-    return storage_images[index];
+extension StorageImageIndex {
+    RWTexture2D<float4> get() {
+        return storage_images[value];
+    }
 }

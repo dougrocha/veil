@@ -2,23 +2,17 @@ package graphics
 
 import "core:fmt"
 
-// Lights live in fixed arrays on Scene, so they are addressed by index.
+// Lights live in fixed arrays on LightData, so they are addressed by index.
 PointLightIndex :: distinct u32
 SpotLightIndex :: distinct u32
 DirectionalLightIndex :: distinct u32
 
 // nil means nothing is selected.
 Selection :: union {
-	InstanceHandle,
+	ModelHandle,
 	PointLightIndex,
 	SpotLightIndex,
 	DirectionalLightIndex,
-}
-
-// The selected instance, or INVALID_INSTANCE when nothing or a light is selected.
-selected_instance :: proc(scene: ^Scene) -> InstanceHandle {
-	handle, ok := scene.selection.(InstanceHandle)
-	return handle if ok else INVALID_INSTANCE
 }
 
 // A texture tied to an entity, ready to pass to debug_view_draw.
@@ -27,20 +21,20 @@ EntityTexture :: struct {
 	view:  DebugViewPushConstants,
 }
 
-// Lists the textures tied to an entity: material textures for an instance (once per distinct
+// Lists the textures tied to an entity: material textures for a model (once per distinct
 // material), shadow-map views for a light. Labels are allocated with `allocator`.
 entity_textures :: proc(
 	engine: ^Engine,
-	scene: ^Scene,
+	lights: ^LightData,
 	selection: Selection,
 	allocator := context.temp_allocator,
 ) -> []EntityTexture {
 	out := make([dynamic]EntityTexture, allocator)
 
 	switch s in selection {
-	case InstanceHandle:
-		if !pool_is_valid(&scene.instances, s) || instance_get(scene, s).pending_destroy do break
-		model := pool_get(&engine.model_system.models, instance_get(scene, s).model)
+	case ModelHandle:
+		if !pool_is_valid(&engine.model_system.models, s) do break
+		model := pool_get(&engine.model_system.models, s)
 		seen := make(map[MaterialHandle]struct{}, allocator = context.temp_allocator)
 		for mesh in model.meshes {
 			if mesh.material in seen do continue
@@ -69,7 +63,7 @@ entity_textures :: proc(
 			}
 		}
 	case PointLightIndex:
-		if u32(s) >= scene.point_light_count do break
+		if u32(s) >= lights.point_light_count do break
 		for face in 0 ..< u32(6) {
 			append(
 				&out,
@@ -80,7 +74,7 @@ entity_textures :: proc(
 			)
 		}
 	case SpotLightIndex:
-		if u32(s) >= scene.spot_light_count do break
+		if u32(s) >= lights.spot_light_count do break
 		append(
 			&out,
 			EntityTexture {
@@ -89,7 +83,7 @@ entity_textures :: proc(
 			},
 		)
 	case DirectionalLightIndex:
-		if u32(s) >= scene.directional_light_count do break
+		if u32(s) >= lights.directional_light_count do break
 		for cascade in 0 ..< u32(SHADOW_MAP_CASCADE_COUNT) {
 			append(
 				&out,

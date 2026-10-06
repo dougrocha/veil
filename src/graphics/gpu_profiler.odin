@@ -11,10 +11,17 @@ GpuScope :: struct {
 }
 
 // Named GPU time ranges. Results come back MAX_FRAMES_IN_FLIGHT frames late, when the slot is reused.
+// A submitted frame's GPU duration, delivered after its fence completes.
+GpuFrameSample :: #type proc(frame: u32, ms: f64, user_context: rawptr)
+
 GpuProfiler :: struct {
-	timer:       backend.GpuTimer,
-	scopes:      [backend.MAX_FRAMES_IN_FLIGHT][MAX_GPU_SCOPES]GpuScope,
-	scope_count: [backend.MAX_FRAMES_IN_FLIGHT]int,
+	on_frame:     GpuFrameSample,
+	user_context: rawptr,
+	frame_ids:    [backend.MAX_FRAMES_IN_FLIGHT]u32,
+	collected:    [backend.MAX_FRAMES_IN_FLIGHT]bool,
+	timer:        backend.GpuTimer,
+	scopes:       [backend.MAX_FRAMES_IN_FLIGHT][MAX_GPU_SCOPES]GpuScope,
+	scope_count:  [backend.MAX_FRAMES_IN_FLIGHT]int,
 }
 
 gpu_profiler_create :: proc(engine: ^Engine) {
@@ -27,15 +34,23 @@ gpu_profiler_destroy :: proc(engine: ^Engine) {
 
 // Feeds this slot's previous results into stats. Call after the slot's frame fence wait.
 gpu_profiler_collect :: proc(engine: ^Engine) {
+	gpu_profiler_collect_slot(engine, backend.frame_slot(&engine.vk_ctx))
+}
+
+@(private = "file")
+gpu_profiler_collect_slot :: proc(engine: ^Engine, slot: int) {
 	p := &engine.gpu_profiler
-	slot := backend.frame_slot(&engine.vk_ctx)
+	if p.collected[slot] do return
 	stamps: [backend.MAX_GPU_TIMESTAMPS]f64
 	count := backend.gpu_timer_read(&engine.vk_ctx, &p.timer, slot, stamps[:])
 	if count == 0 do return
+	p.collected[slot] = true
 
 	for scope in p.scopes[slot][:p.scope_count[slot]] {
 		if !scope.ok || int(scope.end) >= count do continue
-		stats_add_gpu(engine, scope.name, stamps[scope.end] - stamps[scope.begin])
+		ms := stamps[scope.end] - stamps[scope.begin]
+		stats_add_gpu(engine, scope.name, ms)
+		if scope.name == "frame" && p.on_frame != nil do p.on_frame(p.frame_ids[slot], ms, p.user_context)
 	}
 }
 
@@ -44,6 +59,8 @@ gpu_profiler_reset :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	p := &engine.gpu_profiler
 	slot := backend.frame_slot(&engine.vk_ctx)
 	p.scope_count[slot] = 0
+	p.frame_ids[slot] = engine.frame_count
+	p.collected[slot] = false
 	backend.gpu_timer_reset(cmd, &p.timer, slot)
 }
 
@@ -71,4 +88,10 @@ gpu_scope_end :: proc(engine: ^Engine, cmd: backend.CommandBuffer, id: int) {
 	end, ok := backend.gpu_timer_write(cmd, &p.timer, slot)
 	scope.end = end
 	scope.ok = scope.ok && ok
+}
+
+// Drain final in-flight samples without submitting extra benchmark frames.
+gpu_profiler_flush :: proc(engine: ^Engine) {
+	backend.device_wait_idle(&engine.vk_ctx)
+	for slot in 0 ..< backend.MAX_FRAMES_IN_FLIGHT do gpu_profiler_collect_slot(engine, slot)
 }

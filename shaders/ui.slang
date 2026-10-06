@@ -1,18 +1,6 @@
 #include "bindless.slang"
 
-struct UIVertex {
-    float2 position; // screen-space pixels, top-left origin, y-down
-    float2 uv;
-    uint color; // packed RGBA8, matches Odin's [4]u8 layout
-    uint _pad0;
-};
-
-struct PushConstants {
-    UIVertex* vertex_buffer;
-    float2 screen_size;
-    uint atlas_texture;
-};
-[[vk_push_constant]] PushConstants pc;
+[[vk_push_constant]] UIPushConstants pc;
 
 struct VSOutput {
     float4 pos : SV_Position;
@@ -45,6 +33,6 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragment_main(VSOutput input) : SV_TARGET {
-    float coverage = gpu_texture(pc.atlas_texture).Sample(gpu_sampler(SAMPLER_LINEAR_CLAMP), input.uv).r;
+    float coverage = pc.atlas_texture.get().Sample(gpu_sampler(SAMPLER_LINEAR_CLAMP), input.uv).r;
     return float4(input.color.rgb, input.color.a * coverage);
 }

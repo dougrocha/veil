@@ -1,94 +1,139 @@
 package main
 
-import gfx "graphics"
-import "handles"
+import "core:math/linalg"
+import gfx "veil:graphics"
+import "veil:handles"
 
-MAX_ENTITIES :: 1024
-
-// A game object. A live entity's render_instance is always a live, unmarked instance, or
-// INVALID_INSTANCE when it has none.
-Entity :: struct {
-	render_instance: gfx.InstanceHandle,
-	pending_destroy: bool, // marked by entity_destroy: skip it; world_sweep frees it
-}
-
-EntityHandle :: handles.Handle(Entity)
+// Entity slots double as draw ids.
+MAX_ENTITIES :: gfx.MAX_DRAWS
 
 World :: struct {
-	entities:        handles.Pool(Entity),
-	pending_destroy: [dynamic]EntityHandle,
+	entities:      handles.Pool(Entity),
+	active_camera: EntityHandle,
+	selected:      EntityHandle,
+	pending:       [dynamic]EntityHandle, // marked by entity_destroy, freed by world_flush
+	lights:        gfx.LightData,
+	light_links:   [dynamic]LightLink,
+	background:    gfx.Background,
+	time:          f32, // seconds of game time; world_update advances it
+	delta_time:    f32,
 }
 
-world_create :: proc(world: ^World) {
-	world.entities = handles.pool_init(MAX_ENTITIES, Entity)
-}
-
-world_destroy :: proc(world: ^World) {
-	handles.pool_destroy(&world.entities)
-	delete(world.pending_destroy)
-}
-
-entity_spawn :: proc(world: ^World, entity: Entity) -> EntityHandle {
-	return handles.pool_alloc(&world.entities, entity)
-}
-
-entity_get :: proc(world: ^World, handle: EntityHandle) -> ^Entity {
-	return handles.pool_get(&world.entities, handle)
-}
-
-// Marks the entity and destroys its render subtree. Any other entity whose render instance was in
-// that subtree is marked too, so no live entity is left with a dead render instance.
-entity_destroy :: proc(world: ^World, scene: ^gfx.Scene, handle: EntityHandle) {
-	entity := entity_get(world, handle)
-	if entity.pending_destroy do return
-	entity_mark(world, handle)
-	if entity.render_instance != gfx.INVALID_INSTANCE && !gfx.instance_is_pending(scene, entity.render_instance) {
-		gfx.instance_destroy(scene, entity.render_instance)
+world_create :: proc(w: ^World) {
+	w.entities = handles.pool_init(MAX_ENTITIES, Entity)
+	w.background = gfx.Vec4{0, 0, 0, 1}
+	w.lights.ambient_light = {
+		color      = {1, 1, 1, 1},
+		brightness = 0.03,
 	}
+}
 
-	// The scene only knows instance links, so find the owners of whatever it marked.
-	for &other, i in world.entities.values {
-		if !handles.pool_is_alive(&world.entities, handles.Index(i)) || other.pending_destroy do continue
-		if other.render_instance == gfx.INVALID_INSTANCE do continue
-		if gfx.instance_is_pending(scene, other.render_instance) {
-			entity_mark(world, EntityHandle{handles.Index(i), world.entities.generations[i]})
-		}
+world_destroy :: proc(w: ^World) {
+	handles.pool_destroy(&w.entities)
+	delete(w.pending)
+	delete(w.light_links)
+	w^ = {}
+}
+
+// Advances game time by dt, recomputes every global_transform from the roots down, then moves the
+// attached lights.
+// TODO: this walks every entity every frame, and draw_history_sync then compares every draw. Fine
+// at 4k entities; measure near MAX_ENTITIES (32k) with a benchmark scene before relying on it, and
+// add dirty flags if it shows up.
+world_update :: proc(w: ^World, dt: f32) {
+	w.delta_time = dt
+	w.time += dt
+	for &e, i in w.entities.values[:w.entities.count] {
+		if !handles.pool_is_alive(&w.entities, handles.Index(i)) || e.parent != INVALID_ENTITY do continue
+		entity_propagate(w, &e, linalg.MATRIX4F32_IDENTITY)
 	}
+	lights_follow(w)
 }
 
 @(private = "file")
-entity_mark :: proc(world: ^World, handle: EntityHandle) {
-	entity_get(world, handle).pending_destroy = true
-	append(&world.pending_destroy, handle)
+entity_propagate :: proc(w: ^World, e: ^Entity, parent_global: gfx.Mat4x4) {
+	e.global_transform = parent_global * gfx.transform_to_matrix(e.transform)
+	for c := e.first_child; c != INVALID_ENTITY; {
+		child := entity_get(w, c)
+		entity_propagate(w, child, e.global_transform)
+		c = child.next_sibling
+	}
 }
 
-// Frees the entities entity_destroy marked. Call once per frame, after gfx.engine_render (which
-// sweeps the scene).
-world_sweep :: proc(world: ^World) {
-	for handle in world.pending_destroy do handles.pool_free(&world.entities, handle)
-	clear(&world.pending_destroy)
+// Frees every entity marked since the last flush, and its descendants. Handles to them go stale.
+world_flush :: proc(w: ^World) {
+	for h in w.pending {
+		if !handles.pool_is_valid(&w.entities, h) do continue // freed with a marked ancestor
+		entity_unlink(w, h)
+		entity_free_tree(w, h)
+	}
+	clear(&w.pending)
 }
 
-// Example: a turret entity whose instance hangs off a ship entity's instance. Destroying the ship
-// takes the turret with it, on both sides.
-world_example :: proc(world: ^World, scene: ^gfx.Scene, ship_model, turret_model: gfx.ModelHandle) {
-	ship_instance := gfx.instance_spawn(scene, ship_model, gfx.transform_create())
-	turret_instance := gfx.instance_spawn(
-		scene,
-		turret_model,
-		gfx.transform_create(translation = {0, 1, 0}),
-		parent = ship_instance,
-	)
-	ship := entity_spawn(world, {render_instance = ship_instance})
-	turret := entity_spawn(world, {render_instance = turret_instance})
+// Removes h from its parent's child list.
+@(private = "file")
+entity_unlink :: proc(w: ^World, h: EntityHandle) {
+	e := entity_get(w, h)
+	if e.parent == INVALID_ENTITY do return
+	link := &entity_get(w, e.parent).first_child
+	for link^ != h do link = &entity_get(w, link^).next_sibling
+	link^ = e.next_sibling
+}
 
-	entity_destroy(world, scene, ship)
+@(private = "file")
+entity_free_tree :: proc(w: ^World, h: EntityHandle) {
+	for c := entity_get(w, h).first_child; c != INVALID_ENTITY; {
+		next := entity_get(w, c).next_sibling
+		entity_free_tree(w, c)
+		c = next
+	}
+	handles.pool_free(&w.entities, h)
+}
 
-	// Both are marked right away: game code skips them, the renderer no longer draws them.
-	assert(entity_get(world, turret).pending_destroy)
-	assert(gfx.instance_is_pending(scene, turret_instance))
+// The flat view of the world the renderer draws. draws uses allocator.
+world_extract :: proc(w: ^World, allocator := context.temp_allocator) -> gfx.FramePacket {
+	draws := make([dynamic]gfx.Draw, 0, handles.pool_live_count(&w.entities), allocator)
+	for e, i in w.entities.values[:w.entities.count] {
+		if !handles.pool_is_alive(&w.entities, handles.Index(i)) do continue
+		if .Renderable not_in e.flags || .Pending_Destroy in e.flags do continue
+		append(
+			&draws,
+			gfx.Draw {
+				id = u32(i),
+				model = e.model,
+				world = e.global_transform,
+				casts_shadow = .Casts_Shadow in e.flags,
+			},
+		)
+	}
+	return {
+		time = w.time,
+		delta_time = w.delta_time,
+		draws = draws[:],
+		camera = world_camera(w),
+		lights = &w.lights,
+		background = w.background,
+	}
+}
 
-	// Then, in the frame loop:
-	//   gfx.engine_render(engine, scene, ...)  frees the instances (scene sweep)
-	//   world_sweep(world)              frees the entities (game sweep)
+// The active camera in world space, from its entity's global_transform. A default camera when the
+// active camera entity is gone.
+world_camera :: proc(w: ^World) -> gfx.Camera {
+	if !entity_alive(w, w.active_camera) do return gfx.camera_create()
+	e := entity_get(w, w.active_camera)
+	camera := e.camera
+	x, y, z := gfx.matrix_axes(e.global_transform)
+	camera.position = gfx.matrix_translation(e.global_transform)
+	camera.right = linalg.normalize(x)
+	camera.up = linalg.normalize(y)
+	camera.front = -linalg.normalize(z)
+	return camera
+}
+
+// The live entity drawn under pos, from the last frame's packet.
+world_pick :: proc(engine: ^gfx.Engine, w: ^World, pos: gfx.Vec2) -> EntityHandle {
+	id, hit := gfx.pick(engine, world_camera(w), pos)
+	if !hit do return INVALID_ENTITY
+	h := EntityHandle{handles.Index(id), w.entities.generations[id]}
+	return h if entity_alive(w, h) else INVALID_ENTITY
 }

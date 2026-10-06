@@ -27,7 +27,7 @@ GRAPHICS_PIPELINES := [GraphicsPipelineKind]GraphicsPipelineSpec {
 		cull = .None,
 		depth = {test = true, write = true, bias = true, compare = .LessOrEqual},
 	},
-	// Cascades only cover a slice of the scene along the light direction, so casters between the
+	// Cascades only cover a slice of the input along the light direction, so casters between the
 	// light and a cascade's near plane would be clipped; depth clamp flattens them onto it instead.
 	.Shadow_Directional = {
 		shader = "shadow",

@@ -190,6 +190,16 @@ shader_compile :: proc(
 	}
 	defer linked->release()
 
+	when GPU_LAYOUT_CHECK {
+		layout_diag: ^sp.IBlob = nil
+		program_layout := linked->getLayout(0, &layout_diag)
+		log_slang_diagnostics(layout_diag, program_layout == nil)
+		if program_layout == nil || !gpu_layout_check(program_layout, module_name) {
+			log.errorf("Shared GPU struct layout check failed: %s", module_name)
+			return nil, false
+		}
+	}
+
 	target_code: ^sp.IBlob = nil
 	diag2: ^sp.IBlob = nil
 	code_res := linked->getTargetCode(0, &target_code, &diag2)

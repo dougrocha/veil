@@ -44,7 +44,7 @@ PassUse :: struct {
 PassSpec :: struct {
 	name:    string, // timing scope
 	enabled: proc(engine: ^Engine) -> bool, // nil = always
-	record:  proc(engine: ^Engine, scene: ^Scene, cmd: backend.CommandBuffer),
+	record:  proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer),
 	uses:    []PassUse,
 }
 
@@ -112,7 +112,7 @@ frame_resource_image :: proc(engine: ^Engine, resource: FrameResource) -> backen
 // Brings each enabled pass's frame resources into its entry states, then records it inside a
 // timing scope. The barrier takes each subresource from its tracked state, and skips the ones
 // already in a read-only target state.
-run_passes :: proc(engine: ^Engine, scene: ^Scene, cmd: backend.CommandBuffer) {
+run_passes :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
 	for spec in PASSES {
 		if spec.enabled != nil && !spec.enabled(engine) do continue
 
@@ -131,25 +131,25 @@ run_passes :: proc(engine: ^Engine, scene: ^Scene, cmd: backend.CommandBuffer) {
 		}
 
 		scope := gpu_scope_begin(engine, cmd, spec.name)
-		spec.record(engine, scene, cmd)
+		spec.record(engine, packet, cmd)
 		gpu_scope_end(engine, cmd, scope)
 	}
 }
 
 @(private = "file")
 particles_enabled :: proc(engine: ^Engine) -> bool {
-	return engine.debug_settings.particles
+	return engine.settings.particles
 }
 
 shadows_enabled :: proc(engine: ^Engine) -> bool {
-	return engine.debug_settings.disable_shadows == 0
+	return engine.settings.shadows
 }
 
 @(private = "file")
-record_main :: proc(engine: ^Engine, scene: ^Scene, cmd: backend.CommandBuffer) {
+record_main :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
 	// A sky covers every pixel left uncovered, so its clear value never shows.
-	clear_color, _ := scene.background.(Vec4)
-	_, has_sky := scene.background.(TextureHandle)
+	clear_color, _ := packet.background.(Vec4)
+	_, has_sky := packet.background.(TextureHandle)
 	encoder := backend.begin_render_pass(
 		&engine.vk_ctx,
 		cmd,
@@ -163,16 +163,16 @@ record_main :: proc(engine: ^Engine, scene: ^Scene, cmd: backend.CommandBuffer) 
 	)
 	defer backend.end_render_pass(encoder)
 	// Opaque, then the sky (if any) where nothing opaque wrote depth, then transparent on top.
-	view_list := view_draw_list(engine, scene)
+	view_list := view_draw_list(engine, packet)
 	draw_meshes_opaque(engine, encoder, view_list)
 	if has_sky do draw_skybox(engine, encoder)
 	draw_meshes_transparent(engine, encoder, view_list)
-	if engine.debug_settings.particles do draw_particles(engine, encoder)
+	if engine.settings.particles do draw_particles(engine, encoder)
 	line_renderer_flush(engine, encoder)
 }
 
 @(private = "file")
-record_overlay :: proc(engine: ^Engine, _: ^Scene, cmd: backend.CommandBuffer) {
+record_overlay :: proc(engine: ^Engine, _: ^FramePacket, cmd: backend.CommandBuffer) {
 	debug_view_flush(engine, cmd)
 	encoder := backend.begin_render_pass(
 		&engine.vk_ctx,

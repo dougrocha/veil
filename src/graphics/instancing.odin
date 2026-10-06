@@ -11,7 +11,8 @@ import "backend"
 // because how the instance id includes firstInstance differs between Vulkan, HLSL and Metal.
 
 // Every pass in a frame appends to the same list: main, transparent and every shadow view.
-MAX_INSTANCE_IDS :: MAX_MODEL_INSTANCES * 16
+// Enough for one mesh per instance in the camera and every possible shadow view.
+MAX_INSTANCE_IDS :: MAX_DRAWS * (1 + MAX_SHADOW_2D_SLOTS + MAX_POINT_SHADOW_LIGHTS * 6)
 
 // One draw: count instances of mesh, their ids at first_id in the frame's id list.
 DrawBatch :: struct {
@@ -33,7 +34,7 @@ draw_runs_upload :: proc(engine: ^Engine, runs: []DrawRun) -> []DrawBatch {
 
 // A batch of one, for draws that must keep their order (transparent, back to front).
 single_draw_batch :: proc(engine: ^Engine, item: DrawItem) -> (batch: DrawBatch, ok: bool) {
-	id := item.instance
+	id := item.id
 	first := instance_ids_push(engine, {id}) or_return
 	return {mesh = item.mesh, first_id = first, count = 1}, true
 }

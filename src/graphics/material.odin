@@ -6,9 +6,34 @@ import "core:strings"
 
 import "backend"
 
+@(shader_shared)
+AlphaMode :: enum u32 {
+	Opaque,
+	Mask,
+	Blend,
+}
+
+@(shader_shared)
+GpuMaterial :: struct #max_field_align(16) {
+	base_color:                 Vec4,
+	emissive:                   Vec4, // rgb: unbounded HDR emitted color, added after lighting; w unused
+	perceptual_roughness:       f32,
+	metallic:                   f32,
+	base_color_texture:         TextureIndex,
+	metallic_roughness_texture: TextureIndex,
+	normal_map_texture:         TextureIndex,
+	occlusion_texture:          TextureIndex,
+	alpha_mode:                 AlphaMode,
+	alpha_cutoff:               f32,
+	double_sided:               u32, // back faces are drawn and lit with the normal flipped
+	_pad0:                      u32,
+	_pad1:                      u32,
+	_pad2:                      u32,
+}
+
 DEFAULT_MATERIAL_NAME :: "default"
 
-MAX_MATERIALS :: 1024
+MAX_MATERIALS :: 16384
 
 Material :: struct {
 	name:                       string,
@@ -118,11 +143,11 @@ material_create :: proc(
 		base_color                 = base_color,
 		perceptual_roughness       = perceptual_roughness,
 		metallic                   = metallic,
-		base_color_texture         = u32(resolved_base_color.index),
-		metallic_roughness_texture = u32(resolved_metallic_roughness.index),
-		normal_map_texture         = u32(resolved_normal.index),
-		occlusion_texture          = u32(resolved_occlusion.index),
-		alpha_mode                 = u32(alpha_mode),
+		base_color_texture         = texture_index(resolved_base_color),
+		metallic_roughness_texture = texture_index(resolved_metallic_roughness),
+		normal_map_texture         = texture_index(resolved_normal),
+		occlusion_texture          = texture_index(resolved_occlusion),
+		alpha_mode                 = alpha_mode,
 		alpha_cutoff               = alpha_cutoff,
 		double_sided               = u32(double_sided),
 		emissive                   = {emissive.x, emissive.y, emissive.z, 0},

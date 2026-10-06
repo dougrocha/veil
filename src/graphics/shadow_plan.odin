@@ -11,62 +11,63 @@ ShadowAtlasKind :: enum {
 ShadowView :: struct {
 	atlas:       ShadowAtlasKind,
 	layer:       u32,
-	light_type:  ShadowLightType,
+	light_type:  LightType,
 	light_index: u32,
 	view_proj:   Mat4x4,
 }
 
-// What the shadow passes render this frame. Built by shadow_plan, read by the scene data upload and
+// What the shadow passes render this frame. Built by shadow_plan, read by the input data upload and
 // the shadow passes, applied to the cache by shadow_cache_commit.
 ShadowPlan :: struct {
-	// Every light in the scene's counts, masked or not; the scene data copies these.
+	// Every light in the input's counts, masked or not; the input data copies these.
 	shadow_2d_view_proj: [MAX_SHADOW_2D_SLOTS]Mat4x4,
-	point_view_proj:     [MAX_POINT_LIGHTS][6]Mat4x4,
-	cascade_data:        [MAX_DIRECTIONAL_LIGHTS]ShadowCascadeData,
+	point_view_proj:     [MAX_POINT_SHADOW_LIGHTS][6]Mat4x4,
+	cascade_data:        [MAX_DIRECTIONAL_LIGHTS]GpuShadowCascadeData,
 	views:               [dynamic]ShadowView, // 2D atlas views first, then cube faces
 	views_cached:        u32, // spot maps + cube faces skipped because the cache holds them
-	invalidated_point:   [MAX_POINT_LIGHTS]bool,
+	invalidated_point:   [MAX_POINT_SHADOW_LIGHTS]bool,
 	invalidated_spot:    [MAX_SPOT_LIGHTS]bool,
 }
 
 // Decides this frame's shadow work. Reads its inputs only; views is allocated with allocator.
 //
-// light_mask is the LightMask bits of the light types that render shadows (0 when shadows are off).
+// shadow_lights is the light types that render shadows (empty when shadows are off).
 //
 // Rules:
-// - Matrices for every light within the scene's counts, masked or not: cascades from
+// - Matrices for every light within the input's counts, masked or not: cascades from
 //   compute_directional_shadow_data (slots light * SHADOW_MAP_CASCADE_COUNT + cascade, split/bias
 //   into cascade_data), spot from compute_spot_light_view_proj (slot SPOT_SHADOW_SLOT_BASE + light),
 //   point from compute_point_light_view_proj.
 // - Directional: every cascade of every light is a view unless Directional is masked.
 // - Spot and point: invalidated when the cached key differs from the light's key, or a caster's
-//   instance change overlaps the light's bound (a sphere of radius range around the light, also for
+//   draw change overlaps the light's bound (a sphere of radius range around the light, also for
 //   spots). Invalidation is recorded whether the light is masked or not.
 // - A light not masked renders when it is invalidated or its cache entry isn't valid; otherwise it
 //   counts in views_cached (1 per spot, 6 per point light).
 // - View order: cascades, spots, then point faces (light * 6 + face).
 shadow_plan :: proc(
-	scene: ^Scene,
+	lights: ^LightData,
+	changes: []DrawChange,
 	camera: Camera,
 	aspect: f32,
 	cache: ^ShadowCache,
-	light_mask: u32,
+	shadow_lights: LightTypes,
 	allocator := context.temp_allocator,
 ) -> (
 	plan: ShadowPlan,
 ) {
 	plan.views = make([dynamic]ShadowView, allocator)
-	dir_count := min(int(scene.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
-	spot_count := min(int(scene.spot_light_count), MAX_SPOT_LIGHTS)
-	point_count := min(int(scene.point_light_count), MAX_POINT_LIGHTS)
+	dir_count := min(int(lights.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
+	spot_count := min(int(lights.spot_light_count), MAX_SPOT_LIGHTS)
+	point_count := min(int(lights.point_light_count), MAX_POINT_SHADOW_LIGHTS)
 	for l in 0 ..< dir_count {
-		data := compute_directional_shadow_data(scene.directional_lights[l], camera, {aspect = aspect})
+		data := compute_directional_shadow_data(lights.directional_lights[l], camera, {aspect = aspect})
 		for c in 0 ..< SHADOW_MAP_CASCADE_COUNT do plan.shadow_2d_view_proj[l * SHADOW_MAP_CASCADE_COUNT + c] = data.view_proj[c]
 		plan.cascade_data[l] = {
 			split = data.splits,
 			bias  = data.bias,
 		}
-		if light_mask & u32(LightMask.Directional) == 0 do continue
+		if .Directional not_in shadow_lights do continue
 		for c in 0 ..< SHADOW_MAP_CASCADE_COUNT {
 			slot := u32(l * SHADOW_MAP_CASCADE_COUNT + c)
 			append(&plan.views, ShadowView{.Atlas_2D, slot, .Directional, u32(l), plan.shadow_2d_view_proj[slot]})
@@ -74,16 +75,16 @@ shadow_plan :: proc(
 	}
 	for l in 0 ..< spot_count {
 		slot := SPOT_SHADOW_SLOT_BASE + u32(l)
-		plan.shadow_2d_view_proj[slot] = compute_spot_light_view_proj(scene.spot_lights[l])
-		light := scene.spot_lights[l]
+		plan.shadow_2d_view_proj[slot] = compute_spot_light_view_proj(lights.spot_lights[l])
+		light := lights.spot_lights[l]
 		plan.invalidated_spot[l] = shadow_entry_invalidated(
 			cache.spot[l],
 			spot_shadow_key(light),
 			light.pos,
 			light.range,
-			scene.instance_changes[:],
+			changes,
 		)
-		if light_mask & u32(LightMask.Spot) == 0 do continue
+		if .Spot not_in shadow_lights do continue
 		if cache.spot[l].valid && !plan.invalidated_spot[l] {
 			plan.views_cached += 1
 			continue
@@ -91,16 +92,16 @@ shadow_plan :: proc(
 		append(&plan.views, ShadowView{.Atlas_2D, slot, .Spot, u32(l), plan.shadow_2d_view_proj[slot]})
 	}
 	for l in 0 ..< point_count {
-		plan.point_view_proj[l] = compute_point_light_view_proj(scene.point_lights[l])
-		light := scene.point_lights[l]
+		plan.point_view_proj[l] = compute_point_light_view_proj(lights.point_lights[l])
+		light := lights.point_lights[l]
 		plan.invalidated_point[l] = shadow_entry_invalidated(
 			cache.point[l],
 			point_shadow_key(light),
 			light.pos,
 			light.range,
-			scene.instance_changes[:],
+			changes,
 		)
-		if light_mask & u32(LightMask.Point) == 0 do continue
+		if .Point not_in shadow_lights do continue
 		if cache.point[l].valid && !plan.invalidated_point[l] {
 			plan.views_cached += 6
 			continue
@@ -118,7 +119,7 @@ shadow_entry_invalidated :: proc(
 	key: Key,
 	light_pos: Vec3,
 	light_range: f32,
-	changes: []InstanceChange,
+	changes: []DrawChange,
 ) -> bool {
 	if entry.key != key do return true
 	bound := BoundingSphere{light_pos, light_range}

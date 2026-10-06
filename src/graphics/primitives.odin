@@ -19,14 +19,14 @@ primitive_plane :: proc(
 	rows := subdivisions + 2
 	size := half_size * 2
 
-	vertices := make([]Vertex, cols * rows)
+	vertices := make([]MeshVertex, cols * rows)
 	defer delete(vertices)
 
 	for z in 0 ..< rows {
 		for x in 0 ..< cols {
 			tx := f32(x) / f32(cols - 1)
 			tz := f32(z) / f32(rows - 1)
-			vertices[z * cols + x] = Vertex {
+			vertices[z * cols + x] = MeshVertex {
 				pos    = {(-0.5 + tx) * size.x, 0, (-0.5 + tz) * size.y},
 				uv     = {tx, tz},
 				normal = {0, 1, 0},
@@ -70,7 +70,7 @@ primitive_cube :: proc(
 	min := -half_size
 	max := half_size
 
-	vertices := []Vertex {
+	vertices := []MeshVertex {
 		// front (+Z)
 		{pos = {min.x, min.y, max.z}, uv = {0, 0}, normal = {0, 0, 1}},
 		{pos = {max.x, min.y, max.z}, uv = {1, 0}, normal = {0, 0, 1}},
@@ -161,7 +161,7 @@ primitive_sphere :: proc(
 	}
 
 	vertices_count := stacks * sectors
-	vertices := make([dynamic]Vertex, 0, vertices_count, context.temp_allocator)
+	vertices := make([dynamic]MeshVertex, 0, vertices_count, context.temp_allocator)
 	indices := make([dynamic]u32, 0, vertices_count * 6, context.temp_allocator)
 
 	length_inv := 1.0 / radius
@@ -187,7 +187,7 @@ primitive_sphere :: proc(
 			s := f32(j) / f32(sectors)
 			t := f32(i) / f32(stacks)
 
-			append(&vertices, Vertex{pos = {x, y, z}, uv = {s, t}, normal = {nx, ny, nz}})
+			append(&vertices, MeshVertex{pos = {x, y, z}, uv = {s, t}, normal = {nx, ny, nz}})
 		}
 	}
 
@@ -233,7 +233,7 @@ primitive_sphere :: proc(
 // Degenerate UVs (a zero-area triangle in UV space, or a seam) contribute
 // nothing rather than a NaN, and any vertex left without a usable tangent keeps
 // its zero so the fallback still applies.
-compute_tangents :: proc(vertices: []Vertex, indices: []u32) {
+compute_tangents :: proc(vertices: []MeshVertex, indices: []u32) {
 	tangents := make([]Vec3, len(vertices), context.temp_allocator)
 	bitangents := make([]Vec3, len(vertices), context.temp_allocator)
 

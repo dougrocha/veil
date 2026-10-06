@@ -2,6 +2,10 @@ package graphics
 
 import "backend"
 
+// A slot in the compute-only storage image table: index.get() returns the image (storage.slang).
+@(shader_shared)
+StorageImageIndex :: distinct u32
+
 RenderTargets :: struct {
 	extent:         backend.Extent2D,
 	color:          backend.Image,

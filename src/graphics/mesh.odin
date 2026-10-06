@@ -11,7 +11,28 @@ import "shared:tinyobj"
 
 import "backend"
 
+// Packed with no padding: uv rides in the w of position and normal. CPU code builds MeshVertex and
+// model_register packs it.
+@(shader_shared)
+Vertex :: struct #max_field_align(16) {
+	pos_uv_x:    Vec4, // xyz position, w uv.x
+	normal_uv_y: Vec4, // xyz normal, w uv.y
+	tangent:     Vec4, // xyz tangent, w bitangent sign
+}
+
+@(shader_shared)
+MeshPushConstants :: struct #max_field_align(16) {
+	scene_data:       backend.GPUPtr(SceneData),
+	vertex_buffer:    backend.GPUPtr(Vertex),
+	material_buffer:  backend.GPUPtr(GpuMaterial),
+	transform_buffer: backend.GPUPtr(GpuTransform),
+	instance_ids:     backend.GPUPtr(u32), // see instancing.odin
+	material_index:   u32,
+	instance_offset:  u32,
+}
+
 Mesh :: struct {
+	sort_key:      u64, // stable registration order, including shared-geometry material variants
 	vertex_buffer: backend.Buffer(Vertex),
 	index_buffer:  backend.Buffer(u32),
 	index_count:   u32,
@@ -26,9 +47,10 @@ ModelHandle :: Handle(Model)
 INVALID_MODEL :: ModelHandle{}
 
 Model :: struct {
-	meshes: [dynamic]Mesh,
-	name:   string,
-	bounds: BoundingSphere,
+	borrowed_geometry: bool, // buffers and CPU geometry belong to another engine-owned model
+	meshes:            [dynamic]Mesh,
+	name:              string,
+	bounds:            BoundingSphere,
 }
 
 // One spawnable piece of a file loaded with model_load_parts. transform places the piece
@@ -39,13 +61,14 @@ ModelPart :: struct {
 }
 
 ModelSystem :: struct {
-	models:    Pool(Model),
-	model_map: map[string]ModelHandle,
-	parts_map: map[string][]ModelPart,
+	next_mesh_key: u64,
+	models:        Pool(Model),
+	model_map:     map[string]ModelHandle,
+	parts_map:     map[string][]ModelPart,
 }
 
 model_system_create :: proc(engine: ^Engine) {
-	engine.model_system.models = pool_init(1024, Model)
+	engine.model_system.models = pool_init(16384, Model)
 	engine.model_system.model_map = make(map[string]ModelHandle)
 	engine.model_system.parts_map = make(map[string][]ModelPart)
 }
@@ -55,6 +78,7 @@ model_system_destroy :: proc(engine: ^Engine) {
 	for &model, i in ms.models.values {
 		if pool_is_alive(&ms.models, Index(i)) {
 			for &mesh in model.meshes {
+				if model.borrowed_geometry do continue
 				backend.buffer_destroy(&engine.vk_ctx, mesh.vertex_buffer)
 				backend.buffer_destroy(&engine.vk_ctx, mesh.index_buffer)
 				delete(mesh.positions)
@@ -89,9 +113,9 @@ model_load :: proc(engine: ^Engine, path: string, material: MaterialHandle = INV
 		return INVALID_MODEL
 	}
 
-	vertices := make([dynamic]Vertex, context.temp_allocator)
+	vertices := make([dynamic]MeshVertex, context.temp_allocator)
 	indices := make([dynamic]u32, context.temp_allocator)
-	unique_vertices := make(map[Vertex]u32, context.temp_allocator)
+	unique_vertices := make(map[MeshVertex]u32, context.temp_allocator)
 
 	for shape in obj.shapes {
 		for index in obj.attrib.faces[shape.face_offset:shape.face_offset + shape.length] {
@@ -109,7 +133,7 @@ model_load :: proc(engine: ^Engine, path: string, material: MaterialHandle = INV
 				uv = {obj.attrib.texcoords[2 * index.vt_idx + 0], 1.0 - obj.attrib.texcoords[2 * index.vt_idx + 1]}
 			}
 
-			vertex := Vertex {
+			vertex := MeshVertex {
 				pos    = {
 					obj.attrib.vertices[3 * index.v_idx + 0],
 					obj.attrib.vertices[3 * index.v_idx + 1],
@@ -131,14 +155,35 @@ model_load :: proc(engine: ^Engine, path: string, material: MaterialHandle = INV
 	return model_register(engine, path, vertices[:], indices[:], material)
 }
 
+// A vertex as loaders and primitives build it. vertex_buffer_upload packs it into the GPU Vertex.
+MeshVertex :: struct {
+	pos:     Vec3,
+	uv:      Vec2,
+	normal:  Vec3,
+	tangent: Vec4, // xyz tangent, w bitangent sign
+}
+
+// Packs vertices into the GPU layout and uploads them.
+vertex_buffer_upload :: proc(engine: ^Engine, vertices: []MeshVertex) -> backend.Buffer(Vertex) {
+	packed := make([]Vertex, len(vertices), context.temp_allocator)
+	for v, i in vertices {
+		packed[i] = {
+			pos_uv_x    = {v.pos.x, v.pos.y, v.pos.z, v.uv.x},
+			normal_uv_y = {v.normal.x, v.normal.y, v.normal.z, v.uv.y},
+			tangent     = v.tangent,
+		}
+	}
+	return backend.buffer_upload(&engine.vk_ctx, packed, {.Storage})
+}
+
 model_register :: proc(
 	engine: ^Engine,
 	name: string,
-	vertices: []Vertex,
+	vertices: []MeshVertex,
 	indices: []u32,
 	material: MaterialHandle = INVALID_MATERIAL,
 ) -> ModelHandle {
-	vertex_buf := backend.buffer_upload(&engine.vk_ctx, vertices, {.Storage})
+	vertex_buf := vertex_buffer_upload(engine, vertices)
 	index_buf := backend.buffer_upload(&engine.vk_ctx, indices, {.Index})
 
 	material_handle := material_get_default(engine) if material == INVALID_MATERIAL else material
@@ -169,6 +214,10 @@ model_register :: proc(
 // Takes ownership of model, whose name must be an owned copy (it doubles as the map key).
 model_add :: proc(engine: ^Engine, model: Model) -> ModelHandle {
 	model := model
+	for &mesh in model.meshes {
+		engine.model_system.next_mesh_key += 1
+		mesh.sort_key = engine.model_system.next_mesh_key
+	}
 	model_compute_bounds(&model)
 	handle := pool_alloc(&engine.model_system.models, model)
 	engine.model_system.model_map[model.name] = handle
@@ -226,4 +275,26 @@ model_load_parts :: proc(
 		engine.model_system.parts_map[strings.clone(key)] = parts
 	}
 	return parts
+}
+
+// Creates a material binding without duplicating geometry. Both models live until engine_destroy.
+model_with_material :: proc(
+	engine: ^Engine,
+	source: ModelHandle,
+	name: string,
+	material: MaterialHandle,
+) -> ModelHandle {
+	assert(pool_is_valid(&engine.material_system.materials, material))
+	if handle, ok := engine.model_system.model_map[name]; ok do return handle
+	original := pool_get(&engine.model_system.models, source)
+	variant := Model {
+		name              = strings.clone(name),
+		borrowed_geometry = true,
+	}
+	for mesh in original.meshes {
+		mesh := mesh
+		mesh.material = material
+		append(&variant.meshes, mesh)
+	}
+	return model_add(engine, variant)
 }

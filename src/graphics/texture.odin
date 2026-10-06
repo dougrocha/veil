@@ -9,6 +9,12 @@ import "backend"
 
 import stbi "vendor:stb/image"
 
+// Bindless slots as the shaders see them: index.get() returns the resource (bindless.slang).
+@(shader_shared)
+TextureIndex :: distinct u32
+@(shader_shared)
+CubeIndex :: distinct u32
+
 TextureFilter :: backend.TextureFilter
 TextureRepeat :: backend.TextureRepeat
 TextureFormat :: backend.Format
@@ -510,8 +516,13 @@ texture_write_slot :: proc(engine: ^Engine, handle: TextureHandle) {
 }
 
 // Bindless cube slot of a cube texture, for SceneData.skybox_cube and friends.
-texture_cube_slot :: proc(engine: ^Engine, handle: TextureHandle) -> u32 {
+texture_cube_slot :: proc(engine: ^Engine, handle: TextureHandle) -> CubeIndex {
 	t := pool_get(&engine.texture_system.textures, handle)
 	assert(texture_is_cube(engine, t^), "texture_cube_slot: not a cube texture")
-	return t.cube_slot
+	return CubeIndex(t.cube_slot)
+}
+
+// The bindless slot a 2D texture's shader reads it through.
+texture_index :: proc(handle: TextureHandle) -> TextureIndex {
+	return TextureIndex(handle.index)
 }

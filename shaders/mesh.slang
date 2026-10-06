@@ -1,15 +1,6 @@
 #include "bindless.slang"
 import types;
 
-struct PushConstants {
-    SceneData* scene_data;
-    Vertex* vertex_buffer;
-    Material* material_buffer;
-    Transform* transform_buffer;
-    uint* instance_ids;
-    uint material_index;
-    uint instance_offset;
-};
 struct VSInput {
     uint vertex_index : SV_VertexID;
     uint instance_id : SV_InstanceID;
@@ -30,13 +21,13 @@ VSOutput vertex_main(VSInput input) {
     let transform = pc.transform_buffer[pc.instance_ids[pc.instance_offset + input.instance_id]];
 
     VSOutput output;
-    float4 world_pos = mul(transform.model, float4(v.pos.xyz, 1.0));
+    float4 world_pos = mul(transform.model, float4(v.pos_uv_x.xyz, 1.0));
     output.frag_pos = world_pos.xyz;
 
     output.pos = mul(pc.scene_data.proj, mul(pc.scene_data.view, world_pos));
 
     float3x3 normal_mat = (float3x3)transform.normal_matrix;
-    float3 N            = normalize(mul(normal_mat, v.normal.xyz));
+    float3 N            = normalize(mul(normal_mat, v.normal_uv_y.xyz));
 
     // Meshes without tangents (primitives, glTF without a TANGENT attribute)
     // store a zero tangent. Normalizing that yields NaN, and a NaN basis makes
@@ -60,7 +51,7 @@ VSOutput vertex_main(VSInput input) {
     output.frag_tangent   = T;
     output.frag_bitangent = B;
 
-    output.frag_uv = v.uv;
+    output.frag_uv = float2(v.pos_uv_x.w, v.normal_uv_y.w);
     return output;
 }
 
@@ -117,24 +108,24 @@ float3 calc_spot_light(SpotLight light, float3 normal, float3 view_dir, float3 f
     return base_color * intensity * attenuation;
 }
 
-[[vk_push_constant]] PushConstants pc;
+[[vk_push_constant]] MeshPushConstants pc;
 [[vk_binding(4, 0)]] SamplerCubeArrayShadow shadow_cubes;
 [[vk_binding(5, 0)]] Sampler2DArrayShadow shadow_2d_maps;
 
-float4 sample_base_color(uint index, float2 uv) {
-    return gpu_texture(index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
+float4 sample_base_color(TextureIndex texture, float2 uv) {
+    return texture.get().Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
 }
 
-float4 sample_normal_map(uint index, float2 uv) {
-    return gpu_texture(index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
+float4 sample_normal_map(TextureIndex texture, float2 uv) {
+    return texture.get().Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
 }
 
-float4 sample_metallic_roughness(uint index, float2 uv) {
-    return gpu_texture(index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
+float4 sample_metallic_roughness(TextureIndex texture, float2 uv) {
+    return texture.get().Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
 }
 
-float4 sample_occlusion(uint index, float2 uv) {
-    return gpu_texture(index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
+float4 sample_occlusion(TextureIndex texture, float2 uv) {
+    return texture.get().Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), uv);
 }
 
 // Normal offset bias: move the lookup point along the geometric normal by about one shadow texel,
@@ -148,6 +139,7 @@ float3 normal_offset(float3 frag_pos, float3 geo_normal, float3 to_light, float 
 }
 
 float calc_point_shadow_factor(PointLight light, uint light_index, float3 frag_pos, float3 normal) {
+    if (light_index >= MAX_POINT_SHADOW_LIGHTS) return 1.0;
     float3 light_pos = light.position_range.xyz;
     // A 90 degree cube face: one texel spans 2 * distance / face size.
     float texel_world = 2.0 * length(frag_pos - light_pos) / POINT_SHADOW_MAP_SIZE;
@@ -285,7 +277,7 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
     bool shadows_disabled = pc.scene_data.debug_settings.disable_shadows != 0;
     uint light_mask = pc.scene_data.debug_settings.light_mask;
 
-    for (uint i = 0; i < ((light_mask & LIGHT_MASK_DIRECTIONAL) != 0 ? pc.scene_data.directional_light_count : 0); i++) {
+    for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_DIRECTIONAL)) != 0 ? pc.scene_data.directional_light_count : 0); i++) {
         float3 to_light = normalize(-pc.scene_data.directional_lights[i].direction_diffuse.xyz);
         uint cascade = SHADOW_MAP_CASCADE_COUNT; // 'past last split' tint when shadows are bypassed
         float shadow = shadows_disabled ? 1.0 : calc_dir_shadow_factor(vert.frag_pos, normal, to_light, i, cascade);
@@ -295,20 +287,20 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
 
     if (pc.scene_data.debug_settings.show_cascades != 0) total_light *= cascade_tint;
 
-    for (uint i = 0; i < ((light_mask & LIGHT_MASK_POINT) != 0 ? pc.scene_data.point_light_count : 0); i++) {
+    for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_POINT)) != 0 ? pc.scene_data.point_light_count : 0); i++) {
         float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[i], i, vert.frag_pos, normalize(vert.frag_normal));
         total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
     }
 
-    for (uint i = 0; i < ((light_mask & LIGHT_MASK_SPOT) != 0 ? pc.scene_data.spot_light_count : 0); i++) {
+    for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_SPOT)) != 0 ? pc.scene_data.spot_light_count : 0); i++) {
         float3 to_light = normalize(pc.scene_data.spot_lights[i].position_range.xyz - vert.frag_pos);
         float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, normalize(vert.frag_normal), to_light);
         total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
     }
 
     // 0 = opaque, 1 = mask, 2 = blend; matches AlphaMode in Odin.
-    if (mat.alpha_mode == 1 && tex_color.a < mat.alpha_cutoff) discard;
-    float output_alpha = mat.alpha_mode == 2 ? tex_color.a : 1.0;
+    if (mat.alpha_mode == ALPHA_MODE_MASK && tex_color.a < mat.alpha_cutoff) discard;
+    float output_alpha = mat.alpha_mode == ALPHA_MODE_BLEND ? tex_color.a : 1.0;
     // Emission is light the surface gives off itself, so no lighting, shadow, AO or albedo scales it.
     float3 color = tex_color.rgb * total_light + mat.emissive.rgb;
     return float4(color, output_alpha);

@@ -1,57 +1,23 @@
 package graphics
 
-MAX_POINT_LIGHTS :: 8
-MAX_DIRECTIONAL_LIGHTS :: 2
-MAX_SPOT_LIGHTS :: 4
-SHADOW_MAP_CASCADE_COUNT :: 4
-POINT_SHADOW_MAP_SIZE :: 1024 // per cube face
-MAX_SHADOW_2D_SLOTS :: (MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT) + MAX_SPOT_LIGHTS
-LIGHT_MASK_POINT :: 1
-LIGHT_MASK_DIRECTIONAL :: 2
-LIGHT_MASK_SPOT :: 4
-LIGHT_MASK_ALL :: 7
+// Scene-wide types shared with the shaders. Feature types live with their feature; anything
+// tagged @(shader_shared) is written to shaders/types.slang by `just gpu-types`, which also
+// asserts every struct's layout in gpu_layout_generated.odin.
+
+@(shader_shared)
 SAMPLER_LINEAR_REPEAT :: 0
+@(shader_shared)
 SAMPLER_LINEAR_CLAMP :: 1
+@(shader_shared)
 SAMPLER_NEAREST_CLAMP :: 2
+@(shader_shared)
 BINDLESS_SAMPLER_COUNT :: 3
+@(shader_shared)
 BINDLESS_STORAGE_IMAGE_COUNT :: 16
+@(shader_shared)
 BINDLESS_CUBE_COUNT :: 16
 
-Vertex :: struct #max_field_align(16) {
-	pos:     Vec3,
-	_pad0:   f32,
-	uv:      Vec2,
-	_pad1:   Vec2,
-	normal:  Vec3,
-	_pad2:   f32,
-	tangent: Vec4,
-}
-
-GpuAmbientLight :: struct #max_field_align(16) {
-	color_brightness: Vec4,
-}
-
-GpuPointLight :: struct #max_field_align(16) {
-	position_range:      Vec4,
-	color_shadow_near:   Vec4,
-	attenuation_diffuse: Vec4,
-	specular_reserved:   Vec4,
-}
-
-GpuDirectionalLight :: struct #max_field_align(16) {
-	direction_diffuse:       Vec4,
-	color_specular:          Vec4,
-	shadow_maximum_reserved: Vec4,
-}
-
-GpuSpotLight :: struct #max_field_align(16) {
-	position_range:  Vec4,
-	direction_inner: Vec4,
-	color_outer:     Vec4,
-	attenuation:     Vec4,
-	intensity:       Vec4,
-}
-
+@(shader_shared)
 GpuTimeInfo :: struct #max_field_align(16) {
 	time:        f32,
 	delta_time:  f32,
@@ -59,6 +25,7 @@ GpuTimeInfo :: struct #max_field_align(16) {
 	_reserved:   u32,
 }
 
+@(shader_shared)
 GpuDebugSettings :: struct #max_field_align(16) {
 	show_cascades:   u32,
 	disable_shadows: u32,
@@ -66,43 +33,26 @@ GpuDebugSettings :: struct #max_field_align(16) {
 	_reserved:       u32,
 }
 
-GpuShadowCascadeData :: struct #max_field_align(16) {
-	split: Vec4,
-	bias:  Vec4,
-}
-
+@(shader_shared)
 GpuTransform :: struct #max_field_align(16) {
 	model:         Mat4x4,
 	normal_matrix: Mat4x4,
 }
 
-GpuMaterial :: struct #max_field_align(16) {
-	base_color:                 Vec4,
-	perceptual_roughness:       f32,
-	metallic:                   f32,
-	base_color_texture:         u32,
-	metallic_roughness_texture: u32,
-	normal_map_texture:         u32,
-	occlusion_texture:          u32,
-	alpha_mode:                 u32,
-	alpha_cutoff:               f32,
-	double_sided:               u32, // back faces are drawn and lit with the normal flipped
-	emissive:                   Vec4, // rgb: unbounded HDR emitted color, added after lighting; w unused
-}
-
+@(shader_shared)
 SceneData :: struct #max_field_align(16) {
 	view:                    Mat4x4,
 	proj:                    Mat4x4,
-	point_light_view_proj:   [MAX_POINT_LIGHTS][6]Mat4x4,
+	point_light_view_proj:   [MAX_POINT_SHADOW_LIGHTS][6]Mat4x4,
 	shadow_2d_view_proj:     [MAX_SHADOW_2D_SLOTS]Mat4x4,
-	shadow_cascade_data:     [MAX_DIRECTIONAL_LIGHTS]ShadowCascadeData,
+	shadow_cascade_data:     [MAX_DIRECTIONAL_LIGHTS]GpuShadowCascadeData,
 	cam_pos_shadow_map_size: Vec4,
 	time_info:               GpuTimeInfo,
 	point_lights:            [MAX_POINT_LIGHTS]GpuPointLight,
 	point_light_count:       u32,
 	directional_light_count: u32,
 	spot_light_count:        u32,
-	skybox_cube:             u32, // bindless cube slot the skybox (and later IBL) samples
+	skybox_cube:             CubeIndex, // bindless cube slot the skybox (and later IBL) samples
 	directional_lights:      [MAX_DIRECTIONAL_LIGHTS]GpuDirectionalLight,
 	spot_lights:             [MAX_SPOT_LIGHTS]GpuSpotLight,
 	ambient_light:           GpuAmbientLight,

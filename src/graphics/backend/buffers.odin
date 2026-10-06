@@ -19,7 +19,7 @@ GPUPtr :: struct($T: typeid) {
 	address: vk.DeviceAddress,
 }
 
-MAX_BUFFERS :: 8192
+MAX_BUFFERS :: 32768
 
 // What the GPU does with the buffer.
 BufferUsage :: enum {

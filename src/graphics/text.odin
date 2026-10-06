@@ -152,22 +152,22 @@ ui_draw_text :: proc(engine: ^Engine, font: ^Baked_Font, text: string, x, y: f32
 			false,
 		)
 
-		top_left := UI_Vertex {
+		top_left := UIVertex {
 			position = {quad.x0, quad.y0},
 			uv       = {quad.s0, quad.t0},
 			color    = color,
 		}
-		top_right := UI_Vertex {
+		top_right := UIVertex {
 			position = {quad.x1, quad.y0},
 			uv       = {quad.s1, quad.t0},
 			color    = color,
 		}
-		bottom_left := UI_Vertex {
+		bottom_left := UIVertex {
 			position = {quad.x0, quad.y1},
 			uv       = {quad.s0, quad.t1},
 			color    = color,
 		}
-		bottom_right := UI_Vertex {
+		bottom_right := UIVertex {
 			position = {quad.x1, quad.y1},
 			uv       = {quad.s1, quad.t1},
 			color    = color,

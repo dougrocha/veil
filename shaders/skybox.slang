@@ -1,9 +1,6 @@
 #include "bindless.slang"
 import types;
 
-struct SkyboxPushConstants {
-    SceneData* scene_data;
-};
 [[vk_push_constant]] SkyboxPushConstants pc;
 
 struct VSOutput {
@@ -41,5 +38,5 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragment_main(VSOutput input) : SV_Target {
-    return gpu_cube(pc.scene_data.skybox_cube).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), input.tex_coords);
+    return pc.scene_data.skybox_cube.get().Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), input.tex_coords);
 }

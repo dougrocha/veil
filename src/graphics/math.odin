@@ -19,6 +19,8 @@ Transform :: struct {
 	scale:       Vec3,
 }
 
+Matrix4 :: matrix[4, 4]f32
+
 transform_create :: proc(
 	translation: Vec3 = {0.0, 0.0, 0.0},
 	rotation: Quat = linalg.QUATERNIONF32_IDENTITY,
@@ -146,4 +148,21 @@ matrix4_ortho3d_z0_f32 :: proc "contextless" (
 	}
 
 	return
+}
+
+// The x, y and z axes of an affine matrix's upper 3x3, scale included.
+matrix_axes :: proc(m: Mat4x4) -> (x, y, z: Vec3) {
+	x = {m[0, 0], m[1, 0], m[2, 0]}
+	y = {m[0, 1], m[1, 1], m[2, 1]}
+	z = {m[0, 2], m[1, 2], m[2, 2]}
+	return
+}
+
+matrix_translation :: proc(m: Mat4x4) -> Vec3 {
+	return {m[0, 3], m[1, 3], m[2, 3]}
+}
+
+matrix_max_scale :: proc(m: Mat4x4) -> f32 {
+	x, y, z := matrix_axes(m)
+	return max(linalg.length(x), linalg.length(y), linalg.length(z))
 }

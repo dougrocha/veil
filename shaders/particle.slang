@@ -1,17 +1,5 @@
 import types;
 
-struct Particle {
-    float4 position;
-    float4 velocity;
-    float4 color;
-};
-
-struct ParticlePushConstants {
-    SceneData* scene_data;
-    Particle* particles_in;
-    Particle* particles_out;
-    float delta_time;
-};
 [[vk_push_constant]] ParticlePushConstants pc;
 
 struct VSOutput {

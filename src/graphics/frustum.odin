@@ -184,40 +184,30 @@ FRUSTUM_NEAR_PLANE :: 0
 
 // skip_near ignores the near plane, for passes that clamp depth instead of clipping at it
 // (directional shadow cascades), where volumes in front of the near plane still contribute.
-volume_is_on_frustum :: proc(frustum: Frustum, volume: Volume, transform: Transform, skip_near := false) -> bool {
+volume_is_on_frustum :: proc(frustum: Frustum, volume: Volume, world: Mat4x4, skip_near := false) -> bool {
 	switch v in volume {
 	case BoundingSphere:
-		return sphere_is_on_frustum(frustum, v, transform, skip_near)
+		return sphere_is_on_frustum(frustum, v, world, skip_near)
 	case AABB:
-		return aabb_is_on_frustum(frustum, v, transform, skip_near)
+		return aabb_is_on_frustum(frustum, v, world, skip_near)
 	case:
 		return false
 	}
 }
 
-sphere_is_on_frustum :: proc(
-	frustum: Frustum,
-	volume: BoundingSphere,
-	transform: Transform,
-	skip_near := false,
-) -> bool {
-	return global_sphere_is_on_frustum(frustum, sphere_to_global(volume, transform), skip_near)
+sphere_is_on_frustum :: proc(frustum: Frustum, volume: BoundingSphere, world: Mat4x4, skip_near := false) -> bool {
+	return global_sphere_is_on_frustum(frustum, sphere_to_global(volume, world), skip_near)
 }
 
-aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, transform: Transform, skip_near := false) -> bool {
-	return global_aabb_is_on_frustum(frustum, aabb_to_global(volume, transform), skip_near)
+aabb_is_on_frustum :: proc(frustum: Frustum, volume: AABB, world: Mat4x4, skip_near := false) -> bool {
+	return global_aabb_is_on_frustum(frustum, aabb_to_global(volume, world), skip_near)
 }
 
 // The world-space sphere sphere_is_on_frustum tests. Lets a caller test one volume against many
 // frustums without recomputing it.
-sphere_to_global :: proc(volume: BoundingSphere, transform: Transform) -> BoundingSphere {
-	global_scale := transform_global_scale(transform)
-
-	global_center := transform_to_matrix(transform) * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
-
-	max_scale := max(global_scale.x, global_scale.y, global_scale.z)
-
-	return BoundingSphere{global_center.xyz, volume.radius * max_scale}
+sphere_to_global :: proc(volume: BoundingSphere, world: Mat4x4) -> BoundingSphere {
+	center := world * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
+	return BoundingSphere{center.xyz, volume.radius * matrix_max_scale(world)}
 }
 
 global_sphere_is_on_frustum :: proc(frustum: Frustum, global_sphere: BoundingSphere, skip_near := false) -> bool {
@@ -231,31 +221,16 @@ global_sphere_is_on_frustum :: proc(frustum: Frustum, global_sphere: BoundingSph
 	return true
 }
 
-// The world-space AABB aabb_is_on_frustum tests, enclosing the transformed box.
-aabb_to_global :: proc(volume: AABB, transform: Transform) -> AABB {
-	global_center := transform_to_matrix(transform) * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
-
-	extents := volume.extents * linalg.abs(transform_global_scale(transform))
-	right := transform_right(transform) * extents.x
-	up := transform_up(transform) * extents.y
-	forward := transform_forward(transform) * extents.z
-
-	new_ii :=
-		abs(linalg.dot(Vec3{1, 0, 0}, right)) +
-		abs(linalg.dot(Vec3{1, 0, 0}, up)) +
-		abs(linalg.dot(Vec3{1, 0, 0}, forward))
-
-	new_ij :=
-		abs(linalg.dot(Vec3{0, 1, 0}, right)) +
-		abs(linalg.dot(Vec3{0, 1, 0}, up)) +
-		abs(linalg.dot(Vec3{0, 1, 0}, forward))
-
-	new_ik :=
-		abs(linalg.dot(Vec3{0, 0, 1}, right)) +
-		abs(linalg.dot(Vec3{0, 0, 1}, up)) +
-		abs(linalg.dot(Vec3{0, 0, 1}, forward))
-
-	return AABB{global_center.xyz, {new_ii, new_ij, new_ik}}
+// The world-space AABB aabb_is_on_frustum tests, enclosing the transformed box: each world extent
+// sums the box's extents along the absolute matrix row.
+aabb_to_global :: proc(volume: AABB, world: Mat4x4) -> AABB {
+	center := world * Vec4{volume.center.x, volume.center.y, volume.center.z, 1.0}
+	e := volume.extents
+	extents: Vec3
+	for i in 0 ..< 3 {
+		extents[i] = abs(world[i, 0]) * e.x + abs(world[i, 1]) * e.y + abs(world[i, 2]) * e.z
+	}
+	return AABB{center.xyz, extents}
 }
 
 global_aabb_is_on_frustum :: proc(frustum: Frustum, global_aabb: AABB, skip_near := false) -> bool {

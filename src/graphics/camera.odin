@@ -5,70 +5,6 @@ import "core:math/linalg"
 
 // right-hand rule: thumb=+X (right), index=+Y (up), middle=+Z (toward you/outside screen)
 
-DEFAULT_CAMERA_NAME :: "default_camera"
-
-CameraSystemConfig :: struct {
-	max_camera_count: int,
-}
-
-CameraSystem :: struct {
-	config:         CameraSystemConfig,
-	default_camera: Camera,
-	cameras:        map[string]Camera,
-}
-
-camera_system_create :: proc(config: CameraSystemConfig) -> CameraSystem {
-	cs := CameraSystem {
-		config         = config,
-		default_camera = camera_create(),
-	}
-	reserve(&cs.cameras, config.max_camera_count)
-	return cs
-}
-
-camera_system_destroy :: proc(cs: ^CameraSystem) {
-	delete(cs.cameras)
-}
-
-camera_system_add_camera :: proc(cs: ^CameraSystem, name: string, camera: Camera) {
-	log.assertf(
-		len(cs.cameras) < cs.config.max_camera_count,
-		"camera system full (max %v)",
-		cs.config.max_camera_count,
-	)
-	cam := camera
-	cam.name = name
-	cs.cameras[name] = cam
-}
-
-camera_system_get_camera :: proc(cs: ^CameraSystem, name: string) -> ^Camera {
-	if name == DEFAULT_CAMERA_NAME {
-		return &cs.default_camera
-	}
-
-	cam, ok := &cs.cameras[name]
-	log.assertf(ok, "camera (%v) not found", name)
-	return cam
-}
-
-camera_system_delete_camera :: proc(cs: ^CameraSystem, name: string) {
-	if name == DEFAULT_CAMERA_NAME {
-		log.warnf("cannot delete default camera")
-		return
-	}
-
-	if !(name in cs.cameras) {
-		log.assertf(false, "camera (%v) not found", name)
-		return
-	}
-
-	delete_key(&cs.cameras, name)
-}
-
-camera_system_get_default :: proc(cs: ^CameraSystem) -> ^Camera {
-	return &cs.default_camera
-}
-
 CameraType :: enum {
 	FirstPerson,
 	ThirdPerson,
@@ -157,6 +93,7 @@ Camera :: struct {
 	projection:        Projection,
 	near:              f32,
 	far:               f32,
+	post:              PostSettings,
 }
 
 camera_create :: proc(
@@ -176,6 +113,7 @@ camera_create :: proc(
 		projection = Perspective_Projection{fov_y = linalg.to_radians(f32(60))},
 		near = 0.1,
 		far = 100.0,
+		post = POST_SETTINGS_DEFAULT,
 	}
 	camera_update_vectors(&c)
 	return c
@@ -260,105 +198,4 @@ screen_to_world_ray :: proc(camera: Camera, mouse_pos: Vec2, viewport_size: Vec2
 	return
 }
 
-CameraMovement :: enum {
-	Forward,
-	Backward,
-	Left,
-	Right,
-	Up,
-	Down,
-}
-
-MIN_ORTHO_EXTENT :: 0.1
 MIN_ORBIT_DISTANCE :: 0.1
-
-camera_process_keyboard :: proc(c: ^Camera, direction: CameraMovement, delta_time: f32) {
-	velocity := c.movement_speed * delta_time
-
-	// Dolly movement is invisible in orthographic projection (no perspective
-	// divide), so forward/backward zooms the ortho extent instead. Takes
-	// priority over orbit distance below: in ortho, distance alone wouldn't
-	// change what's visible either.
-	if p, ok := &c.projection.(Ortho_Projection); ok {
-		switch direction {
-		case .Forward:
-			ortho_scaling_mode_zoom(&p.scaling_mode, -velocity)
-			return
-		case .Backward:
-			ortho_scaling_mode_zoom(&p.scaling_mode, velocity)
-			return
-		case .Left, .Right, .Up, .Down:
-		}
-	}
-
-	if c.control_type == .Orbit {
-		switch direction {
-		case .Forward:
-			c.orbit_distance = max(c.orbit_distance - velocity, MIN_ORBIT_DISTANCE)
-			camera_update_vectors(c)
-			return
-		case .Backward:
-			c.orbit_distance += velocity
-			camera_update_vectors(c)
-			return
-		case .Left:
-			c.orbit_target -= c.right * velocity
-			camera_update_vectors(c)
-			return
-		case .Right:
-			c.orbit_target += c.right * velocity
-			camera_update_vectors(c)
-			return
-		case .Up:
-			c.orbit_target += c.up * velocity
-			camera_update_vectors(c)
-			return
-		case .Down:
-			c.orbit_target -= c.up * velocity
-			camera_update_vectors(c)
-			return
-		}
-	}
-
-	switch direction {
-	case .Forward:
-		c.position += c.front * velocity
-	case .Backward:
-		c.position -= c.front * velocity
-	case .Left:
-		c.position -= c.right * velocity
-	case .Right:
-		c.position += c.right * velocity
-	case .Up:
-		c.position += c.up * velocity
-	case .Down:
-		c.position -= c.up * velocity
-	}
-}
-
-ortho_scaling_mode_zoom :: proc(mode: ^Ortho_Scaling_Mode, delta: f32) {
-	switch &m in mode {
-	case Fixed_Size:
-		m.width = max(m.width + delta, MIN_ORTHO_EXTENT)
-		m.height = max(m.height + delta, MIN_ORTHO_EXTENT)
-	case Fixed_Vertical:
-		m.height = max(m.height + delta, MIN_ORTHO_EXTENT)
-	}
-}
-
-camera_process_mouse_movement :: proc(c: ^Camera, x_offset: f32, y_offset: f32, constrain_pitch: bool = true) {
-	c.yaw += x_offset * c.mouse_sensitivity
-	c.pitch += y_offset * c.mouse_sensitivity
-
-	if constrain_pitch {
-		c.pitch = clamp(c.pitch, -89.0, 89.0)
-	}
-
-	camera_update_vectors(c)
-}
-
-camera_process_mouse_scroll :: proc(c: ^Camera, y_offset: f32) {
-	if p, ok := &c.projection.(Perspective_Projection); ok {
-		p.fov_y = clamp(p.fov_y - linalg.to_radians(y_offset), linalg.to_radians(f32(1)), linalg.to_radians(f32(90)))
-	}
-}

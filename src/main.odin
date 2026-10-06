@@ -1,6 +1,5 @@
 package main
 
-import "core:c"
 import "core:fmt"
 import "core:log"
 import "core:math/linalg"
@@ -9,18 +8,8 @@ import "core:time"
 
 import sdl "vendor:sdl3"
 
-import gfx "graphics"
-
-// Game-side state shared by the main loop and its helpers.
-App :: struct {
-	window:          ^sdl.Window,
-	width:           u32,
-	height:          u32,
-	engine:          gfx.Engine,
-	scene:           gfx.Scene,
-	world:           World,
-	last_frame_time: time.Time,
-}
+import gfx "veil:graphics"
+import "veil:handles"
 
 main :: proc() {
 	// Tracks every heap allocation for the stats overlay and reports leaks at exit. Set up
@@ -48,60 +37,57 @@ main :: proc() {
 	}
 	defer sdl.Quit()
 
-	app := App {
-		width  = 1280,
-		height = 720,
-	}
+	engine: gfx.Engine
+	world: World
+	width, height := u32(1280), u32(720)
+	window: ^sdl.Window
 
-	app.window = sdl.CreateWindow("veil", i32(app.width), i32(app.height), {.VULKAN, .RESIZABLE})
-	if app.window == nil {
+	window = sdl.CreateWindow("veil", i32(width), i32(height), {.VULKAN, .RESIZABLE})
+	if window == nil {
 		log.errorf("Failed to create window: %s", sdl.GetError())
 		return
 	}
-	defer sdl.DestroyWindow(app.window)
+	defer sdl.DestroyWindow(window)
 
 	// Starts free so the window doesn't grab the cursor on launch; Esc toggles mouse look.
 	mouse_captured := false
 
-	init_ok := gfx.engine_create(&app.engine, app.window, app.width, app.height)
+	init_ok := gfx.engine_create(&engine, window, width, height)
 	if !init_ok {
 		// Fatal by design: no engine_destroy, the process exit reclaims everything.
 		log.errorf("Failed to initialize the engine")
 		return
 	}
-	when ODIN_DEBUG do gfx.stats_track_heap(&app.engine, &heap_tracker)
-	defer gfx.engine_destroy(&app.engine)
+	when ODIN_DEBUG do gfx.stats_track_heap(&engine, &heap_tracker)
+	defer gfx.engine_destroy(&engine)
 
-	ui_font, font_ok := gfx.font_load_default_system(&app.engine, 20)
+	ui_font, font_ok := gfx.font_load_default_system(&engine, 20)
 	assert(font_ok, "no default system font found")
 	// Declared after engine_destroy's defer, so it runs first.
-	defer gfx.font_destroy(&app.engine, &ui_font)
+	defer gfx.font_destroy(&engine, &ui_font)
 
-	// After the engine, which owns the models the scene's instances point at.
-	gfx.scene_create(&app.scene, &app.engine)
-	defer gfx.scene_destroy(&app.scene)
-	world_create(&app.world)
-	defer world_destroy(&app.world)
+	// Entities hold engine model handles: created after the engine, so destroyed before it.
+	world_create(&world)
+	defer world_destroy(&world)
 
-	app.last_frame_time = time.now()
+	last_frame_time := time.now()
 
-	// load_sponza(&app.engine, &app.scene)
-	// load_transparency_test(&app.engine, &app.scene)
-	// load_bloom_test(&app.engine, &app.scene)
-	// load_pbr_showcase(&app.engine, &app.scene)
-	// load_shadow_test(&app.engine, &app.scene)
-	// load_cornell_box(&app.engine, &app.scene)
-	load_max_instances(&app.engine, &app.scene)
+	load_max_instances(&engine, &world)
+	if !entity_alive(&world, world.active_camera) {
+		world.active_camera = entity_spawn_camera(&world, gfx.camera_create())
+	}
 
-	gizmo: gfx.GizmoController
+	gizmo: GizmoController
 	show_stats := true
+	post_control: PostControl
 	main_loop: for {
 		// Game-side temp allocations live for one loop iteration; the engine resets its own
 		// frame arena inside engine_render.
 		defer free_all(context.temp_allocator)
 
 		ev: sdl.Event
-		active_cam := gfx.camera_system_get_camera(&app.engine.camera_system, app.scene.active_camera_name)
+		// The active camera's rig: controls edit it, and it drives the entity's transform below.
+		active_cam := &entity_get(&world, world.active_camera).camera
 
 		for sdl.PollEvent(&ev) {
 			#partial switch ev.type {
@@ -110,17 +96,15 @@ main :: proc() {
 			case .KEY_DOWN:
 				#partial switch ev.key.scancode {
 				case .ESCAPE:
-					gfx.gizmo_cancel(&gizmo)
+					gizmo_cancel(&gizmo)
 					mouse_captured = !mouse_captured
-					_ = sdl.SetWindowRelativeMouseMode(app.window, mouse_captured)
+					_ = sdl.SetWindowRelativeMouseMode(window, mouse_captured)
 				case .G:
-					gfx.gizmo_set_mode(&gizmo, .Translate)
+					gizmo_set_mode(&gizmo, .Translate)
 				case .R:
-					gfx.gizmo_set_mode(&gizmo, .Rotate)
+					gizmo_set_mode(&gizmo, .Rotate)
 				case .L:
-					gfx.gizmo_toggle_space(&gizmo)
-				case .H:
-					app.engine.debug_settings.show_lights = !app.engine.debug_settings.show_lights
+					gizmo_toggle_space(&gizmo)
 				case ._1:
 					active_cam.near = 0.1
 					active_cam.far = 100.0
@@ -136,30 +120,30 @@ main :: proc() {
 				case .F3:
 					show_stats = !show_stats
 				case .C:
-					app.engine.debug_settings.show_cascades = 1 - app.engine.debug_settings.show_cascades
+					engine.settings.cascade_colors = !engine.settings.cascade_colors
 				case .V:
-					app.engine.debug_settings.disable_shadows = 1 - app.engine.debug_settings.disable_shadows
-					log.infof("shadows disabled: %v", app.engine.debug_settings.disable_shadows != 0)
+					engine.settings.shadows = !engine.settings.shadows
+					log.infof("shadows: %v", engine.settings.shadows)
 				case .P:
-					app.engine.debug_settings.light_mask ~= u32(gfx.LightMask.Point)
-					log.infof("light mask: 0b%b", app.engine.debug_settings.light_mask)
+					engine.settings.lights ~= {.Point}
+					log.infof("lights: %v", engine.settings.lights)
 				case .K:
-					app.engine.debug_settings.light_mask ~= u32(gfx.LightMask.Spot)
-					log.infof("light mask: 0b%b", app.engine.debug_settings.light_mask)
+					engine.settings.lights ~= {.Spot}
+					log.infof("lights: %v", engine.settings.lights)
 				case .J:
-					app.engine.debug_settings.light_mask ~= u32(gfx.LightMask.Directional)
-					log.infof("light mask: 0b%b", app.engine.debug_settings.light_mask)
+					engine.settings.lights ~= {.Directional}
+					log.infof("lights: %v", engine.settings.lights)
 				case .LEFT:
-					gfx.post_control_cycle(&app.engine, -1)
+					post_control_cycle(&post_control, -1)
 				case .RIGHT:
-					gfx.post_control_cycle(&app.engine, 1)
+					post_control_cycle(&post_control, 1)
 				case .UP:
-					gfx.post_control_step(&app.engine, 1)
+					post_control_step(&active_cam.post, post_control, 1)
 				case .DOWN:
-					gfx.post_control_step(&app.engine, -1)
+					post_control_step(&active_cam.post, post_control, -1)
 				case .X:
-					app.engine.debug_settings.particles = !app.engine.debug_settings.particles
-					log.infof("particles: %v", app.engine.debug_settings.particles)
+					engine.settings.particles = !engine.settings.particles
+					log.infof("particles: %v", engine.settings.particles)
 				case .O:
 					switch _ in active_cam.projection {
 					case gfx.Perspective_Projection:
@@ -176,91 +160,61 @@ main :: proc() {
 						active_cam.control_type = .Free
 					} else {
 						target := gfx.Vec3{0, 0, 0}
-						if gfx.selected_instance(&app.scene) != gfx.INVALID_INSTANCE {
-							selected := gfx.instance_get(&app.scene, gfx.selected_instance(&app.scene))
-							target = selected.transform.translation
+						if entity_alive(&world, world.selected) {
+							target = gfx.matrix_translation(entity_get(&world, world.selected).global_transform)
 						}
 						gfx.camera_orbit_begin(active_cam, target)
 					}
 				}
 			case .MOUSE_MOTION:
 				if mouse_captured {
-					gfx.camera_process_mouse_movement(active_cam, ev.motion.xrel, -ev.motion.yrel)
+					camera_process_mouse_movement(active_cam, ev.motion.xrel, -ev.motion.yrel)
 				} else if gizmo.dragging {
-					mouse_pos, ok := mouse_to_pixels(app.window, &app.engine, ev.motion.x, ev.motion.y)
-					if ok do gfx.gizmo_mouse_move(&gizmo, &app.engine, &app.scene, active_cam^, mouse_pos)
+					mouse_pos, ok := mouse_to_pixels(window, &engine, ev.motion.x, ev.motion.y)
+					if ok do gizmo_mouse_move(&gizmo, &engine, &world, world_camera(&world), mouse_pos)
 				}
 			case .MOUSE_BUTTON_DOWN:
 				if !mouse_captured && ev.button.button == sdl.BUTTON_LEFT {
-					mouse_pos, ok := mouse_to_pixels(app.window, &app.engine, ev.button.x, ev.button.y)
+					mouse_pos, ok := mouse_to_pixels(window, &engine, ev.button.x, ev.button.y)
 					if !ok do continue
-					if !gfx.gizmo_mouse_down(&gizmo, &app.engine, &app.scene, active_cam^, mouse_pos) {
-						hit := gfx.pick(&app.engine, &app.scene, mouse_pos)
-						app.scene.selection = nil
-						if hit != gfx.INVALID_INSTANCE {
-							app.scene.selection = hit
-							instance := gfx.instance_get(&app.scene, hit)
-							model := gfx.pool_get(&app.engine.model_system.models, instance.model)
+					if !gizmo_mouse_down(&gizmo, &engine, &world, world_camera(&world), mouse_pos) {
+						world.selected = world_pick(&engine, &world, mouse_pos)
+						if world.selected != INVALID_ENTITY {
+							model := gfx.pool_get(
+								&engine.model_system.models,
+								entity_get(&world, world.selected).model,
+							)
 							log.infof("selected: %v", model.name)
 						}
 					}
 				}
 			case .MOUSE_BUTTON_UP:
-				if ev.button.button == sdl.BUTTON_LEFT do gfx.gizmo_mouse_up(&gizmo)
+				if ev.button.button == sdl.BUTTON_LEFT do gizmo_mouse_up(&gizmo)
 			case .MOUSE_WHEEL:
-				gfx.camera_process_mouse_scroll(active_cam, ev.wheel.y)
+				camera_process_mouse_scroll(active_cam, ev.wheel.y)
 			case .WINDOW_PIXEL_SIZE_CHANGED:
-				app.width = u32(ev.window.data1)
-				app.height = u32(ev.window.data2)
+				width = u32(ev.window.data1)
+				height = u32(ev.window.data2)
 			}
 		}
 
 		now := time.now()
-		delta_time := f32(time.duration_seconds(time.diff(app.last_frame_time, now)))
-		app.last_frame_time = now
+		delta_time := f32(time.duration_seconds(time.diff(last_frame_time, now)))
+		last_frame_time = now
 
 		process_input(active_cam, delta_time)
+		entity_get(&world, world.active_camera).transform = camera_rig_transform(active_cam^)
 
-		gfx.gizmo_draw(&gizmo, &app.engine, &app.scene)
+		world_flush(&world)
+		world_update(&world, delta_time)
+		packet := world_extract(&world)
 
-		// Debug texture views are queued per frame like UI text. Example: show the selection's
-		// textures (material maps, or a light's shadow maps) as a column of 128px tiles.
-		//
-		// app.scene.selection = gfx.DirectionalLightIndex(0)
-		// for tex, i in gfx.entity_textures(&app.engine, &app.scene, app.scene.selection) {
-		// 	rect := gfx.Rect2D {
-		// 		offset = {10, 50 + i32(i) * 136},
-		// 		extent = {128, 128},
-		// 	}
-		// 	gfx.debug_view_draw(&app.engine, tex.view, rect)
-		// }
-		//
-		// Any 2D texture handle works too (not cubemaps like the skybox):
-		// gfx.debug_view_texture(&app.engine, some_texture, {offset = {10, 50}, extent = {256, 256}})
+		gizmo_draw(&gizmo, &engine, &world, packet.camera)
+		if show_stats {
+			post_line := post_control_line(&engine, packet.camera.post, post_control)
+			gfx.stats_draw(&engine, &ui_font, 10, 24, 24, {post_line})
+		}
 
-		if show_stats do gfx.stats_draw(&app.engine, &ui_font, 10, 24, 24)
-
-		gfx.engine_render(&app.engine, &app.scene, app.width, app.height, delta_time)
-		world_sweep(&app.world) // after engine_render, which sweeps the scene
+		gfx.engine_render(&engine, &packet, width, height)
 	}
-}
-// 4K scanned PBR models with their texture sets.
-// SDL reports logical window coordinates; picking and the gizmo work in render extent pixels.
-mouse_to_pixels :: proc(window: ^sdl.Window, engine: ^gfx.Engine, x, y: f32) -> (pos: gfx.Vec2, ok: bool) {
-	window_w, window_h: c.int
-	_ = sdl.GetWindowSize(window, &window_w, &window_h)
-	viewport := gfx.render_viewport(engine)
-	if window_w <= 0 || window_h <= 0 || viewport.x <= 0 || viewport.y <= 0 do return {}, false
-	return {x * viewport.x / f32(window_w), y * viewport.y / f32(window_h)}, true
-}
-
-process_input :: proc(camera: ^gfx.Camera, dt: f32) {
-	keys := sdl.GetKeyboardState(nil)
-
-	if keys[sdl.Scancode.W] do gfx.camera_process_keyboard(camera, .Forward, dt)
-	if keys[sdl.Scancode.S] do gfx.camera_process_keyboard(camera, .Backward, dt)
-	if keys[sdl.Scancode.A] do gfx.camera_process_keyboard(camera, .Left, dt)
-	if keys[sdl.Scancode.D] do gfx.camera_process_keyboard(camera, .Right, dt)
-	if keys[sdl.Scancode.SPACE] do gfx.camera_process_keyboard(camera, .Up, dt)
-	if keys[sdl.Scancode.LCTRL] do gfx.camera_process_keyboard(camera, .Down, dt)
 }

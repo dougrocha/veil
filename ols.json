@@ -1,6 +1,7 @@
 {
 	"$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
 	"collections": [
-		{ "name": "shared", "path": "shared" }
+		{ "name": "shared", "path": "shared" },
+		{ "name": "veil", "path": "src" }
 	]
 }
