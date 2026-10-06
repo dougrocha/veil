@@ -10,7 +10,11 @@ FrameData :: struct {
 	transforms_buffer:   backend.Buffer(GpuTransform),
 	instance_ids_buffer: backend.Buffer(u32),
 	instance_id_count:   u32, // ids written this frame
+	transforms_epoch:    u64, // the Scene.epoch transforms_buffer holds; 0 before its first write
+	transforms_dirty:    [MAX_MODEL_INSTANCES / 64]u64, // pool slots changed since transforms_buffer was written
 }
+
+#assert(MAX_MODEL_INSTANCES % 64 == 0)
 
 frame_data_create :: proc(engine: ^Engine) {
 	for i in 0 ..< backend.MAX_FRAMES_IN_FLIGHT {

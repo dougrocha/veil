@@ -1,5 +1,6 @@
 package graphics
 
+import "base:intrinsics"
 import "core:log"
 import "core:math/linalg"
 import "core:mem"
@@ -193,19 +194,43 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	stats_count_draw(engine)
 }
 
+// Each frame slot has its own transforms buffer, so every instance change marks its pool slot dirty
+// in all of them; a buffer is then patched only where its own marks say. A new scene epoch rewrites
+// every live instance instead: the replaced contents recorded no changes.
 update_transforms_buffer :: proc(engine: ^Engine, scene: ^Scene) {
-	transforms := (^GpuTransform)(
-		backend.buffer_contents(&engine.vk_ctx, current_frame_data(engine).transforms_buffer),
-	)
-	for instance, i in scene.instances.values {
-		if !pool_is_alive(&scene.instances, Index(i)) || instance.pending_destroy do continue
-		model_matrix := transform_to_matrix(instance.transform)
-		normal3 := linalg.transpose(linalg.inverse(linalg.matrix3_from_matrix4(model_matrix)))
+	for change in scene.instance_changes {
+		word, bit := change.instance.index / 64, change.instance.index % 64
+		for &frame in engine.frame_data do frame.transforms_dirty[word] |= 1 << bit
+	}
 
-		mem.ptr_offset(transforms, i)^ = GpuTransform {
-			model         = model_matrix,
-			normal_matrix = linalg.matrix4_from_matrix3(normal3),
+	frame := current_frame_data(engine)
+	transforms := (^GpuTransform)(backend.buffer_contents(&engine.vk_ctx, frame.transforms_buffer))
+	if frame.transforms_epoch != scene.epoch {
+		frame.transforms_epoch = scene.epoch
+		frame.transforms_dirty = {}
+		for i in 0 ..< len(scene.instances.values) do transform_write(scene, transforms, i)
+		return
+	}
+	for &word, word_i in frame.transforms_dirty {
+		for word != 0 {
+			bit := int(intrinsics.count_trailing_zeros(word))
+			word &= word - 1
+			transform_write(scene, transforms, word_i * 64 + bit)
 		}
+	}
+}
+
+// Skips a free or dying slot: nothing draws it, and a reused slot records a Spawn change.
+@(private = "file")
+transform_write :: proc(scene: ^Scene, transforms: ^GpuTransform, slot: int) {
+	instance := &scene.instances.values[slot]
+	if !pool_is_alive(&scene.instances, Index(slot)) || instance.pending_destroy do return
+	model_matrix := transform_to_matrix(instance.transform)
+	normal3 := linalg.transpose(linalg.inverse(linalg.matrix3_from_matrix4(model_matrix)))
+
+	mem.ptr_offset(transforms, slot)^ = GpuTransform {
+		model         = model_matrix,
+		normal_matrix = linalg.matrix4_from_matrix3(normal3),
 	}
 }
 
