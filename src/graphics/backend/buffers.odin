@@ -182,7 +182,7 @@ buffer_mapped_range :: proc(
 	loc: runtime.Source_Code_Location,
 ) -> []T {
 	slot := buffer_slot(ctx, buf)
-	assert(slot.mapped != nil, "buffer: buffer memory is not mapped", loc)
+	fmt.assertf(slot.mapped != nil, "%s: buffer memory is not mapped", op, loc = loc)
 	capacity := slot.desc.size / size_of(T)
 	fmt.assertf(
 		first >= 0 && count >= 0 && first + count <= capacity,
@@ -198,7 +198,8 @@ buffer_mapped_range :: proc(
 }
 
 // Maps elements [first, first+count) for CPU writes. The flush runs when the calling scope ends, so
-// the writes must happen inside that scope. Mapped buffers only.
+// the writes must happen inside that scope. Mapped buffers only. The caller keeps writes in bounds and
+// off memory an in-flight frame is still reading.
 @(deferred_in_out = buffer_map_commit)
 buffer_map_write :: proc(ctx: ^Context, buf: Buffer($T), first, count: int, loc := #caller_location) -> []T {
 	return buffer_mapped_range(ctx, buf, first, count, "buffer_map_write", loc)
@@ -221,6 +222,7 @@ buffer_map_commit :: proc(ctx: ^Context, buf: Buffer($T), first, count: int, loc
 }
 
 // Writes data (or one value) into the buffer at element first (or index). Works for any mapped memory.
+// The caller keeps writes in bounds and off memory an in-flight frame is still reading.
 buffer_write :: proc {
 	buffer_write_slice,
 	buffer_write_value,

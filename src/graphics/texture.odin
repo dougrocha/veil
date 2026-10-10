@@ -315,12 +315,11 @@ texture_create_builtin :: proc(engine: ^Engine) {
 	)
 
 	{
-		staging := backend.buffer_create(u8, &engine.vk_ctx, 6 * 4, {.Transfer_Src}, .Upload)
+		staging := backend.buffer_create([4]u8, &engine.vk_ctx, 6, {.Transfer_Src}, .Upload)
 		defer backend.buffer_destroy(&engine.vk_ctx, staging)
 		// Scoped so the flush runs before cubemap_upload submits the copy.
 		{
-			black := backend.buffer_map_write(&engine.vk_ctx, staging, 0, 6 * 4)
-			texels := ([^][4]u8)(raw_data(black))[:6]
+			texels := backend.buffer_map_write(&engine.vk_ctx, staging, 0, 6)
 			for &texel in texels do texel = {0, 0, 0, 0xFF}
 		}
 
@@ -533,7 +532,7 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 // Uploads six tightly packed RGBA8 sRGB faces (+X, -X, +Y, -Y, +Z, -Z) of size x size
 // texels from staging into a cube image with a cube view.
 @(private = "file")
-cubemap_upload :: proc(ctx: ^backend.Context, staging: backend.Buffer(u8), size: u32) -> Texture {
+cubemap_upload :: proc(ctx: ^backend.Context, staging: backend.Buffer($T), size: u32) -> Texture {
 	face_size := size * size * 4
 
 	desc := backend.image_desc_default(backend.extent3d(size, size, 1), .Rgba8_Unorm_Srgb, {.TransferDst, .Sampled})

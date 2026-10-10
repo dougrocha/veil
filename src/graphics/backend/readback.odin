@@ -47,6 +47,7 @@ image_read_rgba8 :: proc(ctx: ^Context, img: Image, allocator := context.allocat
 
 		image_barrier(cmd, rgba_img, .Transfer_Src, ImageAspectFlags{.Color})
 		copy_image_to_buffer(cmd, rgba_img, staging, width, height)
+		cmd_barrier_transfer_write_to_host_read(cmd, staging)
 	}
 
 	out := make([]u8, size, allocator)
