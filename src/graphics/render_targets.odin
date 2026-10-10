@@ -27,9 +27,10 @@ STORAGE_SLOT_DRAW :: 0
 STORAGE_SLOT_BLOOM :: 1 // bloom mip i is at STORAGE_SLOT_BLOOM + i
 #assert(STORAGE_SLOT_BLOOM + BLOOM_MAX_MIPS <= BINDLESS_STORAGE_IMAGE_COUNT)
 
-// Creates the targets at the swapchain's extent and gives them their texture and storage slots.
-// Needs the texture system.
-render_targets_create :: proc(engine: ^Engine) {
+// Creates the swapchain, then the targets at its extent, and gives the targets their texture and
+// storage slots. Needs the texture system. The swapchain is only touched in this file.
+render_targets_create :: proc(engine: ^Engine, width, height: u32) {
+	engine.swapchain = backend.swapchain_create(&engine.vk_ctx, width, height, engine.config.present_mode)
 	targets := &engine.render_targets
 	targets^ = render_targets_images_create(&engine.vk_ctx, engine.swapchain.extent)
 	targets.hdr_texture = texture_register_external(engine, targets.hdr)
@@ -40,15 +41,18 @@ render_targets_create :: proc(engine: ^Engine) {
 	storage_images_write(engine)
 }
 
-// Destroys the images and frees their texture handles. Call before texture_system_destroy.
+// Destroys the images and frees their texture handles, then the swapchain. Call before
+// texture_system_destroy.
 render_targets_destroy :: proc(engine: ^Engine) {
 	targets := &engine.render_targets
 	texture_unregister_external(engine, targets.hdr_texture)
 	for handle in targets.bloom_textures do texture_unregister_external(engine, handle)
 	render_targets_images_destroy(&engine.vk_ctx, targets)
+	backend.swapchain_destroy(&engine.vk_ctx, &engine.swapchain)
 }
 
-// The size the passes draw at. Everything that draws or maps into screen space uses it.
+// The frame extent: the size the passes draw at. Everything that draws or maps into screen space
+// uses it, never the swapchain's own extent.
 render_extent :: proc(engine: ^Engine) -> backend.Extent2D {
 	return engine.render_targets.extent
 }
@@ -64,10 +68,26 @@ render_aspect :: proc(engine: ^Engine) -> f32 {
 	return f32(extent.width) / f32(extent.height)
 }
 
-// Call once per frame after frame_begin. When the swapchain was recreated at a new extent, recreates
-// the targets at that extent and points their texture handles and storage slots at the new images.
+// Begins a frame. The backend recreates the swapchain when the window size changed or it went stale;
+// then the targets follow its extent, which can differ from the window size. ok = false: nothing to
+// draw this frame, and the targets are left alone until a frame begins.
+render_targets_begin_frame :: proc(engine: ^Engine, width, height: u32) -> (cmd: backend.CommandBuffer, ok: bool) {
+	cmd, ok = backend.frame_begin(&engine.vk_ctx, &engine.swapchain, width, height)
+	if !ok do return
+	render_targets_resize(engine)
+	return cmd, true
+}
+
+// Presents render_targets.draw into the acquired swapchain image and submits the frame.
+render_targets_end_frame :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
+	backend.frame_end(&engine.vk_ctx, &engine.swapchain, cmd, engine.render_targets.draw)
+}
+
+// When the swapchain's extent differs from the targets', recreates the targets at that extent and
+// points their texture handles and storage slots at the new images.
 // Waits for idle on resize: in-flight frames may still read the slots being rewritten.
-render_targets_sync :: proc(engine: ^Engine) {
+@(private = "file")
+render_targets_resize :: proc(engine: ^Engine) {
 	targets := &engine.render_targets
 	if targets.extent == engine.swapchain.extent do return
 

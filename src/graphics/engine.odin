@@ -38,8 +38,6 @@ engine_create :: proc(
 	vk_ctx := &engine.vk_ctx
 	backend.context_init(vk_ctx, window) or_return
 
-	engine.swapchain = backend.swapchain_create(vk_ctx, width, height, engine.config.present_mode)
-
 	// The cube array and the 2 fixed depth slots count against the same per-stage sampled-image limit.
 	limits := backend.limits(vk_ctx)
 	max_bindless_textures := min(MAX_TEXTURES, limits.max_bindless_textures_per_stage - BINDLESS_CUBE_COUNT - 2)
@@ -50,7 +48,7 @@ engine_create :: proc(
 	model_system_create(engine)
 
 	shadows_create(vk_ctx, &engine.shadows)
-	render_targets_create(engine)
+	render_targets_create(engine, width, height)
 	frame_data_create(engine)
 	draw_history_create(&engine.prev_draws)
 	gpu_profiler_create(engine)
@@ -82,7 +80,6 @@ engine_destroy :: proc(self: ^Engine) {
 	texture_system_destroy(self)
 	shader_system_destroy(self)
 
-	backend.swapchain_destroy(&self.vk_ctx, &self.swapchain)
 	backend.context_destroy(&self.vk_ctx)
 
 	frame_dump_destroy(self)
@@ -109,12 +106,8 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 	draw_history_sync(engine, packet)
 
 	wait_start := time.tick_now()
-	cmd, ok := backend.frame_begin(&engine.vk_ctx, &engine.swapchain, width, height)
+	cmd, ok := render_targets_begin_frame(engine, width, height)
 	if !ok do return false
-
-	// The swapchain may have just been recreated; the targets follow its extent, which can differ
-	// from the window size.
-	render_targets_sync(engine)
 
 	engine.frame_count += 1
 	gpu_profiler_collect(engine)
@@ -132,7 +125,7 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 	record_ms := tick_ms(record_start)
 	submit_start := time.tick_now()
 
-	backend.frame_end(&engine.vk_ctx, &engine.swapchain, cmd, engine.render_targets.draw)
+	render_targets_end_frame(engine, cmd)
 	// Once per recorded frame, shadow passes on or off. Skipped frames return early above, so their
 	// changes carry over.
 	shadow_cache_commit(&engine.shadows.cache, &engine.shadows.plan, packet.lights)
