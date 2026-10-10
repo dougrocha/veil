@@ -90,6 +90,25 @@ cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32) {
 	vk.CmdDispatch(cmd.handle, x, y, z)
 }
 
+cmd_fill_u32 :: proc(cmd: CommandBuffer, buf: Buffer(u32), value: u32) {
+	vk.CmdFillBuffer(cmd.handle, buffer_slot(cmd.ctx, buf).buffer, 0, vk.DeviceSize(vk.WHOLE_SIZE), value)
+	barrier := vk.BufferMemoryBarrier2 {
+		sType         = .BUFFER_MEMORY_BARRIER_2,
+		srcStageMask  = {.COPY},
+		srcAccessMask = {.TRANSFER_WRITE},
+		dstStageMask  = {.COMPUTE_SHADER},
+		dstAccessMask = {.SHADER_READ, .SHADER_WRITE},
+		buffer        = buffer_slot(cmd.ctx, buf).buffer,
+		size          = vk.DeviceSize(vk.WHOLE_SIZE),
+	}
+	dep := vk.DependencyInfo {
+		sType                    = .DEPENDENCY_INFO,
+		bufferMemoryBarrierCount = 1,
+		pBufferMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep)
+}
+
 cmd_barrier_compute_write_to_vertex_read :: proc(cmd: ComputeEncoder) {
 	barrier := vk.MemoryBarrier2 {
 		sType         = .MEMORY_BARRIER_2,

@@ -77,7 +77,6 @@ frame_data_create :: proc(engine: ^Engine) {
 
 frame_data_destroy :: proc(engine: ^Engine) {
 	for &res in engine.frame_data {
-		// Cluster buffers are destroyed as part of the frame data lifetime.
 		backend.buffer_destroy(&engine.vk_ctx, res.scene_data_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.point_lights_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.spot_lights_buffer)

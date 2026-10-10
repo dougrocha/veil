@@ -158,6 +158,7 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 	record_ms := tick_ms(record_start)
 	submit_start := time.tick_now()
 
+	frame_slot := backend.frame_slot(&engine.vk_ctx)
 	render_targets_end_frame(engine, cmd)
 	// Once per recorded frame, shadow passes on or off. Skipped frames return early above, so their
 	// changes carry over.
@@ -168,7 +169,7 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 
 	if engine.frame_dump.enabled {
 		backend.device_wait_idle(&engine.vk_ctx)
-		cluster_debug_validate(engine, packet.camera)
+		cluster_debug_validate(engine, frame_slot)
 		pick_test_run(engine, packet)
 		if frame_dump_capture(engine) {
 			quit := sdl.Event {

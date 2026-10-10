@@ -49,9 +49,8 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(ClusterPushConstants, scene_data) == 0)
 #assert(offset_of(ClusterPushConstants, clusters) == 8)
 #assert(offset_of(ClusterPushConstants, indices) == 16)
-#assert(offset_of(ClusterPushConstants, extent) == 24)
-#assert(offset_of(ClusterPushConstants, near_far) == 32)
-#assert(size_of(ClusterPushConstants) == 40)
+#assert(offset_of(ClusterPushConstants, counter) == 24)
+#assert(size_of(ClusterPushConstants) == 32)
 
 #assert(offset_of(DebugViewPushConstants, mode) == 0)
 #assert(offset_of(DebugViewPushConstants, index) == 4)

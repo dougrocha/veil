@@ -26,6 +26,13 @@ debug_env_init :: proc(engine: ^Engine) {
 		engine.cluster_heatmap = value != "0"
 		log.infof("cluster heatmap enabled: %v", engine.cluster_heatmap)
 	}
+	when ODIN_DEBUG {
+		if value, found := os.lookup_env("VEIL_CLUSTER_VALIDATE", context.allocator); found {
+			defer delete(value)
+			engine.cluster_validate = value != "0"
+			log.infof("cluster validation enabled: %v", engine.cluster_validate)
+		}
+	}
 	if value, found := os.lookup_env("VEIL_PARTICLES", context.allocator); found {
 		defer delete(value)
 		engine.settings.particles = value != "0"

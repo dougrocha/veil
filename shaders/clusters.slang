@@ -7,51 +7,65 @@ float3 view_position(float3 p, float4x4 view) {
 }
 
 bool sphere_aabb(float3 center, float radius, float3 lo, float3 hi) {
-    float3 closest = clamp(center, lo, hi);
-    float3 delta = center - closest;
+    float3 delta = center - clamp(center, lo, hi);
     return dot(delta, delta) <= radius * radius;
 }
 
 [shader("compute")]
-[numthreads(1, 1, 1)]
+[numthreads(64, 1, 1)]
 void compute_main(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= CLUSTER_COUNT) return;
     SceneData* scene = (SceneData*)pc.scene_data;
     ClusterHeader* headers = (ClusterHeader*)pc.clusters;
     uint* indices = (uint*)pc.indices;
-
-    float z0 = pc.near_far.x * pow(pc.near_far.y / pc.near_far.x, float(id.z) / float(CLUSTER_Z));
-    float z1 = pc.near_far.x * pow(pc.near_far.y / pc.near_far.x, float(id.z + 1) / float(CLUSTER_Z));
-    float2 uv0 = float2(id.xy) / float2(CLUSTER_X, CLUSTER_Y);
-    float2 uv1 = float2(id.xy + 1) / float2(CLUSTER_X, CLUSTER_Y);
-    float2 ndc0 = float2(uv0.x * 2.0 - 1.0, 1.0 - uv1.y * 2.0);
-    float2 ndc1 = float2(uv1.x * 2.0 - 1.0, 1.0 - uv0.y * 2.0);
-    bool orthographic = abs(scene->proj[3][2]) < 1e-6;
-    float forward_sign = scene->proj[3][2] < 0.0 || (orthographic && scene->proj[2][2] < 0.0) ? -1.0 : 1.0;
-    float projection_scale = orthographic ? 1.0 : abs(scene->proj[3][2]);
-    float sx = projection_scale / scene->proj[0][0];
-    float sy = projection_scale / scene->proj[1][1];
-    float x0 = ndc0.x * z0 * sx, x1 = ndc0.x * z1 * sx;
-    float x2 = ndc1.x * z0 * sx, x3 = ndc1.x * z1 * sx;
-    float y0 = ndc0.y * z0 * sy, y1 = ndc0.y * z1 * sy;
-    float y2 = ndc1.y * z0 * sy, y3 = ndc1.y * z1 * sy;
-    float3 lo = float3(min(min(x0, x1), min(x2, x3)), min(min(y0, y1), min(y2, y3)), z0);
-    float3 hi = float3(max(max(x0, x1), max(x2, x3)), max(max(y0, y1), max(y2, y3)), z1);
-
-    uint cluster = id.x + id.y * CLUSTER_X + id.z * CLUSTER_X * CLUSTER_Y;
-    uint offset = cluster * CLUSTER_LIGHT_CAPACITY;
+    uint* counter = (uint*)pc.counter;
+    uint x = id.x % CLUSTER_X;
+    uint y = (id.x / CLUSTER_X) % CLUSTER_Y;
+    uint z = id.x / (CLUSTER_X * CLUSTER_Y);
+    float near_z = scene->cluster_near_far.x;
+    float far_z = scene->cluster_near_far.y;
+    float z0 = near_z * pow(far_z / near_z, float(z) / float(CLUSTER_Z));
+    float z1 = near_z * pow(far_z / near_z, float(z + 1) / float(CLUSTER_Z));
+    float2 uv0 = float2(x, y) / float2(CLUSTER_X, CLUSTER_Y);
+    float2 uv1 = float2(x + 1, y + 1) / float2(CLUSTER_X, CLUSTER_Y);
+    float2 ndc0 = uv0 * 2.0 - 1.0;
+    float2 ndc1 = uv1 * 2.0 - 1.0;
+    float4x4 proj = scene->proj;
+    bool ortho = abs(proj[3][2]) < 1e-6;
+    float sign_z = proj[3][2] < 0.0 || (ortho && proj[2][2] < 0.0) ? -1.0 : 1.0;
+    float2 px0, px1, py0, py1;
+    if (ortho) {
+        px0 = (ndc0.x - proj[0][3]) / proj[0][0];
+        px1 = (ndc1.x - proj[0][3]) / proj[0][0];
+        py0 = (ndc0.y - proj[1][3]) / proj[1][1];
+        py1 = (ndc1.y - proj[1][3]) / proj[1][1];
+    } else {
+        float scale = abs(proj[3][2]);
+        px0 = ((ndc0.x * scale - proj[0][2] * sign_z) * float2(z0, z1) - proj[0][3]) / proj[0][0];
+        px1 = ((ndc1.x * scale - proj[0][2] * sign_z) * float2(z0, z1) - proj[0][3]) / proj[0][0];
+        py0 = ((ndc0.y * scale - proj[1][2] * sign_z) * float2(z0, z1) - proj[1][3]) / proj[1][1];
+        py1 = ((ndc1.y * scale - proj[1][2] * sign_z) * float2(z0, z1) - proj[1][3]) / proj[1][1];
+    }
+    float3 lo = float3(min(min(px0.x, px0.y), min(px1.x, px1.y)), min(min(py0.x, py0.y), min(py1.x, py1.y)), z0);
+    float3 hi = float3(max(max(px0.x, px0.y), max(px1.x, px1.y)), max(max(py0.x, py0.y), max(py1.x, py1.y)), z1);
+    uint candidates[MAX_POINT_LIGHTS + MAX_SPOT_LIGHTS];
     uint count = 0;
     for (uint i = 0; i < scene->point_light_count; ++i) {
         PointLight light = scene->point_lights[i];
         float3 center = view_position(light.position_range.xyz, scene->view);
-        center.z *= forward_sign;
-        if (sphere_aabb(center, light.position_range.w, lo, hi)) indices[offset + count++] = i;
+        center.z *= sign_z;
+        if (sphere_aabb(center, light.position_range.w, lo, hi)) candidates[count++] = i;
     }
     for (uint i = 0; i < scene->spot_light_count; ++i) {
         SpotLight light = scene->spot_lights[i];
         float3 center = view_position(light.position_range.xyz, scene->view);
-        center.z *= forward_sign;
-        if (sphere_aabb(center, light.position_range.w, lo, hi)) indices[offset + count++] = MAX_POINT_LIGHTS + i;
+        center.z *= sign_z;
+        if (sphere_aabb(center, light.position_range.w, lo, hi)) candidates[count++] = MAX_POINT_LIGHTS + i;
     }
-    headers[cluster].light_offset = offset;
-    headers[cluster].light_count = count;
+    uint offset;
+    InterlockedAdd(counter[0], count, offset);
+    uint stored = offset < CLUSTER_INDEX_CAPACITY ? min(count, CLUSTER_INDEX_CAPACITY - offset) : 0;
+    for (uint i = 0; i < stored; ++i) indices[offset + i] = candidates[i];
+    headers[id.x].light_offset = min(offset, CLUSTER_INDEX_CAPACITY);
+    headers[id.x].light_count = stored;
 }

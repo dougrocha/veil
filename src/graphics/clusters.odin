@@ -4,7 +4,6 @@ import "backend"
 import "core:log"
 import "core:math"
 import "core:math/linalg"
-import "core:os"
 
 @(shader_shared)
 CLUSTER_X :: 16
@@ -14,10 +13,9 @@ CLUSTER_Y :: 9
 CLUSTER_Z :: 24
 @(shader_shared)
 CLUSTER_COUNT :: CLUSTER_X * CLUSTER_Y * CLUSTER_Z
+// Cap global storage at 128K indices (512 KiB per frame slot); overflow is clamped and reported.
 @(shader_shared)
-// Each cluster reserves the full legal light set. There is no overflow case; unused entries are
-// ignored by light_count, and the header's light_offset is in u32 elements, not bytes.
-CLUSTER_LIGHT_CAPACITY :: MAX_POINT_LIGHTS + MAX_SPOT_LIGHTS
+CLUSTER_INDEX_CAPACITY :: 131072
 
 @(shader_shared)
 ClusterHeader :: struct #max_field_align(16) {
@@ -25,18 +23,30 @@ ClusterHeader :: struct #max_field_align(16) {
 	light_count:  u32,
 }
 
+@(private = "file")
+cluster_has :: proc(headers: []ClusterHeader, indices: []u32, cluster: int, item: u32) -> bool {
+	h := headers[cluster]
+	for value in indices[int(h.light_offset):][:int(h.light_count)] {
+		if value == item do return true
+	}
+	return false
+}
+
 @(shader_shared)
 ClusterPushConstants :: struct #max_field_align(16) {
 	scene_data: backend.GPUPtr(SceneData),
 	clusters:   backend.GPUPtr(ClusterHeader),
 	indices:    backend.GPUPtr(u32),
-	extent:     Vec2,
-	near_far:   Vec2,
+	counter:    backend.GPUPtr(u32),
 }
 
 ClusterBuffers :: struct {
-	headers: backend.Buffer(ClusterHeader),
-	indices: backend.Buffer(u32),
+	headers:          backend.Buffer(ClusterHeader),
+	indices:          backend.Buffer(u32),
+	counter:          backend.Buffer(u32),
+	readback_headers: backend.Buffer(ClusterHeader),
+	readback_indices: backend.Buffer(u32),
+	readback_counter: backend.Buffer(u32),
 }
 
 cluster_buffers_create :: proc(engine: ^Engine) {
@@ -45,16 +55,46 @@ cluster_buffers_create :: proc(engine: ^Engine) {
 			ClusterHeader,
 			&engine.vk_ctx,
 			CLUSTER_COUNT,
-			{.Storage},
-			.Shared,
+			{.Storage, .Transfer_Src},
+			.Gpu,
 		)
 		engine.frame_data[i].clusters.indices = backend.buffer_create(
 			u32,
 			&engine.vk_ctx,
-			CLUSTER_COUNT * CLUSTER_LIGHT_CAPACITY,
-			{.Storage},
-			.Shared,
+			CLUSTER_INDEX_CAPACITY,
+			{.Storage, .Transfer_Dst, .Transfer_Src},
+			.Gpu,
 		)
+		engine.frame_data[i].clusters.counter = backend.buffer_create(
+			u32,
+			&engine.vk_ctx,
+			1,
+			{.Storage, .Transfer_Dst, .Transfer_Src},
+			.Gpu,
+		)
+		if engine.cluster_validate {
+			engine.frame_data[i].clusters.readback_headers = backend.buffer_create(
+				ClusterHeader,
+				&engine.vk_ctx,
+				CLUSTER_COUNT,
+				{.Transfer_Dst},
+				.Readback,
+			)
+			engine.frame_data[i].clusters.readback_indices = backend.buffer_create(
+				u32,
+				&engine.vk_ctx,
+				CLUSTER_INDEX_CAPACITY,
+				{.Transfer_Dst},
+				.Readback,
+			)
+			engine.frame_data[i].clusters.readback_counter = backend.buffer_create(
+				u32,
+				&engine.vk_ctx,
+				1,
+				{.Transfer_Dst},
+				.Readback,
+			)
+		}
 	}
 }
 
@@ -62,40 +102,57 @@ cluster_buffers_destroy :: proc(engine: ^Engine) {
 	for &frame in engine.frame_data {
 		backend.buffer_destroy(&engine.vk_ctx, frame.clusters.headers)
 		backend.buffer_destroy(&engine.vk_ctx, frame.clusters.indices)
+		backend.buffer_destroy(&engine.vk_ctx, frame.clusters.counter)
+		if backend.buffer_is_valid(&engine.vk_ctx, frame.clusters.readback_headers) {
+			backend.buffer_destroy(&engine.vk_ctx, frame.clusters.readback_headers)
+			backend.buffer_destroy(&engine.vk_ctx, frame.clusters.readback_indices)
+			backend.buffer_destroy(&engine.vk_ctx, frame.clusters.readback_counter)
+		}
 	}
 }
 
 dispatch_clusters :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
+	assert(packet.camera.near > 0, "cluster depth slices require a positive near plane")
 	frame := &engine.frame_data[backend.frame_slot(&engine.vk_ctx)]
 	pc := ClusterPushConstants {
 		scene_data = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
 		clusters   = backend.buffer_address(&engine.vk_ctx, frame.clusters.headers),
 		indices    = backend.buffer_address(&engine.vk_ctx, frame.clusters.indices),
-		extent     = {f32(render_extent(engine).width), f32(render_extent(engine).height)},
-		near_far   = {packet.camera.near, packet.camera.far},
+		counter    = backend.buffer_address(&engine.vk_ctx, frame.clusters.counter),
 	}
+	backend.cmd_fill_u32(cmd, frame.clusters.counter, 0)
 	encoder := backend.begin_compute_pass(cmd)
 	backend.pipeline_bind_compute(encoder, pipeline_get(engine, .Clusters))
 	backend.pipeline_push_compute(encoder, &pc)
-	backend.cmd_dispatch(encoder, CLUSTER_X, CLUSTER_Y, CLUSTER_Z)
+	backend.cmd_dispatch(encoder, (CLUSTER_COUNT + 63) / 64, 1, 1)
 	backend.cmd_barrier_compute_write_to_fragment_read(encoder)
 	backend.end_compute_pass(encoder)
 }
 
-// One-shot debug audit for VEIL_CLUSTER_VALIDATE=1. Called after the frame fence, so the shared
-// buffers can be invalidated and read safely. It compares each GPU list to a CPU sphere/AABB pass.
-cluster_debug_validate :: proc(engine: ^Engine, camera: Camera) {
-	value, found := os.lookup_env("VEIL_CLUSTER_VALIDATE", context.allocator)
-	if !found do return
-	defer delete(value)
-	if value == "0" do return
-	os.unset_env("VEIL_CLUSTER_VALIDATE")
-
-	frame := current_frame_data(engine)
+// Validation reads back only the completed slot passed by engine_render.
+cluster_debug_validate :: proc(engine: ^Engine, slot: int) {
+	if !engine.cluster_validate do return
+	engine.cluster_validate = false
+	frame := &engine.frame_data[slot]
 	headers := make([]ClusterHeader, CLUSTER_COUNT, context.temp_allocator)
-	indices := make([]u32, CLUSTER_COUNT * CLUSTER_LIGHT_CAPACITY, context.temp_allocator)
-	backend.buffer_read(&engine.vk_ctx, frame.clusters.headers, headers)
-	backend.buffer_read(&engine.vk_ctx, frame.clusters.indices, indices)
+	indices := make([]u32, CLUSTER_INDEX_CAPACITY, context.temp_allocator)
+	count_out := make([]u32, 1, context.temp_allocator)
+	backend.buffer_copy_readback(
+		&engine.vk_ctx,
+		frame.clusters.headers,
+		frame.clusters.readback_headers,
+		CLUSTER_COUNT,
+	)
+	backend.buffer_copy_readback(
+		&engine.vk_ctx,
+		frame.clusters.indices,
+		frame.clusters.readback_indices,
+		CLUSTER_INDEX_CAPACITY,
+	)
+	backend.buffer_copy_readback(&engine.vk_ctx, frame.clusters.counter, frame.clusters.readback_counter, 1)
+	backend.buffer_read(&engine.vk_ctx, frame.clusters.readback_headers, headers)
+	backend.buffer_read(&engine.vk_ctx, frame.clusters.readback_indices, indices)
+	backend.buffer_read(&engine.vk_ctx, frame.clusters.readback_counter, count_out)
 	scene := make([]SceneData, 1, context.temp_allocator)
 	backend.buffer_read(&engine.vk_ctx, frame.scene_data_buffer, scene)
 	points := make([]GpuPointLight, int(scene[0].point_light_count), context.temp_allocator)
@@ -103,77 +160,171 @@ cluster_debug_validate :: proc(engine: ^Engine, camera: Camera) {
 	if len(points) > 0 do backend.buffer_read(&engine.vk_ctx, frame.point_lights_buffer, points)
 	if len(spots) > 0 do backend.buffer_read(&engine.vk_ctx, frame.spot_lights_buffer, spots)
 
+	extent := render_extent(engine)
 	proj := scene[0].proj
 	view := scene[0].view
+	inv_proj := linalg.inverse(proj)
+	near_z, far_z := scene[0].cluster_near_far.x, scene[0].cluster_near_far.y
+	assert(near_z > 0)
 	forward_sign: f32 = 1
-	orthographic := abs(proj[3, 2]) < 1e-6
-	if proj[3, 2] < 0 || (orthographic && proj[2, 2] < 0) do forward_sign = -1
-	extent := render_extent(engine)
-	misses, extras: u64
-	for z in 0 ..< CLUSTER_Z {
-		z0 := camera.near * math.pow(camera.far / camera.near, f32(z) / f32(CLUSTER_Z))
-		z1 := camera.near * math.pow(camera.far / camera.near, f32(z + 1) / f32(CLUSTER_Z))
-		for y in 0 ..< CLUSTER_Y {
-			for x in 0 ..< CLUSTER_X {
-				ndc_x0 := f32(x) / f32(CLUSTER_X) * 2 - 1
-				ndc_x1 := f32(x + 1) / f32(CLUSTER_X) * 2 - 1
-				ndc_y0 := 1 - f32(y + 1) / f32(CLUSTER_Y) * 2
-				ndc_y1 := 1 - f32(y) / f32(CLUSTER_Y) * 2
-				projection_scale := f32(1)
-				if !orthographic do projection_scale = abs(proj[3, 2])
-				sx, sy := projection_scale / proj[0, 0], projection_scale / proj[1, 1]
-				lo := Vec3 {
-					min(ndc_x0 * z0 * sx, ndc_x0 * z1 * sx, ndc_x1 * z0 * sx, ndc_x1 * z1 * sx),
-					min(ndc_y0 * z0 * sy, ndc_y0 * z1 * sy, ndc_y1 * z0 * sy, ndc_y1 * z1 * sy),
-					z0,
+	if proj[3, 2] < 0 || (abs(proj[3, 2]) < 1e-6 && proj[2, 2] < 0) {forward_sign = -1}
+	centers_checked, sample_points, misses_centers, misses_samples, hits, extras: u64
+	for i in 0 ..< len(points) + len(spots) {
+		var_index := u32(i)
+		pos: Vec4
+		if i < len(points) {pos = points[i].position_range} else {pos = spots[i - len(points)].position_range}
+		clip := proj * (view * Vec4{pos.x, pos.y, pos.z, 1})
+		if clip.w == 0 {continue}
+		nx, ny, nz := clip.x / clip.w, clip.y / clip.w, clip.z / clip.w
+		px, py := int((nx * 0.5 + 0.5) * f32(extent.width)), int((ny * 0.5 + 0.5) * f32(extent.height))
+		view_center := view * Vec4{pos.x, pos.y, pos.z, 1}
+		center_depth := view_center.z * forward_sign
+		z := int(
+			clamp(
+				math.log_f32(max(center_depth, near_z) / near_z, 2) / math.log_f32(far_z / near_z, 2) * f32(CLUSTER_Z),
+				0,
+				f32(CLUSTER_Z - 1),
+			),
+		)
+		cx, cy :=
+			int(clamp(f32(px) / f32(extent.width) * f32(CLUSTER_X), 0, f32(CLUSTER_X - 1))),
+			int(clamp(f32(py) / f32(extent.height) * f32(CLUSTER_Y), 0, f32(CLUSTER_Y - 1)))
+		idx := var_index
+		if i >= len(points) {idx = MAX_POINT_LIGHTS + u32(i - len(points))}
+		if px >= 0 &&
+		   py >= 0 &&
+		   px < int(extent.width) &&
+		   py < int(extent.height) &&
+		   center_depth >= near_z &&
+		   center_depth <= far_z {
+			centers_checked += 1
+			if !cluster_has(headers, indices, cx + cy * CLUSTER_X + z * CLUSTER_X * CLUSTER_Y, idx) do misses_centers += 1
+		}
+	}
+	for py := 0; py < int(extent.height); py += 7 {
+		for px := 0; px < int(extent.width); px += 7 {
+			ndc := Vec4 {
+				(f32(px) + 0.5) / f32(extent.width) * 2 - 1,
+				(f32(py) + 0.5) / f32(extent.height) * 2 - 1,
+				1,
+				1,
+			}
+			far_point := inv_proj * ndc
+			far_point.xyz /= far_point.w
+			for zi in 0 ..< 16 {
+				sample_points += 1
+				depth := near_z * math.pow_f32(far_z / near_z, (f32(zi) + 0.5) / 16)
+				view_point := far_point.xyz
+				if abs(proj[3, 2]) < 1e-6 {
+					if proj[2, 2] < 0 {view_point.z = -depth} else {view_point.z = depth}
+				} else {
+					view_point *= depth / abs(far_point.z)
 				}
-				hi := Vec3 {
-					max(ndc_x0 * z0 * sx, ndc_x0 * z1 * sx, ndc_x1 * z0 * sx, ndc_x1 * z1 * sx),
-					max(ndc_y0 * z0 * sy, ndc_y0 * z1 * sy, ndc_y1 * z0 * sy, ndc_y1 * z1 * sy),
-					z1,
+				world4 := linalg.inverse(view) * Vec4{view_point.x, view_point.y, view_point.z, 1}
+				cx, cy := px * CLUSTER_X / int(extent.width), py * CLUSTER_Y / int(extent.height)
+				cz := int(
+					clamp(
+						math.log_f32(depth / near_z, 2) / math.log_f32(far_z / near_z, 2) * f32(CLUSTER_Z),
+						0,
+						f32(CLUSTER_Z - 1),
+					),
+				)
+				cluster := cx + cy * CLUSTER_X + cz * CLUSTER_X * CLUSTER_Y
+				for li in 0 ..< len(points) {
+					light := points[li]
+					d := Vec3{world4.x, world4.y, world4.z} - light.position_range.xyz
+					if linalg.dot(d, d) <=
+					   light.position_range.w *
+						   light.position_range.w {hits += 1; if !cluster_has(headers, indices, cluster, u32(li)) do misses_samples += 1}
 				}
-				cluster := x + y * CLUSTER_X + z * CLUSTER_X * CLUSTER_Y
-				header := headers[cluster]
-				for light, i in points do cluster_validate_light(indices, header, light.position_range.xyz, light.position_range.w, u32(i), view, forward_sign, lo, hi, &misses, &extras)
-				for light, i in spots do cluster_validate_light(indices, header, light.position_range.xyz, light.position_range.w, MAX_POINT_LIGHTS + u32(i), view, forward_sign, lo, hi, &misses, &extras)
+				for li in 0 ..< len(spots) {
+					light := spots[li]
+					d := Vec3{world4.x, world4.y, world4.z} - light.position_range.xyz
+					if linalg.dot(d, d) <=
+					   light.position_range.w *
+						   light.position_range.w {hits += 1; if !cluster_has(headers, indices, cluster, MAX_POINT_LIGHTS + u32(li)) do misses_samples += 1}
+				}
 			}
 		}
 	}
+	for c in 0 ..< len(headers) {
+		header := headers[c]
+		for item in indices[int(header.light_offset):][:int(header.light_count)] {
+			position: Vec3
+			radius: f32
+			if item < MAX_POINT_LIGHTS {
+				if item >= u32(len(points)) {continue}
+				light := points[item]
+				position, radius = light.position_range.xyz, light.position_range.w
+			} else {
+				index := item - MAX_POINT_LIGHTS
+				if index >= u32(len(spots)) {continue}
+				light := spots[index]
+				position, radius = light.position_range.xyz, light.position_range.w
+			}
+			if !cluster_sphere_overlaps(proj, view, near_z, far_z, c, position, radius) do extras += 1
+		}
+	}
 	log.infof(
-		"cluster CPU cross-check: missed=%d conservative_extra=%d clusters=%d extent=%dx%d",
-		misses,
+		"cluster validation: centers=%d centers_missed=%d sample_points=%d sampled_hits=%d sampled_missed=%d conservative_extra=%d indices=%d/%d overflow=%v extent=%dx%d",
+		centers_checked,
+		misses_centers,
+		sample_points,
+		hits,
+		misses_samples,
 		extras,
-		CLUSTER_COUNT,
+		count_out[0],
+		CLUSTER_INDEX_CAPACITY,
+		count_out[0] > CLUSTER_INDEX_CAPACITY,
 		extent.width,
 		extent.height,
 	)
 }
 
 @(private = "file")
-cluster_validate_light :: proc(
-	indices: []u32,
-	header: ClusterHeader,
+cluster_sphere_overlaps :: proc(
+	proj, view: Mat4x4,
+	near_z, far_z: f32,
+	cluster: int,
 	position: Vec3,
 	radius: f32,
-	index: u32,
-	view: Mat4x4,
-	forward_sign: f32,
-	lo, hi: Vec3,
-	misses, extras: ^u64,
-) {
-	p := view * Vec4{position.x, position.y, position.z, 1}
-	center := Vec3{p.x, p.y, p.z * forward_sign}
-	closest := Vec3{clamp(center.x, lo.x, hi.x), clamp(center.y, lo.y, hi.y), clamp(center.z, lo.z, hi.z)}
-	delta := center - closest
-	hit := linalg.dot(delta, delta) <= radius * radius
-	present := false
-	first, count := int(header.light_offset), int(header.light_count)
-	for item in indices[first:][:count] {
-		if item == index {
-			present = true
-			break
-		}
+) -> bool {
+	x, y, z := cluster % CLUSTER_X, (cluster / CLUSTER_X) % CLUSTER_Y, cluster / (CLUSTER_X * CLUSTER_Y)
+	z0 := near_z * math.pow_f32(far_z / near_z, f32(z) / f32(CLUSTER_Z))
+	z1 := near_z * math.pow_f32(far_z / near_z, f32(z + 1) / f32(CLUSTER_Z))
+	ndc_x0, ndc_x1 := f32(x) / f32(CLUSTER_X) * 2 - 1, f32(x + 1) / f32(CLUSTER_X) * 2 - 1
+	ndc_y0, ndc_y1 := f32(y) / f32(CLUSTER_Y) * 2 - 1, f32(y + 1) / f32(CLUSTER_Y) * 2 - 1
+	ortho := abs(proj[3, 2]) < 1e-6
+	forward_sign: f32 = 1
+	if proj[3, 2] < 0 || (ortho && proj[2, 2] < 0) {forward_sign = -1}
+	x0, x1, y0, y1: f32
+	if ortho {
+		x0, x1 = (ndc_x0 - proj[0, 3]) / proj[0, 0], (ndc_x1 - proj[0, 3]) / proj[0, 0]
+		y0, y1 = (ndc_y0 - proj[1, 3]) / proj[1, 1], (ndc_y1 - proj[1, 3]) / proj[1, 1]
+	} else {
+		scale := abs(proj[3, 2])
+		x0 = min(
+			((ndc_x0 * scale - proj[0, 2] * forward_sign) * z0 - proj[0, 3]) / proj[0, 0],
+			((ndc_x0 * scale - proj[0, 2] * forward_sign) * z1 - proj[0, 3]) / proj[0, 0],
+		)
+		x1 = max(
+			((ndc_x1 * scale - proj[0, 2] * forward_sign) * z0 - proj[0, 3]) / proj[0, 0],
+			((ndc_x1 * scale - proj[0, 2] * forward_sign) * z1 - proj[0, 3]) / proj[0, 0],
+		)
+		y0 = min(
+			((ndc_y0 * scale - proj[1, 2] * forward_sign) * z0 - proj[1, 3]) / proj[1, 1],
+			((ndc_y0 * scale - proj[1, 2] * forward_sign) * z1 - proj[1, 3]) / proj[1, 1],
+		)
+		y1 = max(
+			((ndc_y1 * scale - proj[1, 2] * forward_sign) * z0 - proj[1, 3]) / proj[1, 1],
+			((ndc_y1 * scale - proj[1, 2] * forward_sign) * z1 - proj[1, 3]) / proj[1, 1],
+		)
 	}
-	if hit && !present do misses^ += 1
-	if present && !hit do extras^ += 1
+	lo := Vec3{min(x0, x1), min(y0, y1), z0}
+	hi := Vec3{max(x0, x1), max(y0, y1), z1}
+	center4 := view * Vec4{position.x, position.y, position.z, 1}
+	center := Vec3{center4.x, center4.y, center4.z * forward_sign}
+	closest := Vec3{clamp(center.x, lo.x, hi.x), clamp(center.y, lo.y, hi.y), clamp(center.z, lo.z, hi.z)}
+	d := center - closest
+	return linalg.dot(d, d) <= radius * radius
 }

@@ -4,7 +4,7 @@ static const uint CLUSTER_X = 16;
 static const uint CLUSTER_Y = 9;
 static const uint CLUSTER_Z = 24;
 static const uint CLUSTER_COUNT = ((CLUSTER_X * CLUSTER_Y) * CLUSTER_Z);
-static const uint CLUSTER_LIGHT_CAPACITY = (MAX_POINT_LIGHTS + MAX_SPOT_LIGHTS);
+static const uint CLUSTER_INDEX_CAPACITY = 131072;
 static const uint SAMPLER_LINEAR_REPEAT = 0;
 static const uint SAMPLER_LINEAR_CLAMP = 1;
 static const uint SAMPLER_NEAREST_CLAMP = 2;
@@ -135,8 +135,7 @@ struct ClusterPushConstants {
     SceneData* scene_data;
     ClusterHeader* clusters;
     uint* indices;
-    float2 extent;
-    float2 near_far;
+    uint* counter;
 };
 
 struct DebugViewPushConstants {
