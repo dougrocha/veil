@@ -61,7 +61,7 @@ gltf_node_world :: proc(node: ^cgltf.node) -> Mat4x4 {
 
 // Loads every mesh node of the default scene into one Model, with node transforms baked into the
 // vertices. Use model_load_parts to keep nodes as separate instances.
-model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle) -> ModelHandle {
+model_load_gltf :: proc(engine: ^Engine, path: string) -> ModelHandle {
 	gltf_data, ok := gltf_open(path)
 	if !ok do return INVALID_MODEL
 	defer cgltf.free(gltf_data)
@@ -72,7 +72,7 @@ model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 	for node in gltf_mesh_nodes(gltf_data) {
 		world := gltf_node_world(node)
 		for &prim in node.mesh.primitives {
-			if mesh, _, prim_ok := gltf_load_primitive(engine, path, gltf_data, &prim, material, world); prim_ok {
+			if mesh, _, prim_ok := gltf_load_primitive(engine, path, gltf_data, &prim, world); prim_ok {
 				append(&model.meshes, mesh)
 			}
 		}
@@ -89,12 +89,7 @@ model_load_gltf :: proc(engine: ^Engine, path: string, material: MaterialHandle)
 
 // One part per mesh node, or per primitive of each mesh node with split_primitives. Nodes that
 // share a glTF mesh share its models.
-model_load_gltf_parts :: proc(
-	engine: ^Engine,
-	path: string,
-	material: MaterialHandle,
-	split_primitives: bool,
-) -> []ModelPart {
+model_load_gltf_parts :: proc(engine: ^Engine, path: string, split_primitives: bool) -> []ModelPart {
 	gltf_data, ok := gltf_open(path)
 	if !ok do return nil
 	defer cgltf.free(gltf_data)
@@ -107,14 +102,7 @@ model_load_gltf_parts :: proc(
 	for node in gltf_mesh_nodes(gltf_data) {
 		mesh_index := cgltf.mesh_index(gltf_data, node.mesh)
 		if !mesh_loaded[mesh_index] {
-			mesh_pieces[mesh_index] = gltf_load_mesh_pieces(
-				engine,
-				path,
-				gltf_data,
-				int(mesh_index),
-				material,
-				split_primitives,
-			)
+			mesh_pieces[mesh_index] = gltf_load_mesh_pieces(engine, path, gltf_data, int(mesh_index), split_primitives)
 			mesh_loaded[mesh_index] = true
 		}
 
@@ -142,7 +130,6 @@ gltf_load_mesh_pieces :: proc(
 	path: string,
 	data: ^cgltf.data,
 	mesh_index: int,
-	material: MaterialHandle,
 	split_primitives: bool,
 ) -> []ModelPart {
 	gltf_mesh := &data.meshes[mesh_index]
@@ -150,7 +137,7 @@ gltf_load_mesh_pieces :: proc(
 
 	if split_primitives {
 		for &prim, prim_index in gltf_mesh.primitives {
-			mesh, center, ok := gltf_load_primitive(engine, path, data, &prim, material, recenter = true)
+			mesh, center, ok := gltf_load_primitive(engine, path, data, &prim, recenter = true)
 			if !ok do continue
 			model := Model {
 				name = fmt.aprintf("{}#mesh{}.prim{}", path, mesh_index, prim_index),
@@ -165,7 +152,7 @@ gltf_load_mesh_pieces :: proc(
 		name = fmt.aprintf("{}#mesh{}", path, mesh_index),
 	}
 	for &prim in gltf_mesh.primitives {
-		if mesh, _, ok := gltf_load_primitive(engine, path, data, &prim, material); ok {
+		if mesh, _, ok := gltf_load_primitive(engine, path, data, &prim); ok {
 			append(&model.meshes, mesh)
 		}
 	}
@@ -186,7 +173,6 @@ gltf_load_primitive :: proc(
 	path: string,
 	data: ^cgltf.data,
 	prim: ^cgltf.primitive,
-	material: MaterialHandle,
 	xform := linalg.MATRIX4F32_IDENTITY,
 	recenter := false,
 ) -> (
@@ -271,9 +257,7 @@ gltf_load_primitive :: proc(
 	}
 
 	prim_mat: MaterialHandle
-	if material != INVALID_MATERIAL {
-		prim_mat = material
-	} else if prim.material != nil {
+	if prim.material != nil {
 		prim_mat = gltf_extract_material(engine, path, data, prim.material)
 	} else {
 		prim_mat = material_get_default(engine)

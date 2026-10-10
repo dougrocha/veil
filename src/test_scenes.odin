@@ -15,7 +15,11 @@ load_pbr_showcase :: proc(engine: ^gfx.Engine, world: ^World) {
 		metallic_roughness_texture = gfx.texture_load(engine, "assets/textures/wooden_gate_arm_4k.jpg", false),
 		occlusion_texture = gfx.texture_load(engine, "assets/textures/wooden_gate_ao_4k.png", false),
 	)
-	wood_gate := gfx.model_load(engine, "assets/models/wooden_gate_4k.gltf", wood_gate_mat)
+	wood_gate := gfx.model_with_material(
+		engine,
+		gfx.model_load(engine, "assets/models/wooden_gate_4k.gltf"),
+		wood_gate_mat,
+	)
 	entity_spawn_model(world, wood_gate, gfx.transform_create(translation = {0, 1, -2}))
 
 	lion_head_mat := gfx.material_create(
@@ -26,7 +30,11 @@ load_pbr_showcase :: proc(engine: ^gfx.Engine, world: ^World) {
 		metallic_roughness_texture = gfx.texture_load(engine, "assets/models/textures/lion_head_arm_4k.jpg", false),
 		occlusion_texture = gfx.texture_load(engine, "assets/models/textures/lion_head_arm_4k.jpg", false),
 	)
-	lion_head := gfx.model_load(engine, "assets/models/lion_head_4k.gltf", lion_head_mat)
+	lion_head := gfx.model_with_material(
+		engine,
+		gfx.model_load(engine, "assets/models/lion_head_4k.gltf"),
+		lion_head_mat,
+	)
 	entity_spawn_model(world, lion_head, gfx.transform_create(translation = {0, 1.5, 0}))
 
 	boulder_mat := gfx.material_create(
@@ -49,7 +57,11 @@ load_pbr_showcase :: proc(engine: ^gfx.Engine, world: ^World) {
 			false,
 		),
 	)
-	boulder := gfx.model_load(engine, "assets/models/namaqualand_boulder_02_4k.gltf", boulder_mat)
+	boulder := gfx.model_with_material(
+		engine,
+		gfx.model_load(engine, "assets/models/namaqualand_boulder_02_4k.gltf"),
+		boulder_mat,
+	)
 	entity_spawn_model(world, boulder, gfx.transform_create(translation = {3, 0.06, 2}))
 
 	duck_mat := gfx.material_create(
@@ -64,7 +76,7 @@ load_pbr_showcase :: proc(engine: ^gfx.Engine, world: ^World) {
 		),
 		occlusion_texture = gfx.texture_load(engine, "assets/models/textures/rubber_duck_toy_arm_4k.jpg", false),
 	)
-	duck := gfx.model_load(engine, "assets/models/rubber_duck_toy_4k.gltf", duck_mat)
+	duck := gfx.model_with_material(engine, gfx.model_load(engine, "assets/models/rubber_duck_toy_4k.gltf"), duck_mat)
 	entity_spawn_model(world, duck, gfx.transform_create(translation = {-3, 0, 2}))
 }
 
