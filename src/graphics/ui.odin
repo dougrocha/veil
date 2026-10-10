@@ -58,7 +58,7 @@ ui_renderer_batch_for :: proc(engine: ^Engine, atlas_texture: u32) -> ^Transient
 
 ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	ur := &engine.ui_renderer
-	pipeline := graphics_pipeline(engine, .UI)
+	pipeline := pipeline_get(engine, .UI)
 
 	for atlas_texture, &batch in ur.batches {
 		vertices, count := transient_batch_upload(&engine.vk_ctx, &batch)

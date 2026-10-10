@@ -2,6 +2,33 @@ package graphics
 
 import "backend"
 
+// Every pipeline the renderer creates. Graphics kinds come first so the zero value of
+// PipelineSpec.stage is Graphics.
+PipelineKind :: enum u8 {
+	Shadow, // spot + point lights
+	Shadow_Directional, // directional cascades, depth-clamped
+	Mesh, // opaque and mask
+	Mesh_Transparent, // alpha blended, no depth write
+	Mesh_Double_Sided, // Mesh without back-face culling
+	Mesh_Transparent_Double_Sided,
+	Skybox,
+	UI,
+	Particle, // graphics: particles drawn as points
+	Debug_View,
+	Debug_Line,
+	Debug_Line_Overlay,
+	Debug_Sector,
+	Particle_Simulate, // compute
+	Tonemap,
+	Bloom_Down,
+	Bloom_Up,
+}
+
+PipelineStage :: enum u8 {
+	Graphics, // vertex + fragment entry points
+	Compute, // compute entry point
+}
+
 // Which attachments a graphics pipeline is compatible with. Not a render stage: several stages can
 // share one layout.
 TargetLayout :: enum u8 {
@@ -10,8 +37,10 @@ TargetLayout :: enum u8 {
 	Shadow, // depth only, into a shadow atlas layer
 }
 
-GraphicsPipelineSpec :: struct {
+PipelineSpec :: struct {
 	shader:   string, // module name in shaders/
+	stage:    PipelineStage,
+	// Graphics only. Ignored by compute pipelines.
 	targets:  TargetLayout,
 	topology: backend.Topology,
 	cull:     backend.CullMode,
@@ -20,7 +49,7 @@ GraphicsPipelineSpec :: struct {
 }
 
 @(rodata)
-GRAPHICS_PIPELINES := [GraphicsPipelineKind]GraphicsPipelineSpec {
+PIPELINE_SPECS := [PipelineKind]PipelineSpec {
 	.Shadow = {
 		shader = "shadow",
 		targets = .Shadow,
@@ -63,18 +92,10 @@ GRAPHICS_PIPELINES := [GraphicsPipelineKind]GraphicsPipelineSpec {
 	// Drawn last, on top of everything: no depth test.
 	.Debug_Line_Overlay = {shader = "line", targets = .Main, cull = .None, blend = .Alpha},
 	.Debug_Sector = {shader = "sector", targets = .Main, cull = .None, blend = .Alpha},
-}
-
-ComputePipelineSpec :: struct {
-	shader: string, // module name in shaders/
-}
-
-@(rodata)
-COMPUTE_PIPELINES := [ComputePipelineKind]ComputePipelineSpec {
-	.Particle = {shader = "particle"},
-	.Tonemap = {shader = "tonemap"},
-	.Bloom_Down = {shader = "bloom_down"},
-	.Bloom_Up = {shader = "bloom_up"},
+	.Particle_Simulate = {shader = "particle", stage = .Compute},
+	.Tonemap = {shader = "tonemap", stage = .Compute},
+	.Bloom_Down = {shader = "bloom_down", stage = .Compute},
+	.Bloom_Up = {shader = "bloom_up", stage = .Compute},
 }
 
 // Built from the same format constants the targets are created with, so pipelines don't depend
@@ -96,7 +117,7 @@ target_layout :: proc(ctx: ^backend.Context, targets: TargetLayout) -> backend.A
 	unreachable()
 }
 
-graphics_pipeline_desc :: proc(ctx: ^backend.Context, spec: GraphicsPipelineSpec) -> backend.GraphicsPipelineDesc {
+graphics_pipeline_desc :: proc(ctx: ^backend.Context, spec: PipelineSpec) -> backend.GraphicsPipelineDesc {
 	return {
 		attachments = target_layout(ctx, spec.targets),
 		topology = spec.topology,

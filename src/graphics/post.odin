@@ -86,7 +86,7 @@ dispatch_bloom :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Comma
 	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
 	defer backend.end_compute_pass(encoder)
 
-	down := compute_pipeline(engine, .Bloom_Down)
+	down := pipeline_get(engine, .Bloom_Down)
 	backend.pipeline_bind_compute(encoder, down)
 	for i in 0 ..< levels {
 		src_size: [2]u32
@@ -108,7 +108,7 @@ dispatch_bloom :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Comma
 		dispatch_post(encoder, mip_extent(bloom_desc, i))
 	}
 
-	up := compute_pipeline(engine, .Bloom_Up)
+	up := pipeline_get(engine, .Bloom_Up)
 	backend.pipeline_bind_compute(encoder, up)
 	for i := int(levels) - 2; i >= 0; i -= 1 {
 		dst := u32(i)
@@ -137,7 +137,7 @@ dispatch_tonemap :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Com
 	targets := &engine.render_targets
 	post := packet.camera.post
 
-	pipeline := compute_pipeline(engine, .Tonemap)
+	pipeline := pipeline_get(engine, .Tonemap)
 	pc := TonemapPushConstants {
 		hdr_texture    = texture_index(targets.hdr_texture),
 		out_storage    = STORAGE_SLOT_DRAW,

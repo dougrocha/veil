@@ -90,13 +90,13 @@ flush_batch :: proc(
 	engine: ^Engine,
 	cmd: backend.RenderEncoder,
 	batch: ^TransientBatch(LineVertex),
-	kind: GraphicsPipelineKind,
+	kind: PipelineKind,
 	vertex_multiplier: u32 = 3,
 ) {
 	vertices, count := transient_batch_upload(&engine.vk_ctx, batch)
 	if count == 0 do return
 
-	pipeline := graphics_pipeline(engine, kind)
+	pipeline := pipeline_get(engine, kind)
 	pc := LinePushConstants {
 		scene_data    = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
 		vertex_buffer = vertices,

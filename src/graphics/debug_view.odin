@@ -58,7 +58,7 @@ debug_view_flush :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
 	)
 	defer backend.end_render_pass(encoder)
 
-	pipeline := graphics_pipeline(engine, .Debug_View)
+	pipeline := pipeline_get(engine, .Debug_View)
 	backend.pipeline_bind(encoder, pipeline)
 
 	width := i32(render_extent(engine).width)

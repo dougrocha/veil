@@ -159,7 +159,7 @@ current_frame_data :: #force_inline proc(engine: ^Engine) -> ^FrameData {
 }
 
 dispatch_particles :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
-	pipeline := compute_pipeline(engine, .Particle)
+	pipeline := pipeline_get(engine, .Particle_Simulate)
 
 	frame_res_index := backend.frame_slot(&engine.vk_ctx)
 	last_frame := (frame_res_index + backend.MAX_FRAMES_IN_FLIGHT - 1) % backend.MAX_FRAMES_IN_FLIGHT
@@ -181,7 +181,7 @@ dispatch_particles :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.C
 }
 
 draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	pipeline := graphics_pipeline(engine, .Particle)
+	pipeline := pipeline_get(engine, .Particle)
 
 	frame_res_index := backend.frame_slot(&engine.vk_ctx)
 	particle_pc := ParticlePushConstants {
@@ -231,7 +231,7 @@ draw_shadow :: proc(
 	runs: []DrawRun,
 ) {
 	directional := light_type == .Directional
-	shadow_pipeline := graphics_pipeline(engine, .Shadow_Directional if directional else .Shadow)
+	shadow_pipeline := pipeline_get(engine, .Shadow_Directional if directional else .Shadow)
 
 	backend.pipeline_bind(cmd, shadow_pipeline)
 	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
@@ -280,11 +280,11 @@ shadow_view_runs :: proc(engine: ^Engine, light_type: LightType, view_proj: Mat4
 }
 
 draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
-	bound: Maybe(GraphicsPipelineKind)
+	bound: Maybe(PipelineKind)
 	for batch in draw_runs_upload(engine, list.opaque) {
-		kind: GraphicsPipelineKind = .Mesh_Double_Sided if mesh_double_sided(engine, batch.mesh) else .Mesh
+		kind: PipelineKind = .Mesh_Double_Sided if mesh_double_sided(engine, batch.mesh) else .Mesh
 		if bound != kind {
-			backend.pipeline_bind(cmd, graphics_pipeline(engine, kind))
+			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
 			bound = kind
 		}
 		mesh_draw_batch(engine, cmd, batch)
@@ -294,12 +294,12 @@ draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: Dr
 // Back to front, one draw per mesh so the order holds. Draw after everything opaque, skybox
 // included: these don't write depth, so anything drawn later would cover them.
 draw_meshes_transparent :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
-	bound: Maybe(GraphicsPipelineKind)
+	bound: Maybe(PipelineKind)
 	for item in list.transparent {
-		kind: GraphicsPipelineKind =
+		kind: PipelineKind =
 			.Mesh_Transparent_Double_Sided if mesh_double_sided(engine, item.mesh) else .Mesh_Transparent
 		if bound != kind {
-			backend.pipeline_bind(cmd, graphics_pipeline(engine, kind))
+			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
 			bound = kind
 		}
 		batch := single_draw_batch(engine, item) or_break
@@ -331,7 +331,7 @@ mesh_draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: Draw
 }
 
 draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	pipeline := graphics_pipeline(engine, .Skybox)
+	pipeline := pipeline_get(engine, .Skybox)
 	backend.pipeline_bind(cmd, pipeline)
 	pc := SkyboxPushConstants {
 		scene_data = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
@@ -342,7 +342,7 @@ draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 }
 
 draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	pipeline := graphics_pipeline(engine, .UI)
+	pipeline := pipeline_get(engine, .UI)
 	backend.pipeline_bind(cmd, pipeline)
 	ui_renderer_flush(engine, cmd)
 }
