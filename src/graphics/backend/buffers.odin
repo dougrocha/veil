@@ -238,6 +238,45 @@ buffer_write_value :: proc(ctx: ^Context, buf: Buffer($T), value: T, index := 0,
 	dst[0] = value
 }
 
+// Writes data of type F at byte offset into the buffer, for writing one field of a struct. Asserts the
+// buffer is mapped, the range fits and offset is aligned for F. Flushes exactly the written bytes (VMA
+// rounds to nonCoherentAtomSize). Empty writes do nothing.
+buffer_write_at :: proc(ctx: ^Context, buf: Buffer($T), offset: int, data: []$F, loc := #caller_location) {
+	if len(data) == 0 do return
+	slot := buffer_slot(ctx, buf)
+	bytes := len(data) * size_of(F)
+	fmt.assertf(slot.mapped != nil, "buffer_write_at: buffer memory is not mapped", loc = loc)
+	fmt.assertf(
+		offset >= 0 && offset + bytes <= slot.desc.size,
+		"buffer_write_at: bytes [%d, %d+%d) out of range for a %d-byte buffer",
+		offset,
+		offset,
+		bytes,
+		slot.desc.size,
+		loc = loc,
+	)
+	fmt.assertf(
+		offset % align_of(F) == 0,
+		"buffer_write_at: offset %d is not aligned for %d",
+		offset,
+		align_of(F),
+		loc = loc,
+	)
+	dst := ([^]F)(rawptr(uintptr(slot.mapped) + uintptr(offset)))[:len(data)]
+	copy(dst, data)
+	vk_check(
+		vma.flush_allocation(ctx.vma_allocator, slot.alloc, vk.DeviceSize(offset), vk.DeviceSize(bytes)),
+		"buffer_write_at: flush failed",
+		loc,
+	)
+}
+
+// Single-value form of buffer_write_at.
+buffer_write_value_at :: proc(ctx: ^Context, buf: Buffer($T), offset: int, value: $F, loc := #caller_location) {
+	v := value
+	buffer_write_at(ctx, buf, offset, ([^]F)(&v)[:1], loc)
+}
+
 // Copies elements [first, first+len(out)) out of mapped memory. Invalidates the range first, so
 // non-coherent readback memory is current. Call it after the GPU work that wrote the data has completed.
 buffer_read :: proc(ctx: ^Context, buf: Buffer($T), out: []T, first := 0, loc := #caller_location) {
