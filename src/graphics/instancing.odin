@@ -14,9 +14,11 @@ import "backend"
 // Enough for one mesh per instance in the camera and every possible shadow view.
 MAX_INSTANCE_IDS :: MAX_DRAWS * (1 + MAX_SHADOW_2D_SLOTS + MAX_POINT_SHADOW_LIGHTS * 6)
 
-// One draw: count instances of mesh, their ids at first_id in the frame's id list.
+// One draw: count instances of mesh, their ids at first_id in the frame's id list. kind is the
+// main-pass pipeline the batch draws with (zero for single_draw_batch, which the caller binds itself).
 DrawBatch :: struct {
 	mesh:     ^Mesh,
+	kind:     PipelineKind,
 	first_id: u32,
 	count:    u32,
 }
@@ -27,7 +29,7 @@ draw_runs_upload :: proc(engine: ^Engine, runs: []DrawRun) -> []DrawBatch {
 	batches := make([dynamic]DrawBatch, 0, len(runs), context.temp_allocator)
 	for run in runs {
 		first := instance_ids_push(engine, run.ids) or_break
-		append(&batches, DrawBatch{mesh = run.mesh, first_id = first, count = u32(len(run.ids))})
+		append(&batches, DrawBatch{mesh = run.mesh, kind = run.kind, first_id = first, count = u32(len(run.ids))})
 	}
 	return batches[:]
 }

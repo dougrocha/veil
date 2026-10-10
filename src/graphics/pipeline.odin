@@ -14,18 +14,23 @@ PipelineRegistry :: struct {
 pipelines_create :: proc(engine: ^Engine) -> (ok: bool) {
 	reg := &engine.pipeline_registry
 
-	uses := make(map[string]bit_set[PipelineStage], context.temp_allocator)
+	// The entry points each module must declare: the union over the specs that use it, each once.
+	uses := make(map[string][dynamic]backend.ShaderEntryPoint, context.temp_allocator)
 	for spec in PIPELINE_SPECS {
-		stages := uses[spec.shader]
-		stages += {spec.stage}
-		uses[spec.shader] = stages
+		entries, found := uses[spec.shader]
+		if !found do entries = make([dynamic]backend.ShaderEntryPoint, context.temp_allocator)
+		switch spec.stage {
+		case .Graphics:
+			add_entry(&entries, {VERTEX_ENTRY, .Vertex})
+			add_entry(&entries, {spec_fragment_entry(spec), .Fragment})
+		case .Compute:
+			add_entry(&entries, {COMPUTE_MAIN, .Compute})
+		}
+		uses[spec.shader] = entries
 	}
 
 	shaders := make(map[string]backend.Shader, context.temp_allocator)
-	for name, stages in uses {
-		entries := make([dynamic]backend.ShaderEntryPoint, context.temp_allocator)
-		if .Graphics in stages do append(&entries, ..GRAPHICS_ENTRIES)
-		if .Compute in stages do append(&entries, ..COMPUTE_ENTRIES)
+	for name, entries in uses {
 		shaders[name] = shader_load(engine, name, entries[:]) or_return
 	}
 
@@ -37,6 +42,12 @@ pipelines_create :: proc(engine: ^Engine) -> (ok: bool) {
 }
 
 @(private = "file")
+add_entry :: proc(entries: ^[dynamic]backend.ShaderEntryPoint, entry: backend.ShaderEntryPoint) {
+	for existing in entries^ do if existing.name == entry.name do return
+	append(entries, entry)
+}
+
+@(private = "file")
 pipeline_build :: proc(engine: ^Engine, kind: PipelineKind) -> backend.Pipeline {
 	spec := PIPELINE_SPECS[kind]
 	shader := engine.pipeline_registry.shaders[kind]
@@ -44,7 +55,7 @@ pipeline_build :: proc(engine: ^Engine, kind: PipelineKind) -> backend.Pipeline 
 	case .Graphics:
 		stages := [2]backend.ShaderStageDesc {
 			{shader = shader, entry = VERTEX_ENTRY},
-			{shader = shader, entry = FRAGMENT_MAIN},
+			{shader = shader, entry = spec_fragment_entry(spec)},
 		}
 		desc := graphics_pipeline_desc(&engine.vk_ctx, spec)
 		return backend.pipeline_create(&engine.vk_ctx, desc, stages[:])

@@ -13,11 +13,8 @@ import sp "shared:odin-slang/slang"
 
 VERTEX_ENTRY :: "vertex_main"
 FRAGMENT_MAIN :: "fragment_main"
+FRAGMENT_MASKED :: "fragment_masked" // mesh.slang only: FRAGMENT_MAIN plus the alpha-mask discard
 COMPUTE_MAIN :: "compute_main"
-
-// Entry point sets the shaders declare.
-GRAPHICS_ENTRIES :: []backend.ShaderEntryPoint{{VERTEX_ENTRY, .Vertex}, {FRAGMENT_MAIN, .Fragment}}
-COMPUTE_ENTRIES :: []backend.ShaderEntryPoint{{COMPUTE_MAIN, .Compute}}
 
 log_slang_diagnostics :: proc(diagnostics: ^sp.IBlob, failed: bool) {
 	if diagnostics == nil do return

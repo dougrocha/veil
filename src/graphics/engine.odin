@@ -330,7 +330,7 @@ shadow_view_runs :: proc(engine: ^Engine, light_type: LightType, view_proj: Mat4
 draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
 	bound: Maybe(PipelineKind)
 	for batch in draw_runs_upload(engine, list.opaque) {
-		kind: PipelineKind = .Mesh_Double_Sided if mesh_double_sided(engine, batch.mesh) else .Mesh
+		kind := batch.kind
 		if bound != kind {
 			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
 			bound = kind
