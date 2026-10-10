@@ -244,6 +244,7 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
     float3 geo_normal = (mat.double_sided != 0 && !is_front) ? -vert.frag_normal : vert.frag_normal;
 
     float4 tex_color = sample_base_color(mat.base_color_texture, vert.frag_uv) * mat.base_color;
+    if (mat.alpha_mode == ALPHA_MODE_MASK && tex_color.a < mat.alpha_cutoff) discard;
 
     float3 normal;
     if (length(vert.frag_tangent) > 0.001) {
@@ -299,7 +300,6 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
     }
 
     // 0 = opaque, 1 = mask, 2 = blend; matches AlphaMode in Odin.
-    if (mat.alpha_mode == ALPHA_MODE_MASK && tex_color.a < mat.alpha_cutoff) discard;
     float output_alpha = mat.alpha_mode == ALPHA_MODE_BLEND ? tex_color.a : 1.0;
     // Emission is light the surface gives off itself, so no lighting, shadow, AO or albedo scales it.
     float3 color = tex_color.rgb * total_light + mat.emissive.rgb;
