@@ -70,17 +70,17 @@
     {
       "mimeType": "image/jpeg",
       "name": "wooden_gate_nor_gl",
-      "uri": "textures/wooden_gate_nor_gl_4k.jpg"
+      "uri": "../textures/wooden_gate_nor_gl_4k.jpg"
     },
     {
       "mimeType": "image/jpeg",
       "name": "wooden_gate_diff",
-      "uri": "textures/wooden_gate_diff_4k.jpg"
+      "uri": "../textures/wooden_gate_diff_4k.jpg"
     },
     {
       "mimeType": "image/jpeg",
       "name": "wooden_gate_rough",
-      "uri": "textures/wooden_gate_arm_4k.jpg"
+      "uri": "../textures/wooden_gate_arm_4k.jpg"
     }
   ],
   "accessors": [
