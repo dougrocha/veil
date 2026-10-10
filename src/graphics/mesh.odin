@@ -48,6 +48,7 @@ INVALID_MODEL :: ModelHandle{}
 
 Model :: struct {
 	borrowed_geometry: bool, // buffers and CPU geometry belong to another engine-owned model
+	variant_of:        Handle(Model), // root asset of a model_with_material variant; INVALID_MODEL for assets
 	meshes:            [dynamic]Mesh,
 	name:              string,
 	bounds:            BoundingSphere,
@@ -60,7 +61,7 @@ ModelPart :: struct {
 	transform: Transform,
 }
 
-// Cache key for model_with_material: one variant per source model and material.
+// Cache key for model_with_material: one variant per root asset and material.
 ModelVariantKey :: struct {
 	source:   ModelHandle,
 	material: MaterialHandle,
@@ -262,7 +263,8 @@ model_compute_bounds :: proc(model: ^Model) {
 
 // Loads a file as separately spawnable pieces. glTF files get one part per mesh node, or one per
 // primitive of each mesh node with split_primitives (for files flattened into a single mesh, like
-// Sponza). Other formats come back as a single part.
+// Sponza). Other formats come back as a single part. A part bound to another material comes from
+// model_with_material on that part's model.
 model_load_parts :: proc(engine: ^Engine, path: string, split_primitives := false) -> []ModelPart {
 	key := fmt.tprintf("{}#split", path) if split_primitives else path
 	if parts, ok := engine.model_system.parts_map[key]; ok {
@@ -290,8 +292,8 @@ model_load_parts :: proc(engine: ^Engine, path: string, split_primitives := fals
 }
 
 // Binds source's geometry to another material. The variant borrows the source's GPU buffers and CPU
-// geometry, and is cached per (source, material), so repeated calls return the same handle. Both
-// models live until engine_destroy.
+// geometry, and is cached per (root asset, material), so repeated calls return the same handle. A
+// variant of a variant resolves to its root asset first. Both models live until engine_destroy.
 model_with_material :: proc(engine: ^Engine, source: ModelHandle, material: MaterialHandle) -> ModelHandle {
 	ms := &engine.model_system
 	if !pool_is_valid(&ms.models, source) {
@@ -300,10 +302,15 @@ model_with_material :: proc(engine: ^Engine, source: ModelHandle, material: Mate
 	}
 	assert(pool_is_valid(&engine.material_system.materials, material))
 
-	key := ModelVariantKey{source, material}
+	root := source
+	if variant_of := pool_get(&ms.models, source).variant_of; variant_of != INVALID_MODEL {
+		root = variant_of
+	}
+
+	key := ModelVariantKey{root, material}
 	if handle, ok := ms.variant_map[key]; ok do return handle
 
-	original := pool_get(&ms.models, source)
+	original := pool_get(&ms.models, root)
 	variant := Model {
 		name              = fmt.aprintf(
 			"{}+{}",
@@ -311,13 +318,13 @@ model_with_material :: proc(engine: ^Engine, source: ModelHandle, material: Mate
 			pool_get(&engine.material_system.materials, material).name,
 		),
 		borrowed_geometry = true,
+		variant_of        = root,
 	}
 	for mesh in original.meshes {
 		mesh := mesh
 		mesh.material = material
 		append(&variant.meshes, mesh)
 	}
-	// original points into the pool, so it must not be used past this call.
 	handle := model_pool_add(engine, variant)
 	ms.variant_map[key] = handle
 	return handle
