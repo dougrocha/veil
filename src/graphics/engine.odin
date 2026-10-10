@@ -288,21 +288,19 @@ draw_shadow :: proc(
 	frame := current_frame_data(engine)
 	// Same for every batch in this view; shared geometry and frame addresses are pass constants.
 	view_pc := ShadowPushConstants {
-		view_proj          = view_proj,
-		scene_data         = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
-		vertex_buffer      = backend.buffer_address(&engine.vk_ctx, engine.model_system.vertex_buffer),
-		material_buffer    = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
-		transform_buffer   = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
-		instance_ids       = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
-		instance_materials = backend.buffer_address(&engine.vk_ctx, frame.instance_materials_buffer),
-		light_type         = light_type,
-		light_index        = light_i,
+		view_proj        = view_proj,
+		scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
+		vertex_buffer    = backend.buffer_address(&engine.vk_ctx, engine.model_system.vertex_buffer),
+		material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
+		transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
+		instance_ids     = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
+		light_type       = light_type,
+		light_index      = light_i,
 	}
+	backend.pipeline_push(cmd, &view_pc)
 
 	for batch in draw_runs_upload(engine, runs) {
 		mesh := batch.mesh
-		pc := view_pc
-		backend.pipeline_push(cmd, &pc)
 		backend.cmd_draw_indexed(
 			cmd,
 			mesh.index_count,
@@ -343,9 +341,10 @@ draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: Dr
 		kind: PipelineKind = .Mesh_Double_Sided if mesh_double_sided(engine, batch.mesh) else .Mesh
 		if bound != kind {
 			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
+			backend.pipeline_push(cmd, &pass_pc)
 			bound = kind
 		}
-		mesh_draw_batch(engine, cmd, pass_pc, batch)
+		mesh_draw_batch(engine, cmd, batch)
 	}
 }
 
@@ -359,10 +358,11 @@ draw_meshes_transparent :: proc(engine: ^Engine, cmd: backend.RenderEncoder, lis
 			.Mesh_Transparent_Double_Sided if mesh_double_sided(engine, item.mesh) else .Mesh_Transparent
 		if bound != kind {
 			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
+			backend.pipeline_push(cmd, &pass_pc)
 			bound = kind
 		}
 		batch := single_draw_batch(engine, item) or_break
-		mesh_draw_batch(engine, cmd, pass_pc, batch)
+		mesh_draw_batch(engine, cmd, batch)
 	}
 }
 
@@ -372,7 +372,7 @@ mesh_double_sided :: proc(engine: ^Engine, mesh: ^Mesh) -> bool {
 }
 
 // The fields every mesh draw in a pass shares. Frame buffers and the material buffer keep their
-// addresses for the whole pass, so this is built once per pass and mesh_draw_batch fills in the rest.
+// addresses for the whole pass.
 @(private = "file")
 mesh_pass_push_constants :: proc(engine: ^Engine) -> MeshPushConstants {
 	frame := current_frame_data(engine)
@@ -382,15 +382,12 @@ mesh_pass_push_constants :: proc(engine: ^Engine) -> MeshPushConstants {
 		material_buffer = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
 		transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
 		instance_ids = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
-		instance_materials = backend.buffer_address(&engine.vk_ctx, frame.instance_materials_buffer),
 	}
 }
 
 @(private = "file")
-mesh_draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, pass_pc: MeshPushConstants, batch: DrawBatch) {
+mesh_draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: DrawBatch) {
 	mesh := batch.mesh
-	pc := pass_pc
-	backend.pipeline_push(cmd, &pc)
 	backend.cmd_draw_indexed(cmd, mesh.index_count, batch.count, mesh.first_index, mesh.first_vertex, batch.first_id)
 	stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 }

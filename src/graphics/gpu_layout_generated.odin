@@ -140,8 +140,7 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(MeshPushConstants, material_buffer) == 16)
 #assert(offset_of(MeshPushConstants, transform_buffer) == 24)
 #assert(offset_of(MeshPushConstants, instance_ids) == 32)
-#assert(offset_of(MeshPushConstants, instance_materials) == 40)
-#assert(size_of(MeshPushConstants) == 48)
+#assert(size_of(MeshPushConstants) == 40)
 
 #assert(offset_of(TonemapPushConstants, hdr_texture) == 0)
 #assert(offset_of(TonemapPushConstants, out_storage) == 4)
@@ -167,10 +166,9 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(ShadowPushConstants, material_buffer) == 80)
 #assert(offset_of(ShadowPushConstants, transform_buffer) == 88)
 #assert(offset_of(ShadowPushConstants, instance_ids) == 96)
-#assert(offset_of(ShadowPushConstants, instance_materials) == 104)
-#assert(offset_of(ShadowPushConstants, light_type) == 112)
-#assert(offset_of(ShadowPushConstants, light_index) == 116)
-#assert(size_of(ShadowPushConstants) == 120)
+#assert(offset_of(ShadowPushConstants, light_type) == 104)
+#assert(offset_of(ShadowPushConstants, light_index) == 108)
+#assert(size_of(ShadowPushConstants) == 112)
 
 #assert(offset_of(UIVertex, position) == 0)
 #assert(offset_of(UIVertex, uv) == 8)

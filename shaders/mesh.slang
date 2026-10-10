@@ -24,12 +24,13 @@ VSOutput vertex_main(VSInput input) {
     let v = pc.vertex_buffer[input.vertex_index + input.start_vertex_location];
     // Slang lowers SV_InstanceID without the Vulkan base instance; add SV_StartInstanceLocation to restore it.
     let instance_slot = input.instance_id + input.start_instance_location;
-    let transform = pc.transform_buffer[pc.instance_ids[instance_slot]];
+    let packed_id = pc.instance_ids[instance_slot];
+    let transform = pc.transform_buffer[packed_id >> INSTANCE_DRAW_ID_SHIFT];
 
     VSOutput output;
     float4 world_pos = mul(transform.model, float4(v.pos_uv_x.xyz, 1.0));
     output.frag_pos = world_pos.xyz;
-    output.material_index = pc.instance_materials[instance_slot];
+    output.material_index = packed_id & INSTANCE_MATERIAL_MASK;
 
     output.pos = mul(pc.scene_data.proj, mul(pc.scene_data.view, world_pos));
 

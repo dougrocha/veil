@@ -22,15 +22,14 @@ GpuShadowCascadeData :: struct #max_field_align(16) {
 
 @(shader_shared)
 ShadowPushConstants :: struct #max_field_align(16) {
-	view_proj:          Mat4x4,
-	scene_data:         backend.GPUPtr(SceneData),
-	vertex_buffer:      backend.GPUPtr(Vertex),
-	material_buffer:    backend.GPUPtr(GpuMaterial),
-	transform_buffer:   backend.GPUPtr(GpuTransform),
-	instance_ids:       backend.GPUPtr(u32), // see instancing.odin
-	instance_materials: backend.GPUPtr(u32),
-	light_type:         LightType,
-	light_index:        u32,
+	view_proj:        Mat4x4,
+	scene_data:       backend.GPUPtr(SceneData),
+	vertex_buffer:    backend.GPUPtr(Vertex),
+	material_buffer:  backend.GPUPtr(GpuMaterial),
+	transform_buffer: backend.GPUPtr(GpuTransform),
+	instance_ids:     backend.GPUPtr(u32), // see instancing.odin
+	light_type:       LightType,
+	light_index:      u32,
 }
 
 Shadows :: struct {

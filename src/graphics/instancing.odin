@@ -4,10 +4,21 @@ import "core:log"
 
 import "backend"
 
-// Instancing: a pass gets its visible meshes grouped into runs by mesh (draw_list.odin),
-// draw_runs_upload writes each run's instance indices into the frame's id list, and the pass draws each
-// run once with instance_count = run length. The vertex shader reads its transform index from
-// Each draw uses firstInstance to index its instance ids and materials directly.
+// Instancing: draw_runs_upload writes packed draw/material ids for each mesh run. Shaders read
+// ids[SV_InstanceID + SV_StartInstanceLocation] because Slang drops the Vulkan base instance from
+// SV_InstanceID. Bits 0-13 hold the material index; bits 14-28 hold the draw id.
+
+@(shader_shared)
+INSTANCE_MATERIAL_BITS :: 14
+@(shader_shared)
+INSTANCE_MATERIAL_MASK :: (1 << INSTANCE_MATERIAL_BITS) - 1
+@(shader_shared)
+INSTANCE_DRAW_ID_SHIFT :: INSTANCE_MATERIAL_BITS
+@(shader_shared)
+INSTANCE_DRAW_ID_BITS :: 15
+
+#assert(MAX_DRAWS <= 1 << INSTANCE_DRAW_ID_BITS)
+#assert(MAX_MATERIALS <= 1 << INSTANCE_MATERIAL_BITS)
 
 // Every pass in a frame appends to the same list: main, transparent and every shadow view.
 // Enough for one mesh per instance in the camera and every possible shadow view.
@@ -25,25 +36,20 @@ DrawBatch :: struct {
 draw_runs_upload :: proc(engine: ^Engine, runs: []DrawRun) -> []DrawBatch {
 	batches := make([dynamic]DrawBatch, 0, len(runs), context.temp_allocator)
 	for run in runs {
-		first := instance_ids_push(engine, run.ids) or_break
-		instance_materials_push(engine, first, len(run.ids), u32(run.mesh.material.index))
+		packed_ids := make([]u32, len(run.ids), context.temp_allocator)
+		for id, i in run.ids {
+			packed_ids[i] = (u32(id) << u32(INSTANCE_DRAW_ID_SHIFT)) | u32(run.mesh.material.index)
+		}
+		first := instance_ids_push(engine, packed_ids) or_break
 		append(&batches, DrawBatch{mesh = run.mesh, first_id = first, count = u32(len(run.ids))})
 	}
 	return batches[:]
 }
 
-@(private = "file")
-instance_materials_push :: proc(engine: ^Engine, first: u32, count: int, material: u32) {
-	frame := current_frame_data(engine)
-	dst := backend.buffer_map_write(&engine.vk_ctx, frame.instance_materials_buffer, int(first), count)
-	for &value in dst do value = material
-}
-
 // A batch of one, for draws that must keep their order (transparent, back to front).
 single_draw_batch :: proc(engine: ^Engine, item: DrawItem) -> (batch: DrawBatch, ok: bool) {
-	id := item.id
-	first := instance_ids_push(engine, {id}) or_return
-	instance_materials_push(engine, first, 1, u32(item.mesh.material.index))
+	packed_id := (u32(item.id) << u32(INSTANCE_DRAW_ID_SHIFT)) | u32(item.mesh.material.index)
+	first := instance_ids_push(engine, {packed_id}) or_return
 	return {mesh = item.mesh, first_id = first, count = 1}, true
 }
 
