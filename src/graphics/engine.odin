@@ -331,6 +331,10 @@ draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: Dr
 	bound: Maybe(PipelineKind)
 	for batch in draw_runs_upload(engine, list.opaque) {
 		kind := batch.kind
+		assert(
+			kind == .Mesh || kind == .Mesh_Double_Sided || kind == .Mesh_Masked || kind == .Mesh_Masked_Double_Sided,
+			"opaque batch needs an opaque mesh pipeline kind",
+		)
 		if bound != kind {
 			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
 			bound = kind

@@ -11,8 +11,8 @@ DrawInput :: struct {
 }
 
 // A visible mesh of one draw. id is the draw id, which is also the transform index the vertex
-// shader reads. kind is the main-pass pipeline of an opaque mesh; shadow casters leave it zero, as
-// they never draw with a main-pass pipeline.
+// shader reads. kind is the main-pass pipeline of an opaque mesh. Only opaque items set it: shadow
+// casters and transparent items leave it zero (.Shadow), as neither draws through draw_meshes_opaque.
 DrawItem :: struct {
 	mesh: ^Mesh,
 	id:   u32,
