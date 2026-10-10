@@ -288,12 +288,17 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
     if (pc.scene_data.debug_settings.show_cascades != 0) total_light *= cascade_tint;
 
     for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_POINT)) != 0 ? pc.scene_data.point_light_count : 0); i++) {
+        // range attenuation is exactly 0 at distance >= range (same length() as calc_point_light), so skip before the shadow fetch
+        if (length(pc.scene_data.point_lights[i].position_range.xyz - vert.frag_pos) >= pc.scene_data.point_lights[i].position_range.w) continue;
         float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[i], i, vert.frag_pos, normalize(vert.frag_normal));
         total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
     }
 
     for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_SPOT)) != 0 ? pc.scene_data.spot_light_count : 0); i++) {
         float3 to_light = normalize(pc.scene_data.spot_lights[i].position_range.xyz - vert.frag_pos);
+        // zero contribution (range attenuation or cone intensity exactly 0) skips the shadow fetch; cos_outer is color_outer.w
+        if (length(pc.scene_data.spot_lights[i].position_range.xyz - vert.frag_pos) >= pc.scene_data.spot_lights[i].position_range.w) continue;
+        if (dot(to_light, normalize(-pc.scene_data.spot_lights[i].direction_inner.xyz)) <= pc.scene_data.spot_lights[i].color_outer.w) continue;
         float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, normalize(vert.frag_normal), to_light);
         total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
     }
