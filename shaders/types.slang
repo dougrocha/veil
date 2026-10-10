@@ -172,8 +172,7 @@ struct MeshPushConstants {
     Material* material_buffer;
     Transform* transform_buffer;
     uint* instance_ids;
-    uint material_index;
-    uint instance_offset;
+    uint* instance_materials;
 };
 
 struct TonemapPushConstants {
@@ -199,10 +198,9 @@ struct ShadowPushConstants {
     Material* material_buffer;
     Transform* transform_buffer;
     uint* instance_ids;
-    uint instance_offset;
+    uint* instance_materials;
     uint light_type;
     uint light_index;
-    uint material_index;
 };
 
 struct UIVertex {

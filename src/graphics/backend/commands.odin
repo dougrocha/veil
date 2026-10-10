@@ -91,8 +91,9 @@ cmd_draw_indexed :: proc(
 	instance_count: u32 = 1,
 	first_index: u32 = 0,
 	vertex_offset: i32 = 0,
+	first_instance: u32 = 0,
 ) {
-	vk.CmdDrawIndexed(cmd.handle, index_count, instance_count, first_index, vertex_offset, 0)
+	vk.CmdDrawIndexed(cmd.handle, index_count, instance_count, first_index, vertex_offset, first_instance)
 }
 
 cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32) {

@@ -22,13 +22,12 @@ Vertex :: struct #max_field_align(16) {
 
 @(shader_shared)
 MeshPushConstants :: struct #max_field_align(16) {
-	scene_data:       backend.GPUPtr(SceneData),
-	vertex_buffer:    backend.GPUPtr(Vertex),
-	material_buffer:  backend.GPUPtr(GpuMaterial),
-	transform_buffer: backend.GPUPtr(GpuTransform),
-	instance_ids:     backend.GPUPtr(u32), // see instancing.odin
-	material_index:   u32,
-	instance_offset:  u32,
+	scene_data:         backend.GPUPtr(SceneData),
+	vertex_buffer:      backend.GPUPtr(Vertex),
+	material_buffer:    backend.GPUPtr(GpuMaterial),
+	transform_buffer:   backend.GPUPtr(GpuTransform),
+	instance_ids:       backend.GPUPtr(u32), // see instancing.odin
+	instance_materials: backend.GPUPtr(u32),
 }
 
 Mesh :: struct {
