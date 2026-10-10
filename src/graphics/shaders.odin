@@ -248,15 +248,43 @@ shader_load :: proc(
 	return shader, true
 }
 
+// Recompiles one loaded module and rebuilds the pipelines that use it. A failed compile keeps
+// the old pipelines.
+shader_reload :: proc(self: ^Engine, module_name: string) {
+	loaded := self.shader_system.loaded[module_name]
+	if _, load_ok := shader_load(self, module_name, loaded.entry_points); !load_ok {
+		log.errorf("Shader reload '%s' failed, keeping old pipelines", module_name)
+		return
+	}
+	if pipelines_rebuild_for_shader(self, loaded.shader) do shadow_cache_invalidate(&self.shadows.cache)
+}
+
+// Reloads from one poll batch. A changed loaded entry module recompiles alone. A changed .slang
+// file that is not a loaded module may be imported by any of them, so every loaded module
+// recompiles once for the batch instead of once per event.
 shader_poll_hotreload :: proc(self: ^Engine) {
 	ss := &self.shader_system
 
+	changed := make(map[string]bool, context.temp_allocator)
+	shared_changed := false
+	types_changed := false
 	for ev in watcher.poll(&ss.fw) {
 		if ev.event == .Removed {
 			continue
 		}
 
 		filename := filepath.base(ev.path)
+
+		// Editor temp files (".foo.slang.swp", "#foo.slang#") are not shader sources.
+		if strings.has_prefix(filename, ".") || strings.has_prefix(filename, "#") {
+			continue
+		}
+
+		// The generated types.slang only matches the Odin side this binary was built with.
+		if filename == "types.slang" {
+			types_changed = true
+			continue
+		}
 
 		// TODO: strings.trim_suffix instead of manual slicing.
 		// strip ".slang" suffix to get module name
@@ -267,19 +295,30 @@ shader_poll_hotreload :: proc(self: ^Engine) {
 			continue
 		}
 
-		loaded, ok := ss.loaded[module_name]
-		if !ok {
-			continue
+		if _, ok := ss.loaded[module_name]; ok {
+			changed[module_name] = true
+		} else {
+			if !shared_changed {
+				log.infof("Shared shader file changed: %s", filename)
+			}
+			shared_changed = true
 		}
+	}
 
-		log.infof("Shader changed: %s — reloading pipelines", filename)
+	if types_changed {
+		log.warnf("types.slang changed; restart to apply")
+	}
 
-		// Recompile once with every entry point the module was loaded with, then rebuild each
-		// pipeline that uses it.
-		if _, load_ok := shader_load(self, module_name, loaded.entry_points); !load_ok {
-			log.errorf("Shader reload '%s' failed, keeping old pipelines", module_name)
-			continue
+	if shared_changed {
+		log.infof("Reloading all %d loaded shaders", len(ss.loaded))
+		for module_name in ss.loaded {
+			shader_reload(self, module_name)
 		}
-		if pipelines_rebuild_for_shader(self, loaded.shader) do shadow_cache_invalidate(&self.shadows.cache)
+		return
+	}
+
+	for module_name in changed {
+		log.infof("Shader changed: %s.slang — reloading pipelines", module_name)
+		shader_reload(self, module_name)
 	}
 }
