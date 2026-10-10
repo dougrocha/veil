@@ -267,12 +267,24 @@ shader_poll_hotreload :: proc(self: ^Engine) {
 
 	changed := make(map[string]bool, context.temp_allocator)
 	shared_changed := false
+	types_changed := false
 	for ev in watcher.poll(&ss.fw) {
 		if ev.event == .Removed {
 			continue
 		}
 
 		filename := filepath.base(ev.path)
+
+		// Editor temp files (".foo.slang.swp", "#foo.slang#") are not shader sources.
+		if strings.has_prefix(filename, ".") || strings.has_prefix(filename, "#") {
+			continue
+		}
+
+		// The generated types.slang only matches the Odin side this binary was built with.
+		if filename == "types.slang" {
+			types_changed = true
+			continue
+		}
 
 		// TODO: strings.trim_suffix instead of manual slicing.
 		// strip ".slang" suffix to get module name
@@ -291,6 +303,10 @@ shader_poll_hotreload :: proc(self: ^Engine) {
 			}
 			shared_changed = true
 		}
+	}
+
+	if types_changed {
+		log.warnf("types.slang changed; restart to apply")
 	}
 
 	if shared_changed {
