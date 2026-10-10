@@ -48,6 +48,7 @@ INVALID_MODEL :: ModelHandle{}
 
 Model :: struct {
 	borrowed_geometry: bool, // buffers and CPU geometry belong to another engine-owned model
+	variant_of:        Handle(Model), // root asset of a model_with_material variant; INVALID_MODEL for assets
 	meshes:            [dynamic]Mesh,
 	name:              string,
 	bounds:            BoundingSphere,
@@ -60,16 +61,24 @@ ModelPart :: struct {
 	transform: Transform,
 }
 
+// Cache key for model_with_material: one variant per root asset and material.
+ModelVariantKey :: struct {
+	source:   ModelHandle,
+	material: MaterialHandle,
+}
+
 ModelSystem :: struct {
 	next_mesh_key: u64,
 	models:        Pool(Model),
-	model_map:     map[string]ModelHandle,
+	model_map:     map[string]ModelHandle, // asset identity: model_load path, or a registered name
+	variant_map:   map[ModelVariantKey]ModelHandle,
 	parts_map:     map[string][]ModelPart,
 }
 
 model_system_create :: proc(engine: ^Engine) {
 	engine.model_system.models = pool_init(16384, Model)
 	engine.model_system.model_map = make(map[string]ModelHandle)
+	engine.model_system.variant_map = make(map[ModelVariantKey]ModelHandle)
 	engine.model_system.parts_map = make(map[string][]ModelPart)
 }
 
@@ -90,6 +99,7 @@ model_system_destroy :: proc(engine: ^Engine) {
 	}
 	pool_destroy(&ms.models)
 	delete(ms.model_map)
+	delete(ms.variant_map)
 	for key, parts in ms.parts_map {
 		delete(key)
 		delete(parts)
@@ -97,14 +107,16 @@ model_system_destroy :: proc(engine: ^Engine) {
 	delete(ms.parts_map)
 }
 
-model_load :: proc(engine: ^Engine, path: string, material: MaterialHandle = INVALID_MATERIAL) -> ModelHandle {
+// Loads a model by asset path, cached by path. Materials come from the file or the default; use
+// model_with_material to bind a different one.
+model_load :: proc(engine: ^Engine, path: string) -> ModelHandle {
 	if handle, ok := engine.model_system.model_map[path]; ok {
 		return handle
 	}
 
 	ext := filepath.ext(path)
 	if ext == ".gltf" || ext == ".glb" {
-		return model_load_gltf(engine, path, material)
+		return model_load_gltf(engine, path)
 	}
 
 	obj, ok := tinyobj.load_from_file_path(path, allocator = context.temp_allocator)
@@ -152,7 +164,7 @@ model_load :: proc(engine: ^Engine, path: string, material: MaterialHandle = INV
 		}
 	}
 
-	return model_register(engine, path, vertices[:], indices[:], material)
+	return model_register(engine, path, vertices[:], indices[:])
 }
 
 // A vertex as loaders and primitives build it. vertex_buffer_upload packs it into the GPU Vertex.
@@ -213,15 +225,21 @@ model_register :: proc(
 
 // Takes ownership of model, whose name must be an owned copy (it doubles as the map key).
 model_add :: proc(engine: ^Engine, model: Model) -> ModelHandle {
+	handle := model_pool_add(engine, model)
+	engine.model_system.model_map[model.name] = handle
+	return handle
+}
+
+// Assigns sort keys and bounds and allocates the model, without indexing it by name. Takes ownership
+// of model. Variants use this so their names never shadow an asset path.
+model_pool_add :: proc(engine: ^Engine, model: Model) -> ModelHandle {
 	model := model
 	for &mesh in model.meshes {
 		engine.model_system.next_mesh_key += 1
 		mesh.sort_key = engine.model_system.next_mesh_key
 	}
 	model_compute_bounds(&model)
-	handle := pool_alloc(&engine.model_system.models, model)
-	engine.model_system.model_map[model.name] = handle
-	return handle
+	return pool_alloc(&engine.model_system.models, model)
 }
 
 // Bounding sphere around every mesh, centered on the union of their AABBs.
@@ -245,13 +263,9 @@ model_compute_bounds :: proc(model: ^Model) {
 
 // Loads a file as separately spawnable pieces. glTF files get one part per mesh node, or one per
 // primitive of each mesh node with split_primitives (for files flattened into a single mesh, like
-// Sponza). Other formats come back as a single part.
-model_load_parts :: proc(
-	engine: ^Engine,
-	path: string,
-	material: MaterialHandle = INVALID_MATERIAL,
-	split_primitives := false,
-) -> []ModelPart {
+// Sponza). Other formats come back as a single part. A part bound to another material comes from
+// model_with_material on that part's model.
+model_load_parts :: proc(engine: ^Engine, path: string, split_primitives := false) -> []ModelPart {
 	key := fmt.tprintf("{}#split", path) if split_primitives else path
 	if parts, ok := engine.model_system.parts_map[key]; ok {
 		return parts
@@ -260,9 +274,9 @@ model_load_parts :: proc(
 	parts: []ModelPart
 	ext := filepath.ext(path)
 	if ext == ".gltf" || ext == ".glb" {
-		parts = model_load_gltf_parts(engine, path, material, split_primitives)
+		parts = model_load_gltf_parts(engine, path, split_primitives)
 	} else {
-		model := model_load(engine, path, material)
+		model := model_load(engine, path)
 		if model != INVALID_MODEL {
 			parts = make([]ModelPart, 1)
 			parts[0] = {
@@ -277,24 +291,41 @@ model_load_parts :: proc(
 	return parts
 }
 
-// Creates a material binding without duplicating geometry. Both models live until engine_destroy.
-model_with_material :: proc(
-	engine: ^Engine,
-	source: ModelHandle,
-	name: string,
-	material: MaterialHandle,
-) -> ModelHandle {
+// Binds source's geometry to another material. The variant borrows the source's GPU buffers and CPU
+// geometry, and is cached per (root asset, material), so repeated calls return the same handle. A
+// variant of a variant resolves to its root asset first. Both models live until engine_destroy.
+model_with_material :: proc(engine: ^Engine, source: ModelHandle, material: MaterialHandle) -> ModelHandle {
+	ms := &engine.model_system
+	if !pool_is_valid(&ms.models, source) {
+		log.errorf("model_with_material: source model is invalid (failed load?)")
+		return INVALID_MODEL
+	}
 	assert(pool_is_valid(&engine.material_system.materials, material))
-	if handle, ok := engine.model_system.model_map[name]; ok do return handle
-	original := pool_get(&engine.model_system.models, source)
+
+	root := source
+	if variant_of := pool_get(&ms.models, source).variant_of; variant_of != INVALID_MODEL {
+		root = variant_of
+	}
+
+	key := ModelVariantKey{root, material}
+	if handle, ok := ms.variant_map[key]; ok do return handle
+
+	original := pool_get(&ms.models, root)
 	variant := Model {
-		name              = strings.clone(name),
+		name              = fmt.aprintf(
+			"{}+{}",
+			original.name,
+			pool_get(&engine.material_system.materials, material).name,
+		),
 		borrowed_geometry = true,
+		variant_of        = root,
 	}
 	for mesh in original.meshes {
 		mesh := mesh
 		mesh.material = material
 		append(&variant.meshes, mesh)
 	}
-	return model_add(engine, variant)
+	handle := model_pool_add(engine, variant)
+	ms.variant_map[key] = handle
+	return handle
 }
