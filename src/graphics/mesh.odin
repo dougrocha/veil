@@ -47,7 +47,7 @@ ModelHandle :: Handle(Model)
 INVALID_MODEL :: ModelHandle{}
 
 Model :: struct {
-	borrowed_geometry: bool, // buffers and CPU geometry belong to another engine-owned model
+	borrowed_geometry: bool, // shared-buffer ranges and CPU geometry belong to another engine-owned model
 	variant_of:        Handle(Model), // root asset of a model_with_material variant; INVALID_MODEL for assets
 	meshes:            [dynamic]Mesh,
 	name:              string,

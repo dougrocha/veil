@@ -272,10 +272,18 @@ buffer_upload :: proc(ctx: ^Context, data: []$T, usage: BufferUsageFlags) -> Buf
 }
 
 // Copies data into an existing device-local buffer at element offset first.
-buffer_upload_range :: proc(ctx: ^Context, buf: Buffer($T), data: []T, first: int) {
+buffer_upload_range :: proc(ctx: ^Context, buf: Buffer($T), data: []T, first: int, loc := #caller_location) {
 	dest_slot := buffer_slot(ctx, buf)
 	capacity := dest_slot.desc.size / size_of(T)
-	fmt.assertf(first >= 0 && first + len(data) <= capacity, "buffer_upload_range: range out of bounds")
+	fmt.assertf(
+		first >= 0 && first + len(data) <= capacity,
+		"buffer_upload_range: elements [%d, %d+%d) out of range for a %d-element buffer",
+		first,
+		first,
+		len(data),
+		capacity,
+		loc = loc,
+	)
 	staging := buffer_create(T, ctx, len(data), {.Transfer_Src}, .Upload)
 	defer buffer_destroy(ctx, staging)
 	buffer_write(ctx, staging, data)

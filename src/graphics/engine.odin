@@ -331,7 +331,6 @@ shadow_view_runs :: proc(engine: ^Engine, light_type: LightType, view_proj: Mat4
 }
 
 draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
-	backend.cmd_bind_index_buffer(cmd, engine.model_system.index_buffer)
 	pass_pc := mesh_pass_push_constants(engine)
 	bound: Maybe(PipelineKind)
 	for batch in draw_runs_upload(engine, list.opaque) {
