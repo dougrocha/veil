@@ -1,11 +1,16 @@
 package graphics
 
+import "core:fmt"
 import "core:log"
 import "core:os"
 
 import "backend"
 
 import stbtt "vendor:stb/truetype"
+
+// Makes each atlas cache key unique. Keys are per-load, not per path, so no two live textures share one.
+@(private = "file")
+font_bake_serial: u32
 
 FONT_ATLAS_SIZE :: 512
 FONT_FIRST_CHAR :: 32 // ' '
@@ -107,7 +112,10 @@ font_load_from_file :: proc(engine: ^Engine, path: string, pixel_height: f32) ->
 	}
 	texture_upload(&engine.vk_ctx, raw_data(atlas_pixels), &texture, .R8_Unorm)
 
-	font.texture = texture_register(engine, .Linear, path, texture)
+	// Every load owns its atlas, so font_destroy can unload it without touching other fonts.
+	font_bake_serial += 1
+	key := fmt.tprintf("%s@%v#%d", path, pixel_height, font_bake_serial)
+	font.texture = texture_register(engine, .Linear, key, texture)
 
 	log.debugf(
 		"Loaded font: %s (%dx%d atlas, %d glyphs baked) -> bindless slot %d",

@@ -123,7 +123,6 @@ texture_system_destroy :: proc(engine: ^Engine) {
 	for sampler in ts.samplers {
 		backend.sampler_destroy(&engine.vk_ctx, sampler)
 	}
-	// The keys went with their textures above; the maps only release their storage.
 	delete(ts.srgb_texture_map)
 	delete(ts.linear_texture_map)
 	delete(ts.cubemap_map)
@@ -182,10 +181,17 @@ texture_unload :: proc(engine: ^Engine, handle: TextureHandle) -> bool {
 }
 
 // Registers t under cache and returns its handle. The texture owns a copy of key, so callers may
-// pass temp-allocated strings.
+// pass temp-allocated strings. The key must be new: a map set on an existing key keeps the old key
+// memory, which would leave two textures pointing at one owned key. Check texture_cache_check first.
 texture_register :: proc(engine: ^Engine, cache: TextureCache, key: string, t: Texture) -> TextureHandle {
 	ts := &engine.texture_system
 	assert(cache != .None, "texture_register needs a cache kind")
+	log.assertf(
+		key not_in texture_cache_map(ts, cache)^,
+		"texture_register: key \"%s\" is already registered in the %v cache",
+		key,
+		cache,
+	)
 	t := t
 	t.cache = cache
 	t.key = strings.clone(key)
