@@ -84,7 +84,7 @@ cmd_bind_index_buffer :: proc(cmd: RenderEncoder, index_buffer: Buffer(u32)) {
 	vk.CmdBindIndexBuffer(cmd.handle, buffer_slot(cmd.ctx, index_buffer).buffer, 0, .UINT32)
 }
 
-// firstInstance is always 0: pass any instance offset yourself (see instancing.odin).
+// first_instance offsets SV_StartInstanceLocation; shaders add it to SV_InstanceID (see instancing.odin).
 cmd_draw_indexed :: proc(
 	cmd: RenderEncoder,
 	index_count: u32,
