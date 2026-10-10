@@ -195,23 +195,18 @@ shadow_plan_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 }
 
 record_shadow_2d :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
-	record_shadow_views(engine, packet, cmd, .Atlas_2D, &engine.shadows.atlas_2d)
+	record_shadow_views(engine, cmd, .Atlas_2D, &engine.shadows.atlas_2d)
 }
 
 record_shadow_point :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
-	record_shadow_views(engine, packet, cmd, .Cube, &engine.shadows.point_atlas)
+	record_shadow_views(engine, cmd, .Cube, &engine.shadows.point_atlas)
 }
 
 @(private = "file")
-record_shadow_views :: proc(
-	engine: ^Engine,
-	packet: ^FramePacket,
-	cmd: backend.CommandBuffer,
-	kind: ShadowAtlasKind,
-	atlas: ^ShadowAtlas,
-) {
+record_shadow_views :: proc(engine: ^Engine, cmd: backend.CommandBuffer, kind: ShadowAtlasKind, atlas: ^ShadowAtlas) {
 	for view in engine.shadows.plan.views {
 		if view.atlas != kind do continue
+		runs := shadow_view_runs(engine, view.light_type, view.view_proj)
 		// The executor has already put the atlas in .Depth_Write.
 		encoder := backend.begin_render_pass(
 			&engine.vk_ctx,
@@ -223,7 +218,7 @@ record_shadow_views :: proc(
 			},
 		)
 		engine.stats.counters.shadow_views += 1
-		draw_shadow(engine, packet, encoder, view.light_type, view.light_index, view.view_proj)
+		draw_shadow(engine, encoder, view.light_type, view.light_index, view.view_proj, runs)
 		backend.end_render_pass(encoder)
 	}
 }

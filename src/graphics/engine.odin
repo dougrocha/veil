@@ -224,11 +224,11 @@ transform_write :: proc(engine: ^Engine, transforms: ^GpuTransform, slot: int) {
 
 draw_shadow :: proc(
 	engine: ^Engine,
-	packet: ^FramePacket,
 	cmd: backend.RenderEncoder,
 	light_type: LightType,
 	light_i: u32,
 	view_proj: Mat4x4,
+	runs: []DrawRun,
 ) {
 	directional := light_type == .Directional
 	shadow_pipeline := graphics_pipeline(engine, .Shadow_Directional if directional else .Shadow)
@@ -237,14 +237,6 @@ draw_shadow :: proc(
 	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
 
 	frame := current_frame_data(engine)
-
-	frustums := []Frustum{frustum_from_view_proj(view_proj)}
-	runs := shadow_casters_filter(
-		&engine.shadows.casters,
-		draw_history_live(&engine.prev_draws),
-		frustums,
-		skip_near = directional,
-	)
 
 	for batch in draw_runs_upload(engine, runs) {
 		mesh := batch.mesh
@@ -273,6 +265,18 @@ view_draw_list :: proc(engine: ^Engine, packet: ^FramePacket) -> DrawList {
 	engine.stats.counters.draws_visible += list.draws_visible
 	engine.stats.counters.meshes_culled += list.meshes_culled
 	return list
+}
+
+// A shadow view's draw runs: the cached casters inside its frustum. Directional cascades ignore the near
+// plane, since their depth is clamped rather than clipped.
+shadow_view_runs :: proc(engine: ^Engine, light_type: LightType, view_proj: Mat4x4) -> []DrawRun {
+	frustums := []Frustum{frustum_from_view_proj(view_proj)}
+	return shadow_casters_filter(
+		&engine.shadows.casters,
+		draw_history_live(&engine.prev_draws),
+		frustums,
+		skip_near = light_type == .Directional,
+	)
 }
 
 draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
