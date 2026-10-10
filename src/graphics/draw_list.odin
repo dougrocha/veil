@@ -96,10 +96,10 @@ build_draw_list :: proc(view: DrawInput, frustum: Frustum, camera_pos: Vec3) -> 
 	}
 }
 
-// Groups by mesh, keyed by vertex buffer slot rather than mesh pointer so the order doesn't follow
-// heap addresses, then by registration key (material variants share buffers), then draw id.
+// Groups by mesh range rather than mesh pointer so the order doesn't follow heap addresses, then by
+// registration key (material variants share ranges), then draw id.
 draw_item_less :: proc(a, b: DrawItem) -> bool {
-	ka, kb := a.mesh.vertex_buffer.handle.index, b.mesh.vertex_buffer.handle.index
+	ka, kb := a.mesh.first_index, b.mesh.first_index
 	if ka != kb do return ka < kb
 	if a.mesh.sort_key != b.mesh.sort_key do return a.mesh.sort_key < b.mesh.sort_key
 	return a.id < b.id

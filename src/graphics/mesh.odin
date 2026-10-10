@@ -32,14 +32,14 @@ MeshPushConstants :: struct #max_field_align(16) {
 }
 
 Mesh :: struct {
-	sort_key:      u64, // stable registration order, including shared-geometry material variants
-	vertex_buffer: backend.Buffer(Vertex),
-	index_buffer:  backend.Buffer(u32),
-	index_count:   u32,
-	material:      MaterialHandle,
-	positions:     []Vec3,
-	indices:       []u32,
-	bounds:        AABB, // model space
+	sort_key:     u64, // stable registration order, including shared-geometry material variants
+	first_vertex: i32,
+	first_index:  u32,
+	index_count:  u32,
+	material:     MaterialHandle,
+	positions:    []Vec3,
+	indices:      []u32,
+	bounds:       AABB, // model space
 }
 
 ModelHandle :: Handle(Model)
@@ -69,6 +69,10 @@ ModelVariantKey :: struct {
 
 ModelSystem :: struct {
 	next_mesh_key: u64,
+	vertex_buffer: backend.Buffer(Vertex),
+	index_buffer:  backend.Buffer(u32),
+	next_vertex:   int,
+	next_index:    int,
 	models:        Pool(Model),
 	model_map:     map[string]ModelHandle, // asset identity: model_load path, or a registered name
 	variant_map:   map[ModelVariantKey]ModelHandle,
@@ -76,7 +80,26 @@ ModelSystem :: struct {
 	parts_map:     map[string][]ModelPart,
 }
 
+// Fixed capacity for the largest scene plus its primitive and material-variant geometry. Ranges
+// are bump-allocated and remain reserved until shutdown; models have no runtime unload operation.
+MODEL_VERTEX_CAPACITY :: 4 * 1024 * 1024
+MODEL_INDEX_CAPACITY :: 12 * 1024 * 1024
+
 model_system_create :: proc(engine: ^Engine) {
+	engine.model_system.vertex_buffer = backend.buffer_create(
+		Vertex,
+		&engine.vk_ctx,
+		MODEL_VERTEX_CAPACITY,
+		{.Storage},
+		.Shared,
+	)
+	engine.model_system.index_buffer = backend.buffer_create(
+		u32,
+		&engine.vk_ctx,
+		MODEL_INDEX_CAPACITY,
+		{.Index},
+		.Shared,
+	)
 	engine.model_system.models = pool_init(16384, Model)
 	engine.model_system.model_map = make(map[string]ModelHandle)
 	engine.model_system.variant_map = make(map[ModelVariantKey]ModelHandle)
@@ -90,8 +113,6 @@ model_system_destroy :: proc(engine: ^Engine) {
 		if pool_is_alive(&ms.models, Index(i)) {
 			for &mesh in model.meshes {
 				if model.borrowed_geometry do continue
-				backend.buffer_destroy(&engine.vk_ctx, mesh.vertex_buffer)
-				backend.buffer_destroy(&engine.vk_ctx, mesh.index_buffer)
 				delete(mesh.positions)
 				delete(mesh.indices)
 			}
@@ -99,6 +120,8 @@ model_system_destroy :: proc(engine: ^Engine) {
 			delete(model.name)
 		}
 	}
+	backend.buffer_destroy(&engine.vk_ctx, ms.vertex_buffer)
+	backend.buffer_destroy(&engine.vk_ctx, ms.index_buffer)
 	pool_destroy(&ms.models)
 	delete(ms.model_map)
 	delete(ms.variant_map)
@@ -178,8 +201,29 @@ MeshVertex :: struct {
 	tangent: Vec4, // xyz tangent, w bitangent sign
 }
 
-// Packs vertices into the GPU layout and uploads them.
-vertex_buffer_upload :: proc(engine: ^Engine, vertices: []MeshVertex) -> backend.Buffer(Vertex) {
+// Packs one mesh into shared buffers. Indices are rebased to the shared vertex range because the
+// Slang storage-buffer SV_VertexID path does not apply Vulkan's base vertex to the shader index.
+mesh_geometry_upload :: proc(
+	engine: ^Engine,
+	vertices: []MeshVertex,
+	indices: []u32,
+) -> (
+	first_vertex: i32,
+	first_index: u32,
+) {
+	ms := &engine.model_system
+	fmt.assertf(
+		ms.next_vertex + len(vertices) <= MODEL_VERTEX_CAPACITY,
+		"model vertex buffer capacity exceeded: need %d of %d vertices",
+		ms.next_vertex + len(vertices),
+		MODEL_VERTEX_CAPACITY,
+	)
+	fmt.assertf(
+		ms.next_index + len(indices) <= MODEL_INDEX_CAPACITY,
+		"model index buffer capacity exceeded: need %d of %d indices",
+		ms.next_index + len(indices),
+		MODEL_INDEX_CAPACITY,
+	)
 	packed := make([]Vertex, len(vertices), context.temp_allocator)
 	for v, i in vertices {
 		packed[i] = {
@@ -188,7 +232,15 @@ vertex_buffer_upload :: proc(engine: ^Engine, vertices: []MeshVertex) -> backend
 			tangent     = v.tangent,
 		}
 	}
-	return backend.buffer_upload(&engine.vk_ctx, packed, {.Storage})
+	first_vertex = i32(ms.next_vertex)
+	first_index = u32(ms.next_index)
+	backend.buffer_write(&engine.vk_ctx, ms.vertex_buffer, packed, ms.next_vertex)
+	global_indices := make([]u32, len(indices), context.temp_allocator)
+	for index, i in indices do global_indices[i] = index + u32(first_vertex)
+	backend.buffer_write(&engine.vk_ctx, ms.index_buffer, global_indices, ms.next_index)
+	ms.next_vertex += len(vertices)
+	ms.next_index += len(indices)
+	return
 }
 
 model_register :: proc(
@@ -210,8 +262,7 @@ model_make :: proc(
 	indices: []u32,
 	material: MaterialHandle = INVALID_MATERIAL,
 ) -> Model {
-	vertex_buf := vertex_buffer_upload(engine, vertices)
-	index_buf := backend.buffer_upload(&engine.vk_ctx, indices, {.Index})
+	first_vertex, first_index := mesh_geometry_upload(engine, vertices, indices)
 
 	material_handle := material_get_default(engine) if material == INVALID_MATERIAL else material
 	positions := make([]Vec3, len(vertices))
@@ -222,13 +273,13 @@ model_make :: proc(
 	copy(mesh_indices, indices)
 
 	mesh := Mesh {
-		vertex_buffer = vertex_buf,
-		index_buffer  = index_buf,
-		index_count   = u32(len(indices)),
-		material      = material_handle,
-		positions     = positions,
-		indices       = mesh_indices,
-		bounds        = aabb_from_points(positions),
+		first_vertex = first_vertex,
+		first_index  = first_index,
+		index_count  = u32(len(indices)),
+		material     = material_handle,
+		positions    = positions,
+		indices      = mesh_indices,
+		bounds       = aabb_from_points(positions),
 	}
 
 	model := Model {

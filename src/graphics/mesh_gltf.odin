@@ -263,14 +263,15 @@ gltf_load_primitive :: proc(
 		prim_mat = material_get_default(engine)
 	}
 
+	first_vertex, first_index := mesh_geometry_upload(engine, vertices, indices)
 	mesh = Mesh {
-		vertex_buffer = vertex_buffer_upload(engine, vertices),
-		index_buffer  = backend.buffer_upload(&engine.vk_ctx, indices, {.Index}),
-		index_count   = u32(len(indices)),
-		material      = prim_mat,
-		positions     = positions,
-		indices       = indices,
-		bounds        = bounds,
+		first_vertex = first_vertex,
+		first_index  = first_index,
+		index_count  = u32(len(indices)),
+		material     = prim_mat,
+		positions    = positions,
+		indices      = indices,
+		bounds       = bounds,
 	}
 	return mesh, center, true
 }

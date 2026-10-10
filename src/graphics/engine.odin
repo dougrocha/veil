@@ -282,13 +282,15 @@ draw_shadow :: proc(
 	shadow_pipeline := pipeline_get(engine, .Shadow_Directional if directional else .Shadow)
 
 	backend.pipeline_bind(cmd, shadow_pipeline)
+	backend.cmd_bind_index_buffer(cmd, engine.model_system.index_buffer)
 	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
 
 	frame := current_frame_data(engine)
-	// Same for every batch in this view; only vertex_buffer, instance_offset and material_index vary.
+	// Same for every batch in this view; shared geometry and frame addresses are pass constants.
 	view_pc := ShadowPushConstants {
 		view_proj        = view_proj,
 		scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
+		vertex_buffer    = backend.buffer_address(&engine.vk_ctx, engine.model_system.vertex_buffer),
 		material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
 		transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
 		instance_ids     = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
@@ -299,11 +301,10 @@ draw_shadow :: proc(
 	for batch in draw_runs_upload(engine, runs) {
 		mesh := batch.mesh
 		pc := view_pc
-		pc.vertex_buffer = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer)
 		pc.instance_offset = batch.first_id
 		pc.material_index = u32(mesh.material.index)
 		backend.pipeline_push(cmd, &pc)
-		backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count, batch.count)
+		backend.cmd_draw_indexed(cmd, mesh.index_count, batch.count, mesh.first_index)
 		stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 	}
 }
@@ -330,6 +331,7 @@ shadow_view_runs :: proc(engine: ^Engine, light_type: LightType, view_proj: Mat4
 }
 
 draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
+	backend.cmd_bind_index_buffer(cmd, engine.model_system.index_buffer)
 	pass_pc := mesh_pass_push_constants(engine)
 	bound: Maybe(PipelineKind)
 	for batch in draw_runs_upload(engine, list.opaque) {
@@ -371,6 +373,7 @@ mesh_pass_push_constants :: proc(engine: ^Engine) -> MeshPushConstants {
 	frame := current_frame_data(engine)
 	return MeshPushConstants {
 		scene_data = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
+		vertex_buffer = backend.buffer_address(&engine.vk_ctx, engine.model_system.vertex_buffer),
 		material_buffer = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
 		transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
 		instance_ids = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
@@ -381,11 +384,10 @@ mesh_pass_push_constants :: proc(engine: ^Engine) -> MeshPushConstants {
 mesh_draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, pass_pc: MeshPushConstants, batch: DrawBatch) {
 	mesh := batch.mesh
 	pc := pass_pc
-	pc.vertex_buffer = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer)
 	pc.material_index = u32(mesh.material.index)
 	pc.instance_offset = batch.first_id
 	backend.pipeline_push(cmd, &pc)
-	backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count, batch.count)
+	backend.cmd_draw_indexed(cmd, mesh.index_count, batch.count, mesh.first_index)
 	stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 }
 
