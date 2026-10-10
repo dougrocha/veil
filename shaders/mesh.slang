@@ -184,15 +184,17 @@ float sample_cascade(float3 frag_pos, float3 normal, float3 to_light, uint light
     float cascade_bias = select_component(pc.scene_data.shadow_cascade_data[light_index].bias, cascade);
     float bias = max(cascade_bias * (1.0 - dot(normal, to_light)), cascade_bias * 0.1);
 
+    // Each compare tap is already bilinear (2x2 texels). Four taps at (+-0.5, +-0.5) texels
+    // cover a 3x3 texel area with a smoothed falloff, at 4 taps instead of 9.
     float texel_size = 1.0 / pc.scene_data.cam_pos_shadow_map_size.w;
     float shadow = 0.0;
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            float2 offset = float2(x, y) * texel_size;
+    for (int x = -1; x <= 1; x += 2) {
+        for (int y = -1; y <= 1; y += 2) {
+            float2 offset = float2(x, y) * (0.5 * texel_size);
             shadow += shadow_2d_maps.SampleCmp(float3(proj_coords.xy + offset, float(slot)), proj_coords.z - bias);
         }
     }
-    return shadow / 9.0;
+    return shadow * 0.25;
 }
 
 float calc_dir_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, uint light_index, out uint cascade_out) {
