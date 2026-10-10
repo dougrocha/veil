@@ -3,7 +3,7 @@ package backend
 import vk "vendor:vulkan"
 
 @(private)
-begin_immediate_submit :: proc(ctx: ^Context) -> vk.CommandBuffer {
+begin_immediate_submit :: proc(ctx: ^Context) -> CommandBuffer {
 	alloc_info := vk.CommandBufferAllocateInfo {
 		sType              = .COMMAND_BUFFER_ALLOCATE_INFO,
 		commandPool        = ctx.upload_pool,
@@ -18,7 +18,7 @@ begin_immediate_submit :: proc(ctx: ^Context) -> vk.CommandBuffer {
 			&vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}},
 		),
 	)
-	return cmd
+	return CommandBuffer{handle = cmd, ctx = ctx}
 }
 
 @(private)
@@ -44,7 +44,7 @@ end_immediate_submit :: proc(ctx: ^Context, cmd: CommandBuffer) {
 // idea from https://github.com/wrapperup/cool-engine-odin
 @(deferred_in_out = end_immediate_submit)
 immediate_submit :: proc(ctx: ^Context) -> (cmd: CommandBuffer) {
-	return CommandBuffer{handle = begin_immediate_submit(ctx), ctx = ctx}
+	return begin_immediate_submit(ctx)
 }
 
 cmd_begin_recording :: proc(ctx: ^Context, cmd: CommandBuffer) {

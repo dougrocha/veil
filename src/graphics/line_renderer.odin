@@ -73,9 +73,9 @@ line_renderer_push_sector_triangle :: proc(lr: ^LineRenderer, a, b, c: Vec3, col
 
 line_renderer_clear :: proc(engine: ^Engine) {
 	lr := &engine.line_renderer
-	clear(&lr.tested.items)
-	clear(&lr.sector.items)
-	clear(&lr.overlay.items)
+	transient_batch_clear(&lr.tested)
+	transient_batch_clear(&lr.sector)
+	transient_batch_clear(&lr.overlay)
 }
 
 line_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {

@@ -22,6 +22,12 @@ transient_batch_destroy :: proc(ctx: ^backend.Context, b: ^TransientBatch($T)) {
 	for buffer in b.buffers do backend.buffer_destroy(ctx, buffer)
 }
 
+// Drops this tick's items. Called from engine_render's defer, not only on drawn frames: batches
+// are filled every tick, so a skipped frame must still drain them or they overflow.
+transient_batch_clear :: proc(b: ^TransientBatch($T)) {
+	clear(&b.items)
+}
+
 // Copies items into the current slot's buffer. count is 0 (and nothing is copied) when empty.
 transient_batch_upload :: proc(ctx: ^backend.Context, b: ^TransientBatch($T)) -> (ptr: backend.GPUPtr(T), count: u32) {
 	if len(b.items) == 0 do return

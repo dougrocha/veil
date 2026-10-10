@@ -40,7 +40,7 @@ ui_renderer_destroy :: proc(engine: ^Engine) {
 
 ui_renderer_clear :: proc(engine: ^Engine) {
 	for _, &batch in engine.ui_renderer.batches {
-		clear(&batch.items)
+		transient_batch_clear(&batch)
 	}
 }
 
