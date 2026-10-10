@@ -265,9 +265,10 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
 
     float ao = sample_occlusion(mat.occlusion_texture, vert.frag_uv).r;
 
-    // Masked texels skip lighting. Placed after the implicit-LOD samples above: OpKill terminates
-    // the lane, so derivatives for the rest of the quad are not guaranteed after it.
+    // Masked texels skip lighting. Placed after the normal, metallic-roughness and occlusion samples
+    // above, which need quad derivatives that OpKill can leave undefined.
     if (mat.alpha_mode == ALPHA_MODE_MASK && tex_color.a < mat.alpha_cutoff) discard;
+
     float3 total_light = pc.scene_data.ambient_light.color_brightness.rgb * pc.scene_data.ambient_light.color_brightness.w * ao;
 
     static const float3 CASCADE_DEBUG_COLORS[5] = {
