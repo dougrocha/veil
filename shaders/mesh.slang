@@ -264,6 +264,10 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
     float3 view_dir = normalize(pc.scene_data.cam_pos_shadow_map_size.xyz - vert.frag_pos);
 
     float ao = sample_occlusion(mat.occlusion_texture, vert.frag_uv).r;
+
+    // Masked texels skip lighting. Placed after the implicit-LOD samples above: OpKill terminates
+    // the lane, so derivatives for the rest of the quad are not guaranteed after it.
+    if (mat.alpha_mode == ALPHA_MODE_MASK && tex_color.a < mat.alpha_cutoff) discard;
     float3 total_light = pc.scene_data.ambient_light.color_brightness.rgb * pc.scene_data.ambient_light.color_brightness.w * ao;
 
     static const float3 CASCADE_DEBUG_COLORS[5] = {
@@ -299,7 +303,6 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
     }
 
     // 0 = opaque, 1 = mask, 2 = blend; matches AlphaMode in Odin.
-    if (mat.alpha_mode == ALPHA_MODE_MASK && tex_color.a < mat.alpha_cutoff) discard;
     float output_alpha = mat.alpha_mode == ALPHA_MODE_BLEND ? tex_color.a : 1.0;
     // Emission is light the surface gives off itself, so no lighting, shadow, AO or albedo scales it.
     float3 color = tex_color.rgb * total_light + mat.emissive.rgb;
