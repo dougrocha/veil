@@ -27,7 +27,7 @@ DrawRun :: struct {
 }
 
 DrawList :: struct {
-	opaque:        []DrawRun, // one run per mesh, any order
+	opaque:        []DrawRun, // one run per mesh: by pipeline kind, then nearest run first within a kind
 	transparent:   []DrawItem, // back to front; drawn one by one, in this order
 	draws_visible: u32, // draws whose bounding volume passed the frustum test
 	meshes_culled: u32, // meshes of visible draws whose AABB failed the frustum test
@@ -41,7 +41,7 @@ DrawList :: struct {
 // - Skip free ids.
 // - Cull each draw by its model's bounding volume (volume_is_on_frustum), then each mesh by its
 //   AABB (aabb_is_on_frustum).
-// - Opaque and mask meshes go to opaque, grouped with draw_runs_from_items. Each takes its pipeline
+// - Opaque and mask meshes go to opaque, grouped with draw_runs_front_to_back. Each takes its pipeline
 //   kind from its material.
 // - Visible transparent meshes are sorted back to front across all draws, by distance from
 //   camera_pos to each mesh's world-space AABB center.
@@ -77,8 +77,7 @@ build_draw_list :: proc(view: DrawInput, frustum: Frustum, camera_pos: Vec3) -> 
 				id   = u32(id),
 			}
 			if transparent {
-				center := record.world * Vec4{mesh.bounds.center.x, mesh.bounds.center.y, mesh.bounds.center.z, 1}
-				dist2 := linalg.length2(center.xyz - camera_pos)
+				dist2 := mesh_camera_dist2(record.world, mesh.bounds, camera_pos)
 				append(&transparent_meshes, TransparentMesh{item = item, dist2 = dist2})
 			} else {
 				item.kind = opaque_pipeline_kind(material)
@@ -94,7 +93,7 @@ build_draw_list :: proc(view: DrawInput, frustum: Frustum, camera_pos: Vec3) -> 
 	for transparent in transparent_meshes do append(&transparent_items, transparent.item)
 
 	return {
-		opaque = draw_runs_from_items(opaque_items[:]),
+		opaque = draw_runs_front_to_back(opaque_items[:], view.draws, camera_pos),
 		transparent = transparent_items[:],
 		draws_visible = draws_viewed,
 		meshes_culled = culled,
@@ -127,19 +126,55 @@ draw_item_less :: proc(a, b: DrawItem) -> bool {
 	return a.id < b.id
 }
 
-// Sorts items by mesh (reordering them) and returns one run per mesh, temp-allocated.
-draw_runs_from_items :: proc(items: []DrawItem) -> []DrawRun {
+// Squared distance from the camera to the world-space AABB center of one mesh of a draw.
+mesh_camera_dist2 :: proc(world: Mat4x4, bounds: AABB, camera_pos: Vec3) -> f32 {
+	center := world * Vec4{bounds.center.x, bounds.center.y, bounds.center.z, 1}
+	return linalg.length2(center.xyz - camera_pos)
+}
+
+// Sorts opaque items (reordering them) and returns one run per mesh, temp-allocated. Runs are grouped
+// by pipeline kind, opaque kinds first. Within a kind they go front to back by the nearest instance
+// of each mesh: the minimum squared distance over the draws in its run. Ties break on the mesh's
+// sort_key, so the order is deterministic. The items of one mesh stay in one run. The ids keep the
+// order from draw_item_less.
+draw_runs_front_to_back :: proc(items: []DrawItem, draws: []DrawRecord, camera_pos: Vec3) -> []DrawRun {
 	slice.sort_by(items, draw_item_less)
 
-	runs := make([dynamic]DrawRun, context.temp_allocator)
 	ids := make([]u32, len(items), context.temp_allocator)
 	for item, i in items do ids[i] = item.id
 
+	Span :: struct {
+		start, end: int,
+		mesh:       ^Mesh,
+		kind:       PipelineKind,
+		nearest:    f32,
+	}
+	spans := make([dynamic]Span, context.temp_allocator)
 	start := 0
 	for i in 1 ..= len(items) {
 		if i < len(items) && items[i].mesh == items[start].mesh do continue
-		append(&runs, DrawRun{mesh = items[start].mesh, kind = items[start].kind, ids = ids[start:i]})
+		first := items[start]
+		nearest := mesh_camera_dist2(draws[first.id].world, first.mesh.bounds, camera_pos)
+		for item in items[start + 1:i] {
+			nearest = min(nearest, mesh_camera_dist2(draws[item.id].world, item.mesh.bounds, camera_pos))
+		}
+		append(&spans, Span{start = start, end = i, mesh = first.mesh, kind = first.kind, nearest = nearest})
 		start = i
 	}
-	return runs[:]
+
+	slice.sort_by(spans[:], proc(a, b: Span) -> bool {
+		if a.kind != b.kind do return a.kind < b.kind
+		if a.nearest != b.nearest do return a.nearest < b.nearest
+		return a.mesh.sort_key < b.mesh.sort_key
+	})
+
+	runs := make([]DrawRun, len(spans), context.temp_allocator)
+	for span, i in spans {
+		runs[i] = DrawRun {
+			mesh = span.mesh,
+			kind = span.kind,
+			ids  = ids[span.start:span.end],
+		}
+	}
+	return runs
 }
