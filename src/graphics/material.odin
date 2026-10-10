@@ -110,16 +110,21 @@ material_create :: proc(
 	// Owned copies: the map key lives until material_system_destroy; callers pass temp strings.
 	map_key := strings.clone(key)
 	name := strings.clone(display_name if display_name != "" else key)
-	resolve :: proc(h, default: TextureHandle) -> TextureHandle {
-		return h if h != INVALID_TEXTURE else default
+	resolve :: proc(engine: ^Engine, key: string, h: TextureHandle, default: DefaultTexture) -> TextureHandle {
+		if h == INVALID_TEXTURE do return texture_load(engine, default)
+		if pool_is_valid(&engine.texture_system.textures, h) do return h
+		log.warnf(
+			"Material \"%s\": texture handle (index %d, generation %d) is stale; using default",
+			key,
+			h.index,
+			h.generation,
+		)
+		return texture_load(engine, default)
 	}
-	resolved_base_color := resolve(base_color_texture, texture_load(engine, DefaultTexture.White))
-	resolved_metallic_roughness := resolve(
-		metallic_roughness_texture,
-		texture_load(engine, DefaultTexture.Metallic_Roughness),
-	)
-	resolved_normal := resolve(normal_map_texture, texture_load(engine, DefaultTexture.Flat_Normal))
-	resolved_occlusion := resolve(occlusion_texture, texture_load(engine, DefaultTexture.Occlusion))
+	resolved_base_color := resolve(engine, key, base_color_texture, .White)
+	resolved_metallic_roughness := resolve(engine, key, metallic_roughness_texture, .Metallic_Roughness)
+	resolved_normal := resolve(engine, key, normal_map_texture, .Flat_Normal)
+	resolved_occlusion := resolve(engine, key, occlusion_texture, .Occlusion)
 
 	material := Material {
 		name                       = name,

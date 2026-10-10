@@ -1,12 +1,16 @@
 package graphics
 
+import "core:fmt"
 import "core:log"
 import "core:os"
-import "core:strings"
 
 import "backend"
 
 import stbtt "vendor:stb/truetype"
+
+// Makes each atlas cache key unique. Keys are per-load, not per path, so no two live textures share one.
+@(private = "file")
+font_bake_serial: u32
 
 FONT_ATLAS_SIZE :: 512
 FONT_FIRST_CHAR :: 32 // ' '
@@ -32,7 +36,6 @@ when ODIN_OS == .Linux {
 
 Baked_Font :: struct {
 	texture:      TextureHandle,
-	path:         string, // registration key in the texture system's linear_texture_map
 	chardata:     [FONT_NUM_CHARS]stbtt.bakedchar,
 	atlas_w:      i32,
 	atlas_h:      i32,
@@ -42,9 +45,8 @@ Baked_Font :: struct {
 }
 
 font_destroy :: proc(engine: ^Engine, font: ^Baked_Font) {
-	texture_unload(engine, &engine.texture_system.linear_texture_map, font.path)
-	delete(font.path)
-	font.path = ""
+	_ = texture_unload(engine, font.texture)
+	font.texture = INVALID_TEXTURE
 }
 
 // Loads the first available well-known system sans-serif font — for UI text
@@ -82,7 +84,6 @@ font_load_from_file :: proc(engine: ^Engine, path: string, pixel_height: f32) ->
 	atlas_pixels := make([]byte, FONT_ATLAS_SIZE * FONT_ATLAS_SIZE)
 	defer delete(atlas_pixels)
 
-	font.path = strings.clone(path)
 	font.atlas_w = FONT_ATLAS_SIZE
 	font.atlas_h = FONT_ATLAS_SIZE
 	font.first_char = FONT_FIRST_CHAR
@@ -102,7 +103,6 @@ font_load_from_file :: proc(engine: ^Engine, path: string, pixel_height: f32) ->
 	)
 	if result <= 0 {
 		log.errorf("Failed to bake font atlas for '%s' (fit: %d of %d chars)", path, -result, font.num_chars)
-		delete(font.path)
 		return {}, false
 	}
 
@@ -112,8 +112,10 @@ font_load_from_file :: proc(engine: ^Engine, path: string, pixel_height: f32) ->
 	}
 	texture_upload(&engine.vk_ctx, raw_data(atlas_pixels), &texture, .R8_Unorm)
 
-	ts := &engine.texture_system
-	font.texture = texture_register(engine, &ts.linear_texture_map, path, texture)
+	// Every load owns its atlas, so font_destroy can unload it without touching other fonts.
+	font_bake_serial += 1
+	key := fmt.tprintf("%s@%v#%d", path, pixel_height, font_bake_serial)
+	font.texture = texture_register(engine, .Linear, key, texture)
 
 	log.debugf(
 		"Loaded font: %s (%dx%d atlas, %d glyphs baked) -> bindless slot %d",
