@@ -1,7 +1,6 @@
 package graphics
 
 import "core:log"
-import "core:mem"
 import "core:strings"
 
 import "backend"
@@ -144,8 +143,6 @@ material_create :: proc(
 	handle := pool_alloc(&engine.material_system.materials, material)
 	engine.material_system.material_map[map_key] = handle
 
-	offset := uintptr(handle.index) * size_of(GpuMaterial)
-	dst := uintptr(backend.buffer_contents(&engine.vk_ctx, engine.material_system.buffer)) + offset
 	gpu_mat := GpuMaterial {
 		base_color                 = base_color,
 		perceptual_roughness       = perceptual_roughness,
@@ -159,7 +156,7 @@ material_create :: proc(
 		double_sided               = u32(double_sided),
 		emissive                   = {emissive.x, emissive.y, emissive.z, 0},
 	}
-	mem.copy(rawptr(dst), &gpu_mat, size_of(GpuMaterial))
+	backend.buffer_write(&engine.vk_ctx, engine.material_system.buffer, gpu_mat, int(handle.index))
 
 	return handle
 }

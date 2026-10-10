@@ -1,6 +1,7 @@
 package backend
 
-import "core:mem"
+import "base:runtime"
+import "core:fmt"
 
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
@@ -170,13 +171,88 @@ buffer_address :: proc(ctx: ^Context, buf: Buffer($T)) -> GPUPtr(T) {
 	return {address = slot.address}
 }
 
-// CPU pointer to the buffer's memory, like Metal's contents(). Only mapped memory
-// (.Upload, .Shared, .Readback) has one. The caller keeps writes in bounds and off memory
-// an in-flight frame is still reading.
-buffer_contents :: proc(ctx: ^Context, buf: Buffer($T)) -> rawptr {
+// Element range [first, first+count) of a mapped buffer as a CPU slice. Asserts the buffer is mapped
+// and the range fits. The message names the caller's file and line.
+@(private = "file")
+buffer_mapped_range :: proc(
+	ctx: ^Context,
+	buf: Buffer($T),
+	first, count: int,
+	op: string,
+	loc: runtime.Source_Code_Location,
+) -> []T {
 	slot := buffer_slot(ctx, buf)
-	assert(slot.mapped != nil, "buffer_contents: buffer memory is not mapped")
-	return slot.mapped
+	fmt.assertf(slot.mapped != nil, "%s: buffer memory is not mapped", op, loc = loc)
+	capacity := slot.desc.size / size_of(T)
+	fmt.assertf(
+		first >= 0 && count >= 0 && first + count <= capacity,
+		"%s: elements [%d, %d+%d) out of range for a %d-element buffer",
+		op,
+		first,
+		first,
+		count,
+		capacity,
+		loc = loc,
+	)
+	return ([^]T)(slot.mapped)[first:][:count]
+}
+
+// Maps elements [first, first+count) for CPU writes. The flush runs when the calling scope ends, so
+// the writes must happen inside that scope. Mapped buffers only. The caller keeps writes in bounds and
+// off memory an in-flight frame is still reading.
+@(deferred_in_out = buffer_map_commit)
+buffer_map_write :: proc(ctx: ^Context, buf: Buffer($T), first, count: int, loc := #caller_location) -> []T {
+	return buffer_mapped_range(ctx, buf, first, count, "buffer_map_write", loc)
+}
+
+// Flushes the range written through buffer_map_write. A no-op on HOST_COHERENT memory.
+@(private)
+buffer_map_commit :: proc(ctx: ^Context, buf: Buffer($T), first, count: int, loc := #caller_location, _: []T) {
+	slot := buffer_slot(ctx, buf)
+	vk_check(
+		vma.flush_allocation(
+			ctx.vma_allocator,
+			slot.alloc,
+			vk.DeviceSize(first * size_of(T)),
+			vk.DeviceSize(count * size_of(T)),
+		),
+		"buffer_map_commit: flush failed",
+		loc,
+	)
+}
+
+// Writes data (or one value) into the buffer at element first (or index). Works for any mapped memory.
+// The caller keeps writes in bounds and off memory an in-flight frame is still reading.
+buffer_write :: proc {
+	buffer_write_slice,
+	buffer_write_value,
+}
+
+buffer_write_slice :: proc(ctx: ^Context, buf: Buffer($T), data: []T, first := 0, loc := #caller_location) {
+	dst := buffer_map_write(ctx, buf, first, len(data), loc)
+	copy(dst, data)
+}
+
+buffer_write_value :: proc(ctx: ^Context, buf: Buffer($T), value: T, index := 0, loc := #caller_location) {
+	dst := buffer_map_write(ctx, buf, index, 1, loc)
+	dst[0] = value
+}
+
+// Copies elements [first, first+len(out)) out of mapped memory. Invalidates the range first, so
+// non-coherent readback memory is current. Call it after the GPU work that wrote the data has completed.
+buffer_read :: proc(ctx: ^Context, buf: Buffer($T), out: []T, first := 0, loc := #caller_location) {
+	src := buffer_mapped_range(ctx, buf, first, len(out), "buffer_read", loc)
+	vk_check(
+		vma.invalidate_allocation(
+			ctx.vma_allocator,
+			buffer_slot(ctx, buf).alloc,
+			vk.DeviceSize(first * size_of(T)),
+			vk.DeviceSize(len(out) * size_of(T)),
+		),
+		"buffer_read: invalidate failed",
+		loc,
+	)
+	copy(out, src)
 }
 
 // Creates a .Gpu buffer with the given usage (plus Transfer_Dst) and copies data into it
@@ -184,7 +260,7 @@ buffer_contents :: proc(ctx: ^Context, buf: Buffer($T)) -> rawptr {
 buffer_upload :: proc(ctx: ^Context, data: []$T, usage: BufferUsageFlags) -> Buffer(T) {
 	staging := buffer_create(T, ctx, len(data), {.Transfer_Src}, .Upload)
 	defer buffer_destroy(ctx, staging)
-	mem.copy(buffer_contents(ctx, staging), raw_data(data), size_of(T) * len(data))
+	buffer_write(ctx, staging, data)
 
 	dest := buffer_create(T, ctx, len(data), usage + {.Transfer_Dst}, .Gpu)
 	cmd := immediate_submit(ctx)

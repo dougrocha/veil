@@ -1,7 +1,5 @@
 package graphics
 
-import "core:mem"
-
 import "backend"
 
 gpu_point_light :: proc(light: PointLight) -> GpuPointLight {
@@ -77,9 +75,5 @@ scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 	data.point_light_view_proj = plan.point_view_proj
 	data.shadow_cascade_data = plan.cascade_data
 
-	mem.copy(
-		backend.buffer_contents(&engine.vk_ctx, engine.frame_data[frame_index].scene_data_buffer),
-		&data,
-		size_of(SceneData),
-	)
+	backend.buffer_write(&engine.vk_ctx, engine.frame_data[frame_index].scene_data_buffer, data)
 }

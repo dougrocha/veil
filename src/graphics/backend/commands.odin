@@ -122,6 +122,26 @@ cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
 	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
 }
 
+// Host reads of a buffer the GPU just wrote. The queue wait only orders device work, so this barrier is
+// what makes the writes visible to the CPU.
+cmd_barrier_transfer_write_to_host_read :: proc(cmd: CommandBuffer, buf: Buffer($T)) {
+	barrier := vk.BufferMemoryBarrier2 {
+		sType         = .BUFFER_MEMORY_BARRIER_2,
+		srcStageMask  = {.COPY},
+		srcAccessMask = {.TRANSFER_WRITE},
+		dstStageMask  = {.HOST},
+		dstAccessMask = {.HOST_READ},
+		buffer        = buffer_slot(cmd.ctx, buf).buffer,
+		size          = vk.DeviceSize(vk.WHOLE_SIZE),
+	}
+	dep_info := vk.DependencyInfo {
+		sType                    = .DEPENDENCY_INFO,
+		bufferMemoryBarrierCount = 1,
+		pBufferMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
+}
+
 // Binds the pipeline and the bindless table (set 0).
 pipeline_bind_compute :: proc(cmd: ComputeEncoder, pipeline: Pipeline) {
 	vk.CmdBindPipeline(cmd.handle, .COMPUTE, pipeline.pipeline)

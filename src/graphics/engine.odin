@@ -3,7 +3,6 @@ package graphics
 import "base:intrinsics"
 import "core:log"
 import "core:math/linalg"
-import "core:mem"
 import "core:mem/virtual"
 import "core:time"
 
@@ -231,25 +230,41 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 // all of them; a buffer is then patched only where its own marks say.
 update_transforms_buffer :: proc(engine: ^Engine) {
 	frame := current_frame_data(engine)
-	transforms := (^GpuTransform)(backend.buffer_contents(&engine.vk_ctx, frame.transforms_buffer))
+	first, last, dirty := transforms_dirty_range(frame.transforms_dirty[:])
+	if !dirty do return
+
+	transforms := backend.buffer_map_write(&engine.vk_ctx, frame.transforms_buffer, first, last - first + 1)
 	for &word, word_i in frame.transforms_dirty {
 		for word != 0 {
 			bit := int(intrinsics.count_trailing_zeros(word))
 			word &= word - 1
-			transform_write(engine, transforms, word_i * 64 + bit)
+			transform_write(engine, transforms, first, word_i * 64 + bit)
 		}
 	}
 }
 
-// Skips a free id: nothing draws it, and reusing it records a Spawn change.
+// Lowest and highest set draw id; dirty is false when no id is set.
 @(private = "file")
-transform_write :: proc(engine: ^Engine, transforms: ^GpuTransform, slot: int) {
+transforms_dirty_range :: proc(dirty: []u64) -> (first, last: int, ok: bool) {
+	first = -1
+	for word, word_i in dirty {
+		if word == 0 do continue
+		if first < 0 do first = word_i * 64 + int(intrinsics.count_trailing_zeros(word))
+		last = word_i * 64 + 63 - int(intrinsics.count_leading_zeros(word))
+	}
+	return first, last, first >= 0
+}
+
+// Skips a free id: nothing draws it, and reusing it records a Spawn change.
+// window holds ids [first, ...) of the mapped transforms buffer.
+@(private = "file")
+transform_write :: proc(engine: ^Engine, window: []GpuTransform, first: int, slot: int) {
 	record := engine.prev_draws.records[slot]
 	if record.model == INVALID_MODEL do return
 	model_matrix := record.world
 	normal3 := linalg.transpose(linalg.inverse(linalg.matrix3_from_matrix4(model_matrix)))
 
-	mem.ptr_offset(transforms, slot)^ = GpuTransform {
+	window[slot - first] = GpuTransform {
 		model         = model_matrix,
 		normal_matrix = linalg.matrix4_from_matrix3(normal3),
 	}
