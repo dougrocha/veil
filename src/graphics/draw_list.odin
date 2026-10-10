@@ -132,43 +132,17 @@ mesh_camera_dist2 :: proc(world: Mat4x4, bounds: AABB, camera_pos: Vec3) -> f32 
 	return linalg.length2(center.xyz - camera_pos)
 }
 
-// Squared distance from the camera to the closest point of one mesh's world-space AABB. 0 when the
-// camera is inside the box.
-mesh_camera_aabb_dist2 :: proc(world: Mat4x4, bounds: AABB, camera_pos: Vec3) -> f32 {
-	box := aabb_to_global(bounds, world)
-	lo := box.center - box.extents
-	hi := box.center + box.extents
-	closest := linalg.min(linalg.max(camera_pos, lo), hi)
-	return linalg.length2(closest - camera_pos)
-}
-
-// Returns one run per mesh, temp-allocated, from the opaque items (which are not modified). Runs are grouped
-// by pipeline kind, opaque kinds first. Within a kind they go front to back by the nearest instance
-// of each mesh: the minimum squared distance from the camera to the instance's world AABB. Each run's
-// ids also go near to far. Ties break on draw id, and on the mesh's sort_key across meshes, so the
-// order is deterministic. The items of one mesh stay in one run.
+// Returns one run per mesh, temp-allocated. The items are sorted by draw_item_less first, so each run's
+// ids stay in draw id order and the items of one mesh are contiguous. Runs are grouped by pipeline kind,
+// opaque kinds first. Within a kind they go front to back by the nearest instance of each mesh: the
+// minimum squared distance from the camera to the instance's AABB center. sort_key breaks ties.
+// Center distance, not the closest point of the box: a box that contains the camera has distance 0,
+// so large enclosing meshes would draw first and defeat early-z.
 draw_runs_front_to_back :: proc(items: []DrawItem, draws: []DrawRecord, camera_pos: Vec3) -> []DrawRun {
-	// One sort: the draw_item_less keys (kind, vertex buffer, sort_key) group the meshes, then distance
-	// and id order the items within each mesh.
-	Keyed :: struct {
-		item:  DrawItem,
-		dist2: f32,
-	}
-	keyed := make([]Keyed, len(items), context.temp_allocator)
-	for item, i in items {
-		keyed[i] = Keyed {
-			item  = item,
-			dist2 = mesh_camera_aabb_dist2(draws[item.id].world, item.mesh.bounds, camera_pos),
-		}
-	}
-	slice.sort_by(keyed, proc(a, b: Keyed) -> bool {
-		if a.item.kind != b.item.kind do return a.item.kind < b.item.kind
-		ka, kb := a.item.mesh.vertex_buffer.handle.index, b.item.mesh.vertex_buffer.handle.index
-		if ka != kb do return ka < kb
-		if a.item.mesh.sort_key != b.item.mesh.sort_key do return a.item.mesh.sort_key < b.item.mesh.sort_key
-		if a.dist2 != b.dist2 do return a.dist2 < b.dist2
-		return a.item.id < b.item.id
-	})
+	slice.sort_by(items, draw_item_less)
+
+	ids := make([]u32, len(items), context.temp_allocator)
+	for item, i in items do ids[i] = item.id
 
 	Span :: struct {
 		start, end: int,
@@ -178,25 +152,22 @@ draw_runs_front_to_back :: proc(items: []DrawItem, draws: []DrawRecord, camera_p
 	}
 	spans := make([dynamic]Span, context.temp_allocator)
 	start := 0
-	for i in 1 ..= len(keyed) {
-		if i < len(keyed) && keyed[i].item.mesh == keyed[start].item.mesh do continue
-		// Sorted by distance within the mesh, so the span's first entry is its nearest instance.
-		first := keyed[start].item
-		append(
-			&spans,
-			Span{start = start, end = i, mesh = first.mesh, kind = first.kind, nearest = keyed[start].dist2},
-		)
+	for i in 1 ..= len(items) {
+		if i < len(items) && items[i].mesh == items[start].mesh do continue
+		nearest := max(f32)
+		for item in items[start:i] {
+			nearest = min(nearest, mesh_camera_dist2(draws[item.id].world, item.mesh.bounds, camera_pos))
+		}
+		first := items[start]
+		append(&spans, Span{start = start, end = i, mesh = first.mesh, kind = first.kind, nearest = nearest})
 		start = i
 	}
 
 	slice.sort_by(spans[:], proc(a, b: Span) -> bool {
-			if a.kind != b.kind do return a.kind < b.kind
-			if a.nearest != b.nearest do return a.nearest < b.nearest
-			return a.mesh.sort_key < b.mesh.sort_key
-		})
-
-	ids := make([]u32, len(keyed), context.temp_allocator)
-	for key, i in keyed do ids[i] = key.item.id
+		if a.kind != b.kind do return a.kind < b.kind
+		if a.nearest != b.nearest do return a.nearest < b.nearest
+		return a.mesh.sort_key < b.mesh.sort_key
+	})
 
 	runs := make([]DrawRun, len(spans), context.temp_allocator)
 	for span, i in spans {
