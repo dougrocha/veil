@@ -32,7 +32,7 @@ float4 fragment_main(PSInput input) : SV_TARGET {
 }
 
 [shader("compute")]
-[numthreads(256,1,1)]
+[numthreads(PARTICLE_GROUP_SIZE,1,1)]
 void compute_main(uint3 thread_id : SV_DispatchThreadID) {
     uint index = thread_id.x;
 

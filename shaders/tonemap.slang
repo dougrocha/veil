@@ -27,7 +27,7 @@ float3 tonemap(float3 hdrColor, float exposure) {
 }
 
 [shader("compute")]
-[numthreads(8, 8, 1)]
+[numthreads(POST_GROUP_SIZE, POST_GROUP_SIZE, 1)]
 void compute_main(uint3 id : SV_DispatchThreadID) {
     RWTexture2D<float4> out_image = pc.out_storage.get();
     uint width, height;

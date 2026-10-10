@@ -47,9 +47,9 @@ immediate_submit :: proc(ctx: ^Context) -> (cmd: CommandBuffer) {
 	return begin_immediate_submit(ctx)
 }
 
-cmd_begin_recording :: proc(ctx: ^Context, cmd: CommandBuffer) {
-	frame_sync := current_frame_sync(ctx)
-	vk.ResetCommandPool(ctx.device, frame_sync.command_pool, {})
+cmd_begin_recording :: proc(cmd: CommandBuffer) {
+	frame_sync := current_frame_sync(cmd.ctx)
+	vk.ResetCommandPool(cmd.ctx.device, frame_sync.command_pool, {})
 
 	begin_info := vk.CommandBufferBeginInfo {
 		sType = .COMMAND_BUFFER_BEGIN_INFO,
@@ -86,8 +86,7 @@ cmd_draw_indexed :: proc(cmd: RenderEncoder, index_buffer: Buffer(u32), index_co
 	vk.CmdDrawIndexed(cmd.handle, index_count, instance_count, 0, 0, 0)
 }
 
-// Vulkan takes the local workgroup size from the shader.
-cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32, threads_per_group: [3]u32) {
+cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32) {
 	vk.CmdDispatch(cmd.handle, x, y, z)
 }
 
@@ -143,7 +142,7 @@ pipeline_push_compute :: proc(cmd: ComputeEncoder, data: ^$T) {
 	vk.CmdPushConstants(cmd.handle, cmd.ctx.bindless.pipeline_layout, PUSH_CONSTANT_STAGES, 0, u32(size_of(T)), data)
 }
 
-begin_compute_pass :: proc(ctx: ^Context, cmd: CommandBuffer) -> ComputeEncoder {
+begin_compute_pass :: proc(cmd: CommandBuffer) -> ComputeEncoder {
 	return ComputeEncoder(cmd)
 }
 

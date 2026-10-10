@@ -127,7 +127,8 @@ frame_wait_before_render :: proc(ctx: ^Context) {
 }
 
 // TODO: rewrite to own it (AI-written): semaphore submit infos and their stage masks.
-queue_submit_frame :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain, frame_sync: ^FrameSync) {
+queue_submit_frame :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain) {
+	frame_sync := current_frame_sync(ctx)
 	signal_value := ctx.frame_index + 1
 	image_acquired_wait_info := vk.SemaphoreSubmitInfo {
 		sType     = .SEMAPHORE_SUBMIT_INFO,

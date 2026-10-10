@@ -5,6 +5,8 @@ import "core:time"
 
 import "backend"
 
+@(shader_shared)
+PARTICLE_GROUP_SIZE :: 256
 PARTICLE_COUNT :: 8192
 
 // Screen-space rect, vk.Rect2D-shaped but backend-agnostic so callers don't need to import vk.
