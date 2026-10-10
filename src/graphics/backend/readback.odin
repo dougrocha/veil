@@ -50,6 +50,6 @@ image_read_rgba8 :: proc(ctx: ^Context, img: Image, allocator := context.allocat
 	}
 
 	out := make([]u8, size, allocator)
-	copy(out, (cast([^]u8)buffer_contents(ctx, staging))[:size])
+	buffer_read(ctx, staging, out)
 	return out
 }

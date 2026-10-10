@@ -1,7 +1,5 @@
 package graphics
 
-import "core:mem"
-
 import "backend"
 
 // CPU items filled during a tick, copied to the current frame slot's buffer at draw time.
@@ -33,7 +31,6 @@ transient_batch_upload :: proc(ctx: ^backend.Context, b: ^TransientBatch($T)) ->
 	if len(b.items) == 0 do return
 
 	buffer := b.buffers[backend.frame_slot(ctx)]
-	assert(len(b.items) * size_of(T) <= backend.buffer_desc(ctx, buffer).size)
-	mem.copy(backend.buffer_contents(ctx, buffer), raw_data(b.items), len(b.items) * size_of(T))
+	backend.buffer_write(ctx, buffer, b.items[:])
 	return backend.buffer_address(ctx, buffer), u32(len(b.items))
 }

@@ -2,7 +2,6 @@ package graphics
 
 import "core:log"
 import "core:math"
-import "core:mem"
 import "core:strings"
 
 import "backend"
@@ -318,8 +317,12 @@ texture_create_builtin :: proc(engine: ^Engine) {
 	{
 		staging := backend.buffer_create(u8, &engine.vk_ctx, 6 * 4, {.Transfer_Src}, .Upload)
 		defer backend.buffer_destroy(&engine.vk_ctx, staging)
-		black := ([^][4]u8)(backend.buffer_contents(&engine.vk_ctx, staging))
-		for i in 0 ..< 6 do black[i] = {0, 0, 0, 0xFF}
+		// Scoped so the flush runs before cubemap_upload submits the copy.
+		{
+			black := backend.buffer_map_write(&engine.vk_ctx, staging, 0, 6 * 4)
+			texels := ([^][4]u8)(raw_data(black))[:6]
+			for &texel in texels do texel = {0, 0, 0, 0xFF}
+		}
 
 		cube := cubemap_upload(&engine.vk_ctx, staging, 1)
 		ts.defaults[.Black_Cube] = texture_add(engine, cube)
@@ -450,7 +453,7 @@ texture_upload :: proc(
 
 	staging := backend.buffer_create(u8, ctx, int(image_size), {.Transfer_Src}, .Upload)
 	defer backend.buffer_destroy(ctx, staging)
-	mem.copy(backend.buffer_contents(ctx, staging), pixels, int(image_size))
+	backend.buffer_write(ctx, staging, ([^]u8)(pixels)[:image_size])
 
 	mip_levels := u32(math.floor(math.log2(f32(max(w, h)))) + 1)
 
@@ -509,15 +512,17 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	defer backend.buffer_destroy(&engine.vk_ctx, staging)
 
 	src := ([^]u8)(pixels)
-	dst := ([^]u8)(backend.buffer_contents(&engine.vk_ctx, staging))
-
-	for face, i in face_positions {
-		col := face[0]
-		row := face[1]
-		for y in 0 ..< face_h {
-			src_offset := ((row * face_h + y) * u32(width) + col * face_w) * 4
-			dst_offset := u32(i) * u32(face_size) + y * face_w * 4
-			mem.copy(&dst[dst_offset], &src[src_offset], int(face_w * 4))
+	// Scoped so the flush runs before cubemap_upload submits the copy.
+	{
+		dst := backend.buffer_map_write(&engine.vk_ctx, staging, 0, int(face_size * 6))
+		for face, i in face_positions {
+			col := face[0]
+			row := face[1]
+			for y in 0 ..< face_h {
+				src_offset := ((row * face_h + y) * u32(width) + col * face_w) * 4
+				dst_offset := u32(i) * u32(face_size) + y * face_w * 4
+				copy(dst[dst_offset:][:face_w * 4], src[src_offset:][:face_w * 4])
+			}
 		}
 	}
 

@@ -3,7 +3,6 @@ package graphics
 import "base:intrinsics"
 import "core:log"
 import "core:math/linalg"
-import "core:mem"
 import "core:mem/virtual"
 import "core:time"
 
@@ -231,25 +230,28 @@ draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 // all of them; a buffer is then patched only where its own marks say.
 update_transforms_buffer :: proc(engine: ^Engine) {
 	frame := current_frame_data(engine)
-	transforms := (^GpuTransform)(backend.buffer_contents(&engine.vk_ctx, frame.transforms_buffer))
-	for &word, word_i in frame.transforms_dirty {
-		for word != 0 {
-			bit := int(intrinsics.count_trailing_zeros(word))
-			word &= word - 1
-			transform_write(engine, transforms, word_i * 64 + bit)
+	// Scoped so the flush runs before the frame is submitted.
+	{
+		transforms := backend.buffer_map_write(&engine.vk_ctx, frame.transforms_buffer, 0, MAX_DRAWS)
+		for &word, word_i in frame.transforms_dirty {
+			for word != 0 {
+				bit := int(intrinsics.count_trailing_zeros(word))
+				word &= word - 1
+				transform_write(engine, transforms, word_i * 64 + bit)
+			}
 		}
 	}
 }
 
 // Skips a free id: nothing draws it, and reusing it records a Spawn change.
 @(private = "file")
-transform_write :: proc(engine: ^Engine, transforms: ^GpuTransform, slot: int) {
+transform_write :: proc(engine: ^Engine, transforms: []GpuTransform, slot: int) {
 	record := engine.prev_draws.records[slot]
 	if record.model == INVALID_MODEL do return
 	model_matrix := record.world
 	normal3 := linalg.transpose(linalg.inverse(linalg.matrix3_from_matrix4(model_matrix)))
 
-	mem.ptr_offset(transforms, slot)^ = GpuTransform {
+	transforms[slot] = GpuTransform {
 		model         = model_matrix,
 		normal_matrix = linalg.matrix4_from_matrix3(normal3),
 	}

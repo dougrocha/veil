@@ -54,8 +54,7 @@ instance_ids_push :: proc(engine: ^Engine, ids: []u32) -> (first: u32, ok: bool)
 		warned = true
 		return 0, false
 	}
-	dst := ([^]u32)(backend.buffer_contents(&engine.vk_ctx, frame.instance_ids_buffer))
-	copy(dst[frame.instance_id_count:][:len(ids)], ids)
+	backend.buffer_write(&engine.vk_ctx, frame.instance_ids_buffer, ids, int(frame.instance_id_count))
 	first = frame.instance_id_count
 	frame.instance_id_count += u32(len(ids))
 	return first, true
