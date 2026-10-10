@@ -22,7 +22,7 @@ BloomPushConstants :: struct #max_field_align(16) {
 }
 
 TONEMAP_EXPOSURE :: 1.0 // default for PostSettings.exposure
-// Keep in sync with numthreads in tonemap.slang, bloom_down.slang and bloom_up.slang.
+@(shader_shared)
 POST_GROUP_SIZE :: 8
 
 BLOOM_DEFAULT_LEVELS :: 6
@@ -68,7 +68,6 @@ dispatch_post :: proc(encoder: backend.ComputeEncoder, size: [2]u32) {
 		(size.x + POST_GROUP_SIZE - 1) / POST_GROUP_SIZE,
 		(size.y + POST_GROUP_SIZE - 1) / POST_GROUP_SIZE,
 		1,
-		{POST_GROUP_SIZE, POST_GROUP_SIZE, 1},
 	)
 }
 
@@ -83,7 +82,7 @@ dispatch_bloom :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Comma
 	color := backend.ImageAspectFlags{.Color}
 	levels := bloom_levels(engine, packet.camera.post.bloom_max_levels)
 
-	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
+	encoder := backend.begin_compute_pass(cmd)
 	defer backend.end_compute_pass(encoder)
 
 	down := pipeline_get(engine, .Bloom_Down)
@@ -146,7 +145,7 @@ dispatch_tonemap :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Com
 		bloom_strength = post.bloom_strength / f32(bloom_levels(engine, post.bloom_max_levels)),
 	}
 
-	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
+	encoder := backend.begin_compute_pass(cmd)
 	backend.pipeline_bind_compute(encoder, pipeline)
 	backend.pipeline_push_compute(encoder, &pc)
 	extent := render_extent(engine)

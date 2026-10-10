@@ -9,10 +9,12 @@ static const uint BINDLESS_CUBE_COUNT = 16;
 static const uint MAX_POINT_LIGHTS = 512;
 static const uint MAX_DIRECTIONAL_LIGHTS = 2;
 static const uint MAX_SPOT_LIGHTS = 32;
+static const uint POST_GROUP_SIZE = 8;
 static const uint MAX_POINT_SHADOW_LIGHTS = 8;
 static const uint SHADOW_MAP_CASCADE_COUNT = 4;
 static const uint POINT_SHADOW_MAP_SIZE = 1024;
 static const uint MAX_SHADOW_2D_SLOTS = (((MAX_DIRECTIONAL_LIGHTS * SHADOW_MAP_CASCADE_COUNT)) + MAX_SPOT_LIGHTS);
+static const uint PARTICLE_GROUP_SIZE = 256;
 
 static const uint DEBUG_VIEW_MODE_TEXTURE_2D = 0;
 static const uint DEBUG_VIEW_MODE_SHADOW_CUBE_FACE = 1;

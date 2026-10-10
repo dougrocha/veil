@@ -18,13 +18,13 @@ PassConfig :: struct {
 }
 
 // Attachments must already be in their attachment states; the pass executor owns frame-resource layouts.
-begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig) -> RenderEncoder {
+begin_render_pass :: proc(cmd: CommandBuffer, config: PassConfig) -> RenderEncoder {
 	color_attach_info: vk.RenderingAttachmentInfo
 	if config.color.image != {} {
 		color_attach_info = vk.RenderingAttachmentInfo {
 			sType = .RENDERING_ATTACHMENT_INFO,
 			imageView = image_attachment_view(
-				image_slot(ctx, config.color.image),
+				image_slot(cmd.ctx, config.color.image),
 				config.color.layer,
 				config.color.mip,
 			),
@@ -36,7 +36,7 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 		if config.resolve.image != {} {
 			color_attach_info.resolveMode = {.AVERAGE}
 			color_attach_info.resolveImageView = image_attachment_view(
-				image_slot(ctx, config.resolve.image),
+				image_slot(cmd.ctx, config.resolve.image),
 				config.resolve.layer,
 				config.resolve.mip,
 			)
@@ -48,10 +48,10 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 
 	extent: vk.Extent2D
 	if config.color.image != {} {
-		e := image_slot(ctx, config.color.image).desc.extent
+		e := image_slot(cmd.ctx, config.color.image).desc.extent
 		extent = {e.width, e.height}
 	} else if config.depth.image != {} {
-		e := image_slot(ctx, config.depth.image).desc.extent
+		e := image_slot(cmd.ctx, config.depth.image).desc.extent
 		extent = {e.width, e.height}
 	}
 
@@ -68,7 +68,7 @@ begin_render_pass :: proc(ctx: ^Context, cmd: CommandBuffer, config: PassConfig)
 		depth_attach_info = vk.RenderingAttachmentInfo {
 			sType = .RENDERING_ATTACHMENT_INFO,
 			imageView = image_attachment_view(
-				image_slot(ctx, config.depth.image),
+				image_slot(cmd.ctx, config.depth.image),
 				config.depth.layer,
 				config.depth.mip,
 			),

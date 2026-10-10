@@ -151,7 +151,6 @@ record_main :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandB
 	clear_color, _ := packet.background.(Vec4)
 	_, has_sky := packet.background.(TextureHandle)
 	encoder := backend.begin_render_pass(
-		&engine.vk_ctx,
 		cmd,
 		backend.PassConfig {
 			color = {image = engine.render_targets.color},
@@ -175,7 +174,6 @@ record_main :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandB
 record_overlay :: proc(engine: ^Engine, _: ^FramePacket, cmd: backend.CommandBuffer) {
 	debug_view_flush(engine, cmd)
 	encoder := backend.begin_render_pass(
-		&engine.vk_ctx,
 		cmd,
 		backend.PassConfig{color = {image = engine.render_targets.draw}, load_op = .Load},
 	)

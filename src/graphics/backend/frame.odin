@@ -30,7 +30,7 @@ frame_begin :: proc(ctx: ^Context, swapchain: ^Swapchain, width, height: u32) ->
 	}
 
 	cmd = frame_sync.command_buffer
-	cmd_begin_recording(ctx, cmd)
+	cmd_begin_recording(cmd)
 	return cmd, true
 }
 

@@ -202,14 +202,13 @@ dispatch_particles :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.C
 		particles_out = backend.buffer_address(&engine.vk_ctx, engine.frame_data[frame_res_index].particle_buffer),
 		delta_time    = packet.delta_time,
 	}
-	encoder := backend.begin_compute_pass(&engine.vk_ctx, cmd)
+	encoder := backend.begin_compute_pass(cmd)
 	// particles_in was written by the previous frame's dispatch in an earlier submission.
 	backend.cmd_barrier_compute_write_to_compute_read(encoder)
 	backend.pipeline_bind_compute(encoder, pipeline)
 	backend.pipeline_push_compute(encoder, &compute_pc)
-	// Keep the local size in sync with particle.slang's numthreads declaration.
-	#assert(PARTICLE_COUNT % 256 == 0)
-	backend.cmd_dispatch(encoder, PARTICLE_COUNT / 256, 1, 1, {256, 1, 1})
+	#assert(PARTICLE_COUNT % PARTICLE_GROUP_SIZE == 0)
+	backend.cmd_dispatch(encoder, PARTICLE_COUNT / PARTICLE_GROUP_SIZE, 1, 1)
 	backend.cmd_barrier_compute_write_to_vertex_read(encoder)
 	backend.end_compute_pass(encoder)
 }

@@ -209,7 +209,6 @@ record_shadow_views :: proc(engine: ^Engine, cmd: backend.CommandBuffer, kind: S
 		runs := shadow_view_runs(engine, view.light_type, view.view_proj)
 		// The executor has already put the atlas in .Depth_Write.
 		encoder := backend.begin_render_pass(
-			&engine.vk_ctx,
 			cmd,
 			backend.PassConfig {
 				depth = {image = atlas.image, layer = view.layer},

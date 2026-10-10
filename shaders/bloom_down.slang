@@ -49,7 +49,7 @@ float3 downsample(Texture2D<float4> src, SamplerState s, float2 uv, float2 texel
 }
 
 [shader("compute")]
-[numthreads(8, 8, 1)]
+[numthreads(POST_GROUP_SIZE, POST_GROUP_SIZE, 1)]
 void compute_main(uint3 id : SV_DispatchThreadID) {
     RWTexture2D<float4> dst = pc.dst_storage.get();
     uint width, height;
