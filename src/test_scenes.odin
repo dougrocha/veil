@@ -154,15 +154,15 @@ load_bloom_test :: proc(engine: ^gfx.Engine, world: ^World) {
 	}
 	xs := [len(neons)]f32{-6, -4, -2, 2, 4, 6}
 
-	// Primitives are cached by name, so each shape is built once and shared by every material.
+	// Primitive shapes are cached by size, so each shape is built once and bound to each material.
 	for neon, i in neons {
 		mat := gfx.material_create(engine, neon.name, base_color = {0, 0, 0, 1}, emissive = neon.color * NEON_STRENGTH)
 		model: gfx.ModelHandle
 		switch neon.shape {
 		case .Sphere:
-			model = gfx.primitive_sphere(engine, neon.name, mat, radius = 0.4)
+			model = gfx.model_with_material(engine, gfx.primitive_sphere(engine, radius = 0.4), mat)
 		case .Cube:
-			model = gfx.primitive_cube(engine, neon.name, mat, half_size = {0.35, 0.35, 0.35})
+			model = gfx.model_with_material(engine, gfx.primitive_cube(engine, half_size = {0.35, 0.35, 0.35}), mat)
 		}
 		pos := gfx.Vec3{xs[i], 0.8, -2}
 		shape := entity_spawn_model(world, model, gfx.transform_create(translation = pos))
@@ -194,7 +194,7 @@ load_bloom_test :: proc(engine: ^gfx.Engine, world: ^World) {
 		base_color = {0.5, 0.5, 0.5, 1},
 		perceptual_roughness = 0.8,
 	)
-	floor := gfx.primitive_plane(engine, "bloom_floor", floor_mat, half_size = {12, 12})
+	floor := gfx.model_with_material(engine, gfx.primitive_plane(engine, half_size = {12, 12}), floor_mat)
 	entity_spawn_model(world, floor, gfx.transform_create())
 
 	world.active_camera = entity_spawn_camera(world, gfx.camera_create({0, 2.5, 6}, yaw = -90, pitch = -15))
@@ -214,7 +214,7 @@ load_transparency_test :: proc(engine: ^gfx.Engine, world: ^World) {
 		perceptual_roughness = 0.8,
 		double_sided = true,
 	)
-	floor := gfx.primitive_plane(engine, "transparency_floor", floor_mat, half_size = {12, 12})
+	floor := gfx.model_with_material(engine, gfx.primitive_plane(engine, half_size = {12, 12}), floor_mat)
 	entity_spawn_model(world, floor, gfx.transform_create())
 
 	// Opaque shapes behind the glass.
@@ -224,7 +224,7 @@ load_transparency_test :: proc(engine: ^gfx.Engine, world: ^World) {
 		base_color = {0.8, 0.8, 0.8, 1},
 		perceptual_roughness = 0.5,
 	)
-	solid := gfx.primitive_cube(engine, "transparency_solid", solid_mat, half_size = {0.5, 0.5, 0.5})
+	solid := gfx.model_with_material(engine, gfx.primitive_cube(engine, half_size = {0.5, 0.5, 0.5}), solid_mat)
 	for x in ([?]f32{-3, 0, 3}) {
 		entity_spawn_model(world, solid, gfx.transform_create(translation = {x, 0.501, -4}))
 	}
@@ -250,8 +250,11 @@ load_transparency_test :: proc(engine: ^gfx.Engine, world: ^World) {
 			perceptual_roughness = 0.1,
 			alpha_mode = .Blend,
 		)
-		model :=
-			gfx.primitive_cube(engine, glass.name, mat, half_size = {0.6, 0.6, 0.6}) if glass.cube else gfx.primitive_sphere(engine, glass.name, mat, radius = 0.7)
+		model := gfx.model_with_material(
+			engine,
+			gfx.primitive_cube(engine, half_size = {0.6, 0.6, 0.6}) if glass.cube else gfx.primitive_sphere(engine, radius = 0.7),
+			mat,
+		)
 		entity_spawn_model(world, model, gfx.transform_create(translation = glass.pos))
 	}
 
@@ -281,7 +284,7 @@ load_shadow_test :: proc(engine: ^gfx.Engine, world: ^World) {
 		base_color = {0.6, 0.6, 0.6, 1},
 		perceptual_roughness = 0.8,
 	)
-	floor := gfx.primitive_plane(engine, "shadow_floor", floor_mat, half_size = {12, 12})
+	floor := gfx.model_with_material(engine, gfx.primitive_plane(engine, half_size = {12, 12}), floor_mat)
 	entity_spawn_model(world, floor, gfx.transform_create())
 
 	solid_mat := gfx.material_create(
@@ -290,9 +293,9 @@ load_shadow_test :: proc(engine: ^gfx.Engine, world: ^World) {
 		base_color = {0.8, 0.8, 0.8, 1},
 		perceptual_roughness = 0.5,
 	)
-	cube := gfx.primitive_cube(engine, "shadow_cube", solid_mat, half_size = {0.5, 0.5, 0.5})
-	sphere := gfx.primitive_sphere(engine, "shadow_sphere", solid_mat, radius = 0.5)
-	pillar := gfx.primitive_cube(engine, "shadow_pillar", solid_mat, half_size = {0.25, 1, 0.25})
+	cube := gfx.model_with_material(engine, gfx.primitive_cube(engine, half_size = {0.5, 0.5, 0.5}), solid_mat)
+	sphere := gfx.model_with_material(engine, gfx.primitive_sphere(engine, radius = 0.5), solid_mat)
+	pillar := gfx.model_with_material(engine, gfx.primitive_cube(engine, half_size = {0.25, 1, 0.25}), solid_mat)
 	entity_spawn_model(world, cube, gfx.transform_create(translation = {-2, 0.5, 0}))
 	entity_spawn_model(world, sphere, gfx.transform_create(translation = {0, 0.5, 0}))
 	entity_spawn_model(world, pillar, gfx.transform_create(translation = {2, 1, 0}))
@@ -344,7 +347,7 @@ load_cornell_box :: proc(engine: ^gfx.Engine, world: ^World) {
 			base_color = {wall.color.r, wall.color.g, wall.color.b, 1} * 0.8,
 			perceptual_roughness = 0.9,
 		)
-		cube := gfx.primitive_cube(engine, wall.name, mat, half_size = wall.half)
+		cube := gfx.model_with_material(engine, gfx.primitive_cube(engine, wall.half), mat)
 		entity_spawn_model(world, cube, gfx.transform_create(translation = wall.center))
 	}
 
@@ -354,7 +357,7 @@ load_cornell_box :: proc(engine: ^gfx.Engine, world: ^World) {
 		base_color = {0.8, 0.8, 0.8, 1},
 		perceptual_roughness = 0.1,
 	)
-	sphere := gfx.primitive_sphere(engine, "cornell_sphere", sphere_mat, radius = 0.25)
+	sphere := gfx.model_with_material(engine, gfx.primitive_sphere(engine, radius = 0.25), sphere_mat)
 	entity_spawn_model(world, sphere, gfx.transform_create(translation = {0.4, 0.3, -0.3}))
 
 	light_spawn_spot(
@@ -391,10 +394,14 @@ load_max_instances :: proc(engine: ^gfx.Engine, world: ^World) {
 	half_extent := f32(GRID - 1) * SPACING / 2
 
 	floor_mat := gfx.material_create(engine, "max_floor", base_color = {0.5, 0.5, 0.5, 1}, perceptual_roughness = 0.8)
-	floor := gfx.primitive_plane(engine, "max_floor", floor_mat, half_size = {half_extent + 2, half_extent + 2})
+	floor := gfx.model_with_material(
+		engine,
+		gfx.primitive_plane(engine, half_size = {half_extent + 2, half_extent + 2}),
+		floor_mat,
+	)
 	entity_spawn_model(world, floor, gfx.transform_create())
 
-	// One cube and one sphere model per color; primitives are cached by name.
+	// One cube and one sphere model per color, bound to the shared base shapes.
 	colors := [?]gfx.Vec3 {
 		{0.9, 0.2, 0.2},
 		{0.2, 0.8, 0.3},
@@ -413,8 +420,8 @@ load_max_instances :: proc(engine: ^gfx.Engine, world: ^World) {
 			base_color = {color.r, color.g, color.b, 1},
 			perceptual_roughness = 0.5,
 		)
-		cubes[i] = gfx.primitive_cube(engine, fmt.tprintf("max_cube_%d", i), mat, half_size = {0.3, 0.3, 0.3})
-		spheres[i] = gfx.primitive_sphere(engine, fmt.tprintf("max_sphere_%d", i), mat, radius = 0.3)
+		cubes[i] = gfx.model_with_material(engine, gfx.primitive_cube(engine, half_size = {0.3, 0.3, 0.3}), mat)
+		spheres[i] = gfx.model_with_material(engine, gfx.primitive_sphere(engine, radius = 0.3), mat)
 	}
 
 	// The floor takes one slot, so the last grid cell stays empty.

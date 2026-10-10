@@ -72,6 +72,7 @@ ModelSystem :: struct {
 	models:        Pool(Model),
 	model_map:     map[string]ModelHandle, // asset identity: model_load path, or a registered name
 	variant_map:   map[ModelVariantKey]ModelHandle,
+	primitive_map: map[PrimitiveKey]ModelHandle, // base shapes by parameters, see primitives.odin
 	parts_map:     map[string][]ModelPart,
 }
 
@@ -79,6 +80,7 @@ model_system_create :: proc(engine: ^Engine) {
 	engine.model_system.models = pool_init(16384, Model)
 	engine.model_system.model_map = make(map[string]ModelHandle)
 	engine.model_system.variant_map = make(map[ModelVariantKey]ModelHandle)
+	engine.model_system.primitive_map = make(map[PrimitiveKey]ModelHandle)
 	engine.model_system.parts_map = make(map[string][]ModelPart)
 }
 
@@ -100,6 +102,7 @@ model_system_destroy :: proc(engine: ^Engine) {
 	pool_destroy(&ms.models)
 	delete(ms.model_map)
 	delete(ms.variant_map)
+	delete(ms.primitive_map)
 	for key, parts in ms.parts_map {
 		delete(key)
 		delete(parts)
@@ -195,6 +198,18 @@ model_register :: proc(
 	indices: []u32,
 	material: MaterialHandle = INVALID_MATERIAL,
 ) -> ModelHandle {
+	return model_add(engine, model_make(engine, name, vertices, indices, material))
+}
+
+// Uploads one mesh and returns it as an unregistered model, named by a copy of name. Callers add it
+// with model_add (indexed by name) or model_pool_add (not indexed).
+model_make :: proc(
+	engine: ^Engine,
+	name: string,
+	vertices: []MeshVertex,
+	indices: []u32,
+	material: MaterialHandle = INVALID_MATERIAL,
+) -> Model {
 	vertex_buf := vertex_buffer_upload(engine, vertices)
 	index_buf := backend.buffer_upload(&engine.vk_ctx, indices, {.Index})
 
@@ -220,7 +235,7 @@ model_register :: proc(
 		name = strings.clone(name),
 	}
 	append(&model.meshes, mesh)
-	return model_add(engine, model)
+	return model
 }
 
 // Takes ownership of model, whose name must be an owned copy (it doubles as the map key).

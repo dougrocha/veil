@@ -1,19 +1,52 @@
 package graphics
 
+import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 
+PrimitiveKind :: enum u32 {
+	Plane,
+	Cube,
+	Sphere,
+}
+
+// Base shapes are cached by these parameters, not by caller name, so each shape is built once and
+// every material binds to it with model_with_material. Fields a kind does not use stay zero.
+PrimitiveKey :: struct {
+	size:          Vec3, // half extents; {radius, 0, 0} for spheres
+	kind:          PrimitiveKind,
+	segments:      [2]u32, // plane subdivisions; sphere sectors and stacks
+	with_tangents: b32,
+}
+
+// Builds a base shape with the default material and caches it under key. Base models are not
+// indexed by name, so they never shadow an asset path.
+primitive_cache_add :: proc(
+	engine: ^Engine,
+	key: PrimitiveKey,
+	name: string,
+	vertices: []MeshVertex,
+	indices: []u32,
+) -> ModelHandle {
+	handle := model_pool_add(engine, model_make(engine, name, vertices, indices))
+	engine.model_system.primitive_map[key] = handle
+	return handle
+}
+
+// Base plane on the XZ plane, facing +Y. Bind a material with model_with_material.
 primitive_plane :: proc(
 	engine: ^Engine,
-	name: string,
-	material: MaterialHandle = INVALID_MATERIAL,
 	half_size: Vec2 = {0.5, 0.5},
 	subdivisions: u32 = 0,
 	with_tangents := false,
 ) -> ModelHandle {
-	if handle, ok := engine.model_system.model_map[name]; ok {
-		return handle
+	key := PrimitiveKey {
+		size          = {half_size.x, half_size.y, 0},
+		kind          = .Plane,
+		segments      = {subdivisions, 0},
+		with_tangents = b32(with_tangents),
 	}
+	if handle, ok := engine.model_system.primitive_map[key]; ok do return handle
 
 	cols := subdivisions + 2
 	rows := subdivisions + 2
@@ -53,19 +86,18 @@ primitive_plane :: proc(
 
 	if with_tangents do compute_tangents(vertices[:], indices[:])
 
-	return model_register(engine, name, vertices, indices, material)
+	name := fmt.tprintf("plane {}x{}", size.x, size.y)
+	return primitive_cache_add(engine, key, name, vertices, indices)
 }
 
-primitive_cube :: proc(
-	engine: ^Engine,
-	name: string,
-	material: MaterialHandle = INVALID_MATERIAL,
-	half_size: Vec3 = {0.5, 0.5, 0.5},
-	with_tangents := false,
-) -> ModelHandle {
-	if handle, ok := engine.model_system.model_map[name]; ok {
-		return handle
+// Base box centered on the origin. Bind a material with model_with_material.
+primitive_cube :: proc(engine: ^Engine, half_size: Vec3 = {0.5, 0.5, 0.5}, with_tangents := false) -> ModelHandle {
+	key := PrimitiveKey {
+		size          = half_size,
+		kind          = .Cube,
+		with_tangents = b32(with_tangents),
 	}
+	if handle, ok := engine.model_system.primitive_map[key]; ok do return handle
 
 	min := -half_size
 	max := half_size
@@ -143,22 +175,26 @@ primitive_cube :: proc(
 
 	if with_tangents do compute_tangents(vertices[:], indices[:])
 
-	return model_register(engine, name, vertices, indices, material)
+	name := fmt.tprintf("cube {}x{}x{}", half_size.x * 2, half_size.y * 2, half_size.z * 2)
+	return primitive_cache_add(engine, key, name, vertices, indices)
 }
 
+// Base sphere centered on the origin. Bind a material with model_with_material.
 primitive_sphere :: proc(
 	engine: ^Engine,
-	name: string,
-	material: MaterialHandle = INVALID_MATERIAL,
 	radius: f32 = 0.5,
 	sectors: u32 = 32, // number of longitudinal sectors, horizontal resolution
 	stacks: u32 = 18, // number of latitudinal stacks, vertical resolution
 	with_tangents := false,
 ) -> ModelHandle {
-	// from bevy: https://www.songho.ca/opengl/gl_sphere.html#sphere
-	if handle, ok := engine.model_system.model_map[name]; ok {
-		return handle
+	key := PrimitiveKey {
+		size          = {radius, 0, 0},
+		kind          = .Sphere,
+		segments      = {sectors, stacks},
+		with_tangents = b32(with_tangents),
 	}
+	// from bevy: https://www.songho.ca/opengl/gl_sphere.html#sphere
+	if handle, ok := engine.model_system.primitive_map[key]; ok do return handle
 
 	vertices_count := stacks * sectors
 	vertices := make([dynamic]MeshVertex, 0, vertices_count, context.temp_allocator)
@@ -221,7 +257,8 @@ primitive_sphere :: proc(
 
 	if with_tangents do compute_tangents(vertices[:], indices[:])
 
-	return model_register(engine, name, vertices[:], indices[:], material)
+	name := fmt.tprintf("sphere r{}", radius)
+	return primitive_cache_add(engine, key, name, vertices[:], indices[:])
 }
 
 // Computes per-vertex tangents from positions, UVs and normals, matching the
