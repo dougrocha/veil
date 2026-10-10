@@ -35,55 +35,89 @@ engine_create :: proc(
 	frame_dump_init(engine)
 	debug_env_init(engine)
 
-	vk_ctx := &engine.vk_ctx
-	backend.context_init(vk_ctx, window) or_return
+	device_create(engine, window) or_return
+	assets_create(engine) or_return
+	renderer_create(engine, width, height) or_return
 
+	return true
+}
+
+// Each group's destroy is the mirror of its create, and the groups nest: renderer, then assets,
+// then device. engine_destroy calls them in that order.
+engine_destroy :: proc(self: ^Engine) {
+	backend.device_wait_idle(&self.vk_ctx)
+
+	renderer_destroy(self)
+	assets_destroy(self)
+	device_destroy(self)
+
+	frame_dump_destroy(self)
+	virtual.arena_destroy(&self.frame_arena)
+}
+
+// The instance and device. Created first, destroyed last: backend.context_destroy asserts that every
+// image, buffer and shader is already gone. The swapchain belongs to the render targets.
+@(private = "file")
+device_create :: proc(engine: ^Engine, window: ^sdl.Window) -> bool {
+	return backend.context_init(&engine.vk_ctx, window)
+}
+
+@(private = "file")
+device_destroy :: proc(engine: ^Engine) {
+	backend.context_destroy(&engine.vk_ctx)
+}
+
+// Shaders, the texture system (which owns the bindless table), materials and models. Needs the device.
+@(private = "file")
+assets_create :: proc(engine: ^Engine) -> bool {
 	// The cube array and the 2 fixed depth slots count against the same per-stage sampled-image limit.
-	limits := backend.limits(vk_ctx)
+	limits := backend.limits(&engine.vk_ctx)
 	max_bindless_textures := min(MAX_TEXTURES, limits.max_bindless_textures_per_stage - BINDLESS_CUBE_COUNT - 2)
 
 	shader_system_create(engine, max_bindless_textures) or_return
 	texture_system_create(engine, {max_textures_count = max_bindless_textures})
 	material_system_create(engine, {max_material_count = MAX_MATERIALS})
 	model_system_create(engine)
+	return true
+}
 
-	shadows_create(vk_ctx, &engine.shadows)
+// Runs after renderer_destroy: pipelines need the shaders, and render targets and shadows need texture slots.
+@(private = "file")
+assets_destroy :: proc(engine: ^Engine) {
+	model_system_destroy(engine)
+	material_system_destroy(engine)
+	texture_system_destroy(engine)
+	shader_system_destroy(engine)
+}
+
+// Everything that draws a frame: shadow atlases and render targets with the swapchain (both take
+// bindless slots, so they need assets), per-slot buffers, the GPU profiler, and the pipelines and
+// batch renderers that record into them.
+@(private = "file")
+renderer_create :: proc(engine: ^Engine, width, height: u32) -> bool {
+	shadows_create(&engine.vk_ctx, &engine.shadows)
 	render_targets_create(engine, width, height)
 	frame_data_create(engine)
 	draw_history_create(&engine.prev_draws)
 	gpu_profiler_create(engine)
 
 	pipelines_create(engine) or_return
-
 	line_renderer_create(engine) or_return
 	ui_renderer_create(engine)
-
 	return true
 }
 
-// Exact reverse of engine_create.
-engine_destroy :: proc(self: ^Engine) {
-	backend.device_wait_idle(&self.vk_ctx)
+@(private = "file")
+renderer_destroy :: proc(engine: ^Engine) {
+	ui_renderer_destroy(engine)
+	line_renderer_destroy(engine)
+	pipelines_destroy(engine)
 
-	ui_renderer_destroy(self)
-	line_renderer_destroy(self)
-	pipelines_destroy(self)
-
-	gpu_profiler_destroy(self)
-	draw_history_destroy(&self.prev_draws)
-	frame_data_destroy(self)
-	render_targets_destroy(self)
-	shadows_destroy(&self.vk_ctx, &self.shadows)
-
-	model_system_destroy(self)
-	material_system_destroy(self)
-	texture_system_destroy(self)
-	shader_system_destroy(self)
-
-	backend.context_destroy(&self.vk_ctx)
-
-	frame_dump_destroy(self)
-	virtual.arena_destroy(&self.frame_arena)
+	gpu_profiler_destroy(engine)
+	draw_history_destroy(&engine.prev_draws)
+	frame_data_destroy(engine)
+	render_targets_destroy(engine)
+	shadows_destroy(&engine.vk_ctx, &engine.shadows)
 }
 
 // Draws packet from its camera. width/height: the window's drawable size this frame; used when
