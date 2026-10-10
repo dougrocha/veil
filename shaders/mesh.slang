@@ -186,8 +186,9 @@ float sample_cascade(float3 frag_pos, float3 normal, float3 to_light, uint light
 
     float half_texel = 0.5 / pc.scene_data.cam_pos_shadow_map_size.w;
     float depth = proj_coords.z - bias;
-    // Each compare tap is already bilinear (2x2 texels), so four taps at half-texel offsets cover a
-    // 3x3 texel tent. Slightly sharper than the old 3x3 grid of taps, at 4 samples instead of 9.
+    // Each compare tap is already bilinear, so four taps at half-texel offsets give a 2-texel box
+    // over a 3x3 texel footprint (penumbra ~30% narrower than the old 9-tap grid). Kept as explicit
+    // taps: a loop form of the same pattern measured slower.
     float shadow = shadow_2d_maps.SampleCmp(
         float3(proj_coords.xy + float2(-half_texel, -half_texel), float(slot)), depth);
     shadow += shadow_2d_maps.SampleCmp(
