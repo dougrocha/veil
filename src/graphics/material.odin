@@ -82,7 +82,7 @@ material_system_create :: proc(engine: ^Engine, config: MaterialSystemConfig) {
 
 material_create :: proc(
 	engine: ^Engine,
-	name: string,
+	key: string,
 	base_color: Vec4 = {1, 1, 1, 1},
 	perceptual_roughness: f32 = 0,
 	metallic: f32 = 0,
@@ -94,9 +94,10 @@ material_create :: proc(
 	alpha_cutoff: f32 = 0.5,
 	emissive: Vec3 = {0, 0, 0}, // HDR, bake the strength in (e.g. color * 20)
 	double_sided := false,
+	display_name := "", // defaults to key; the key is identity, the display name is only for UI
 ) -> MaterialHandle {
-	if handle, ok := engine.material_system.material_map[name]; ok {
-		log.warnf("Material \"%s\" already exists; returning existing material", name)
+	if handle, ok := engine.material_system.material_map[key]; ok {
+		log.warnf("Material \"%s\" already exists; returning existing material", key)
 		return handle
 	}
 
@@ -105,9 +106,10 @@ material_create :: proc(
 		return INVALID_MATERIAL
 	}
 
-	log.debugf("Creating material: %s", name)
-	// Owned copy, shared by Material.name and the map key; glTF passes temp or cgltf-owned names.
-	name := strings.clone(name)
+	log.debugf("Creating material: %s", key)
+	// Owned copies: the map key lives until material_system_destroy; callers pass temp strings.
+	map_key := strings.clone(key)
+	name := strings.clone(display_name if display_name != "" else key)
 	resolve :: proc(h, default: TextureHandle) -> TextureHandle {
 		return h if h != INVALID_TEXTURE else default
 	}
@@ -135,7 +137,7 @@ material_create :: proc(
 	}
 
 	handle := pool_alloc(&engine.material_system.materials, material)
-	engine.material_system.material_map[name] = handle
+	engine.material_system.material_map[map_key] = handle
 
 	offset := uintptr(handle.index) * size_of(GpuMaterial)
 	dst := uintptr(backend.buffer_contents(&engine.vk_ctx, engine.material_system.buffer)) + offset
@@ -163,6 +165,7 @@ material_system_destroy :: proc(engine: ^Engine) {
 	for &material, i in ms.materials.values {
 		if pool_is_alive(&ms.materials, Index(i)) do delete(material.name)
 	}
+	for key in ms.material_map do delete(key)
 	pool_destroy(&ms.materials)
 	delete(ms.material_map)
 }

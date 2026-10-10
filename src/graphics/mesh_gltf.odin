@@ -297,12 +297,15 @@ gltf_extract_material :: proc(
 	data: ^cgltf.data,
 	mat: ^cgltf.material,
 ) -> MaterialHandle {
+	// Identity is the asset plus index: glTF names repeat across files and within one file.
 	mat_idx := cgltf.material_index(data, mat)
-	name := string(mat.name) if mat.name != nil && mat.name != "" else fmt.tprintf("{}:mat_{}", model_path, mat_idx)
+	key := fmt.tprintf("{}#material{}", model_path, mat_idx)
 
-	if handle, ok := engine.material_system.material_map[name]; ok {
+	if handle, ok := engine.material_system.material_map[key]; ok {
 		return handle
 	}
+
+	display_name := string(mat.name) if mat.name != nil else ""
 
 	load_tex :: proc(
 		engine: ^Engine,
@@ -350,7 +353,7 @@ gltf_extract_material :: proc(
 	// pattern in the texture), so a textured material would glow uniformly. Skip those instead.
 	emissive: Vec3
 	if mat.emissive_texture.texture != nil {
-		log.warnf("Material \"%s\": emissive textures are not supported; ignoring emission", name)
+		log.warnf("Material \"%s\": emissive textures are not supported; ignoring emission", key)
 	} else {
 		strength := mat.emissive_strength.emissive_strength if mat.has_emissive_strength else 1
 		emissive = Vec3{mat.emissive_factor[0], mat.emissive_factor[1], mat.emissive_factor[2]} * strength
@@ -367,7 +370,7 @@ gltf_extract_material :: proc(
 
 	return material_create(
 		engine,
-		name,
+		key,
 		base_color = base_color,
 		perceptual_roughness = pbr.roughness_factor,
 		metallic = pbr.metallic_factor,
@@ -379,5 +382,6 @@ gltf_extract_material :: proc(
 		alpha_cutoff = mat.alpha_cutoff,
 		emissive = emissive,
 		double_sided = bool(mat.double_sided),
+		display_name = display_name,
 	)
 }
