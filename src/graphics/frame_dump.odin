@@ -21,6 +21,11 @@ FrameDump :: struct {
 
 // Debug switches that a headless dump run needs but has no keyboard for.
 debug_env_init :: proc(engine: ^Engine) {
+	if value, found := os.lookup_env("VEIL_CLUSTER_HEATMAP", context.allocator); found {
+		defer delete(value)
+		engine.cluster_heatmap = value != "0"
+		log.infof("cluster heatmap enabled: %v", engine.cluster_heatmap)
+	}
 	if value, found := os.lookup_env("VEIL_PARTICLES", context.allocator); found {
 		defer delete(value)
 		engine.settings.particles = value != "0"

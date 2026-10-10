@@ -1,5 +1,10 @@
 // Generated from the @(shader_shared) declarations in src/graphics. Do not edit.
 
+static const uint CLUSTER_X = 16;
+static const uint CLUSTER_Y = 9;
+static const uint CLUSTER_Z = 24;
+static const uint CLUSTER_COUNT = ((CLUSTER_X * CLUSTER_Y) * CLUSTER_Z);
+static const uint CLUSTER_LIGHT_CAPACITY = (MAX_POINT_LIGHTS + MAX_SPOT_LIGHTS);
 static const uint SAMPLER_LINEAR_REPEAT = 0;
 static const uint SAMPLER_LINEAR_CLAMP = 1;
 static const uint SAMPLER_NEAREST_CLAMP = 2;
@@ -19,6 +24,7 @@ static const uint PARTICLE_GROUP_SIZE = 256;
 static const uint DEBUG_VIEW_MODE_TEXTURE_2D = 0;
 static const uint DEBUG_VIEW_MODE_SHADOW_CUBE_FACE = 1;
 static const uint DEBUG_VIEW_MODE_SHADOW_2D = 2;
+static const uint DEBUG_VIEW_MODE_CLUSTER_HEATMAP = 3;
 
 static const uint LIGHT_TYPE_DIRECTIONAL = 0;
 static const uint LIGHT_TYPE_SPOT = 1;
@@ -73,6 +79,11 @@ struct SpotLight {
     float4 intensity;
 };
 
+struct ClusterHeader {
+    uint light_offset;
+    uint light_count;
+};
+
 struct DirectionalLight {
     float4 direction_diffuse;
     float4 color_specular;
@@ -100,6 +111,10 @@ struct SceneData {
     TimeInfo time_info;
     PointLight* point_lights;
     SpotLight* spot_lights;
+    ClusterHeader* cluster_headers;
+    uint* cluster_indices;
+    float2 cluster_extent;
+    float2 cluster_near_far;
     uint point_light_count;
     uint directional_light_count;
     uint spot_light_count;
@@ -116,10 +131,19 @@ struct ParticlePushConstants {
     float delta_time;
 };
 
+struct ClusterPushConstants {
+    SceneData* scene_data;
+    ClusterHeader* clusters;
+    uint* indices;
+    float2 extent;
+    float2 near_far;
+};
+
 struct DebugViewPushConstants {
     uint mode;
     uint index;
     uint face;
+    SceneData* scene_data;
 };
 
 struct SkyboxPushConstants {

@@ -52,6 +52,11 @@ SceneData :: struct #max_field_align(16) {
 	time_info:               GpuTimeInfo,
 	point_lights:            backend.GPUPtr(GpuPointLight),
 	spot_lights:             backend.GPUPtr(GpuSpotLight),
+	// Cluster lists: point indices are [0, point_light_count), spot indices start at MAX_POINT_LIGHTS.
+	cluster_headers:         backend.GPUPtr(ClusterHeader),
+	cluster_indices:         backend.GPUPtr(u32),
+	cluster_extent:          Vec2,
+	cluster_near_far:        Vec2,
 	point_light_count:       u32,
 	directional_light_count: u32,
 	spot_light_count:        u32,

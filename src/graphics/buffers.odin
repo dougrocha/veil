@@ -23,6 +23,7 @@ FrameData :: struct {
 	scene_data_buffer:   backend.Buffer(SceneData),
 	point_lights_buffer: backend.Buffer(GpuPointLight),
 	spot_lights_buffer:  backend.Buffer(GpuSpotLight),
+	clusters:            ClusterBuffers,
 	particle_buffer:     backend.Buffer(Particle),
 	transforms_buffer:   backend.Buffer(GpuTransform),
 	instance_ids_buffer: backend.Buffer(u32),
@@ -71,10 +72,12 @@ frame_data_create :: proc(engine: ^Engine) {
 		)
 		engine.frame_data[i].particle_buffer = create_particle_buffer(&engine.vk_ctx)
 	}
+	cluster_buffers_create(engine)
 }
 
 frame_data_destroy :: proc(engine: ^Engine) {
 	for &res in engine.frame_data {
+		// Cluster buffers are destroyed as part of the frame data lifetime.
 		backend.buffer_destroy(&engine.vk_ctx, res.scene_data_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.point_lights_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.spot_lights_buffer)
@@ -82,6 +85,7 @@ frame_data_destroy :: proc(engine: ^Engine) {
 		backend.buffer_destroy(&engine.vk_ctx, res.transforms_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.instance_ids_buffer)
 	}
+	cluster_buffers_destroy(engine)
 }
 
 // TODO: This code is half engine/game code, needs ot be looked at

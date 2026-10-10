@@ -7,13 +7,15 @@ DebugViewMode :: enum u32 {
 	Texture_2D,
 	Shadow_Cube_Face,
 	Shadow_2D,
+	Cluster_Heatmap,
 }
 
 @(shader_shared)
 DebugViewPushConstants :: struct #max_field_align(16) {
-	mode:  DebugViewMode,
-	index: u32, // bindless texture index (Texture_2D) or light_index (Shadow_Cube_Face / Shadow_2D)
-	face:  u32, // cube face_index (Shadow_Cube_Face only)
+	mode:       DebugViewMode,
+	index:      u32, // bindless texture index (Texture_2D) or light_index (Shadow_Cube_Face / Shadow_2D)
+	face:       u32, // cube face_index (Shadow_Cube_Face only)
+	scene_data: backend.GPUPtr(SceneData),
 }
 
 MAX_DEBUG_VIEWS :: 64
@@ -34,7 +36,9 @@ DebugViewQueue :: struct {
 debug_view_draw :: proc(engine: ^Engine, view: DebugViewPushConstants, rect: Rect2D) {
 	q := &engine.debug_views
 	if q.count >= MAX_DEBUG_VIEWS do return
-	q.requests[q.count] = {view, rect}
+	request_view := view
+	request_view.scene_data = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer)
+	q.requests[q.count] = {request_view, rect}
 	q.count += 1
 }
 

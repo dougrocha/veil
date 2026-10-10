@@ -7,6 +7,7 @@ PassKind :: enum {
 	Particles,
 	Shadow_2D,
 	Shadow_Point,
+	Clusters,
 	Main,
 	Bloom,
 	Tonemap,
@@ -62,6 +63,7 @@ PASSES := [PassKind]PassSpec {
 		record = record_shadow_point,
 		uses = {{.Shadow_Cube, .Depth_Write}},
 	},
+	.Clusters = {name = "clusters", record = dispatch_clusters},
 	// Main and Overlay declaring the atlases Depth_Read is what leaves them readable, including
 	// when the shadow passes are disabled.
 	.Main = {
@@ -172,6 +174,10 @@ record_main :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandB
 
 @(private = "file")
 record_overlay :: proc(engine: ^Engine, _: ^FramePacket, cmd: backend.CommandBuffer) {
+	if engine.cluster_heatmap {
+		extent := render_extent(engine)
+		debug_view_draw(engine, {mode = .Cluster_Heatmap}, {{0, 0}, {extent.width, extent.height}})
+	}
 	debug_view_flush(engine, cmd)
 	encoder := backend.begin_render_pass(
 		cmd,

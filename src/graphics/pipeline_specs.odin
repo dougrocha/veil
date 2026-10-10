@@ -22,6 +22,7 @@ PipelineKind :: enum u8 {
 	Tonemap,
 	Bloom_Down,
 	Bloom_Up,
+	Clusters,
 }
 
 PipelineStage :: enum u8 {
@@ -82,7 +83,7 @@ PIPELINE_SPECS := [PipelineKind]PipelineSpec {
 	.Skybox = {shader = "skybox", targets = .Main, cull = .None, depth = {test = true, compare = .LessOrEqual}},
 	.UI = {shader = "ui", targets = .Overlay, cull = .None, blend = .Alpha},
 	.Particle = {shader = "particle", targets = .Main, topology = .Points, cull = .None, blend = .Alpha},
-	.Debug_View = {shader = "debug_view", targets = .Overlay, cull = .None},
+	.Debug_View = {shader = "debug_view", targets = .Overlay, cull = .None, blend = .Alpha},
 	.Debug_Line = {
 		shader = "line",
 		targets = .Main,
@@ -96,6 +97,7 @@ PIPELINE_SPECS := [PipelineKind]PipelineSpec {
 	.Tonemap = {shader = "tonemap", stage = .Compute},
 	.Bloom_Down = {shader = "bloom_down", stage = .Compute},
 	.Bloom_Up = {shader = "bloom_up", stage = .Compute},
+	.Clusters = {shader = "clusters", stage = .Compute},
 }
 
 // Built from the same format constants the targets are created with, so pipelines don't depend

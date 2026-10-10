@@ -73,6 +73,10 @@ scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 	dst[0].skybox_cube = texture_cube_slot(engine, sky)
 	dst[0].point_lights = backend.buffer_address(&engine.vk_ctx, frame.point_lights_buffer)
 	dst[0].spot_lights = backend.buffer_address(&engine.vk_ctx, frame.spot_lights_buffer)
+	dst[0].cluster_headers = backend.buffer_address(&engine.vk_ctx, frame.clusters.headers)
+	dst[0].cluster_indices = backend.buffer_address(&engine.vk_ctx, frame.clusters.indices)
+	dst[0].cluster_extent = {f32(render_extent(engine).width), f32(render_extent(engine).height)}
+	dst[0].cluster_near_far = {active_camera.near, active_camera.far}
 	dst[0].ambient_light = {
 		color_brightness = {
 			packet.lights.ambient_light.color.x,
