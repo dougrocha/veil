@@ -35,6 +35,14 @@ TextureFlag :: enum u8 {
 	External, // image owned elsewhere (e.g. a render target); never destroyed by the texture system
 }
 
+// Which cache map a texture is registered in. None: builtin and external textures, not cached.
+TextureCache :: enum u8 {
+	None,
+	Srgb,
+	Linear,
+	Cube,
+}
+
 Texture :: struct {
 	image:         backend.Image,
 	extent:        backend.Extent3D, // set before upload; texture_upload sizes the image from it
@@ -44,6 +52,8 @@ Texture :: struct {
 	flags:         TextureFlags,
 	view_mip:      Maybe(u32), // External only: the slot shows just this mip
 	cube_slot:     u32, // cube images only: index into the bindless cube array
+	cache:         TextureCache,
+	key:           string, // owned copy, also the cache map key; empty when cache is None
 }
 
 DefaultTexture :: enum u8 {
@@ -107,17 +117,16 @@ texture_system_destroy :: proc(engine: ^Engine) {
 		if !pool_is_alive(&ts.textures, Index(i)) do continue
 		assert(.External not_in texture.flags, "external texture still registered; its owner must unregister it")
 		texture_destroy(&engine.vk_ctx, texture)
+		if texture.cache != .None do delete(texture.key)
 	}
 	pool_destroy(&ts.textures)
 	for sampler in ts.samplers {
 		backend.sampler_destroy(&engine.vk_ctx, sampler)
 	}
-	for cache in ([]^map[string]TextureHandle{&ts.srgb_texture_map, &ts.linear_texture_map, &ts.cubemap_map}) {
-		for key in cache {
-			delete(key)
-		}
-		delete(cache^)
-	}
+	// The keys went with their textures above; the maps only release their storage.
+	delete(ts.srgb_texture_map)
+	delete(ts.linear_texture_map)
+	delete(ts.cubemap_map)
 	delete(ts.cube_free)
 }
 
@@ -126,32 +135,112 @@ texture_system_has_capacity :: proc(ts: ^TextureSystem) -> bool {
 	return ts.textures.count < ts.config.max_textures_count || len(ts.textures.free_list) > 0
 }
 
-// Frees a single texture's GPU resources and removes it from the given cache
-// (srgb_texture_map / linear_texture_map / cubemap_map) and the pool. The
-// bindless descriptor slot is left stale until reused by a future registration.
-// Waits for the device to go idle first, since in-flight frames may still sample it.
-texture_unload :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: string) {
+// Unloads an owned texture: removes its cache entry, frees its key and bindless slot, releases the
+// image through the deferred path, and invalidates the handle. Returns false, with an error log, for
+// external and builtin textures and for textures a live material still references. A stale handle
+// logs a warning and returns false.
+texture_unload :: proc(engine: ^Engine, handle: TextureHandle) -> bool {
 	ts := &engine.texture_system
-	handle, ok := cache[key]
-	if !ok {
-		return
+	if !pool_is_valid(&ts.textures, handle) {
+		log.warnf(
+			"texture_unload: handle (index %d, generation %d) is stale or invalid",
+			handle.index,
+			handle.generation,
+		)
+		return false
 	}
-	assert(.External not_in pool_get(&ts.textures, handle).flags, "external textures are not unloaded")
-	backend.device_wait_idle(&engine.vk_ctx)
 	t := pool_get(&ts.textures, handle)
-	if texture_is_cube(engine, t^) do append(&ts.cube_free, t.cube_slot)
-	texture_destroy(&engine.vk_ctx, t^)
+	if .External in t.flags {
+		log.errorf("texture_unload: texture %d is external; its owner must unregister it", handle.index)
+		return false
+	}
+	if t.cache == .None {
+		log.errorf("texture_unload: texture %d is a builtin default and can't be unloaded", handle.index)
+		return false
+	}
+	if name, found := texture_referenced_by_material(engine, handle); found {
+		log.errorf("texture_unload: texture %d is still referenced by material \"%s\"", handle.index, name)
+		return false
+	}
+
+	// Idle first, so the slot rewrite in texture_retire_slot never races an in-flight frame that
+	// samples this slot. The image itself is retired by image_destroy's deferred release.
+	backend.device_wait_idle(&engine.vk_ctx)
+
+	key := t.key
+	cache := t.cache
+	is_cube := texture_is_cube(engine, t^)
+	cube_slot := t.cube_slot
+	image := t.image
+
 	pool_free(&ts.textures, handle)
-	stored_key, _ := delete_key(cache, key)
+	stored_key, _ := delete_key(texture_cache_map(ts, cache), key)
 	delete(stored_key)
+	texture_retire_slot(engine, handle, is_cube, cube_slot)
+	backend.image_destroy(&engine.vk_ctx, image)
+	return true
 }
 
-// The cache owns a copy of key, so callers may pass temp-allocated strings.
-texture_register :: proc(engine: ^Engine, cache: ^map[string]TextureHandle, key: string, t: Texture) -> TextureHandle {
+// Registers t under cache and returns its handle. The texture owns a copy of key, so callers may
+// pass temp-allocated strings.
+texture_register :: proc(engine: ^Engine, cache: TextureCache, key: string, t: Texture) -> TextureHandle {
 	ts := &engine.texture_system
+	assert(cache != .None, "texture_register needs a cache kind")
+	t := t
+	t.cache = cache
+	t.key = strings.clone(key)
 	handle := texture_add(engine, t)
-	cache^[strings.clone(key)] = handle
+	texture_cache_map(ts, cache)^[t.key] = handle
 	return handle
+}
+
+@(private = "file")
+texture_cache_map :: proc(ts: ^TextureSystem, cache: TextureCache) -> ^map[string]TextureHandle {
+	switch cache {
+	case .None:
+		return nil
+	case .Srgb:
+		return &ts.srgb_texture_map
+	case .Linear:
+		return &ts.linear_texture_map
+	case .Cube:
+		return &ts.cubemap_map
+	}
+	return nil
+}
+
+// Name of the first live material that samples handle through any of its texture slots.
+@(private = "file")
+texture_referenced_by_material :: proc(engine: ^Engine, handle: TextureHandle) -> (name: string, found: bool) {
+	ms := &engine.material_system
+	for &material, i in ms.materials.values {
+		if !pool_is_alive(&ms.materials, Index(i)) do continue
+		slots := [4]TextureHandle {
+			material.base_color_texture,
+			material.metallic_roughness_texture,
+			material.normal_map_texture,
+			material.occlusion_texture,
+		}
+		for slot in slots {
+			if slot == handle do return material.name, true
+		}
+	}
+	return "", false
+}
+
+// Points a retired slot at a valid default so no descriptor keeps the freed image. Cube slots go
+// back on cube_free for reuse.
+@(private = "file")
+texture_retire_slot :: proc(engine: ^Engine, handle: TextureHandle, is_cube: bool, cube_slot: u32) {
+	ts := &engine.texture_system
+	ctx := &engine.vk_ctx
+	if is_cube {
+		backend.bindless_write_cube(ctx, cube_slot, pool_get(&ts.textures, ts.defaults[.Black_Cube]).image)
+		append(&ts.cube_free, cube_slot)
+	} else {
+		fallback := pool_get(&ts.textures, ts.defaults[.White]).image
+		backend.bindless_write_texture(ctx, u32(handle.index), fallback)
+	}
 }
 
 // Gives an image owned outside the texture system (a render target) a bindless texture slot.
@@ -243,7 +332,7 @@ texture_load_default :: #force_inline proc(engine: ^Engine, which: DefaultTextur
 
 texture_load_from_file :: proc(engine: ^Engine, path: string, is_srgb: bool = true) -> TextureHandle {
 	ts := &engine.texture_system
-	cache := &ts.srgb_texture_map if is_srgb else &ts.linear_texture_map
+	cache := TextureCache.Srgb if is_srgb else TextureCache.Linear
 	if handle, done := texture_cache_check(ts, cache, path, ts.defaults[.White]); done do return handle
 
 	img, ok := decode_rgba8_file(path)
@@ -256,7 +345,7 @@ texture_load_from_file :: proc(engine: ^Engine, path: string, is_srgb: bool = tr
 
 texture_load_from_memory :: proc(engine: ^Engine, name: string, data: []byte, is_srgb: bool = true) -> TextureHandle {
 	ts := &engine.texture_system
-	cache := &ts.srgb_texture_map if is_srgb else &ts.linear_texture_map
+	cache := TextureCache.Srgb if is_srgb else TextureCache.Linear
 	if handle, done := texture_cache_check(ts, cache, name, ts.defaults[.White]); done do return handle
 
 	img, ok := decode_rgba8_memory(name, data)
@@ -278,14 +367,14 @@ DecodedImage :: struct {
 @(private = "file")
 texture_cache_check :: proc(
 	ts: ^TextureSystem,
-	cache: ^map[string]TextureHandle,
+	cache: TextureCache,
 	key: string,
 	fallback: TextureHandle,
 ) -> (
 	TextureHandle,
 	bool,
 ) {
-	if handle, ok := cache[key]; ok do return handle, true
+	if handle, ok := texture_cache_map(ts, cache)^[key]; ok do return handle, true
 	if !texture_system_has_capacity(ts) {
 		log.errorf("Texture system is full (max: %d), can't load '%s'", ts.config.max_textures_count, key)
 		return fallback, true
@@ -318,7 +407,7 @@ decode_rgba8_memory :: proc(name: string, data: []byte) -> (img: DecodedImage, o
 @(private = "file")
 texture_register_rgba8 :: proc(
 	engine: ^Engine,
-	cache: ^map[string]TextureHandle,
+	cache: TextureCache,
 	key: string,
 	img: DecodedImage,
 	is_srgb: bool,
@@ -380,7 +469,7 @@ texture_upload :: proc(
 
 texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	ts := &engine.texture_system
-	if handle, done := texture_cache_check(ts, &ts.cubemap_map, path, ts.defaults[.Black_Cube]); done do return handle
+	if handle, done := texture_cache_check(ts, .Cube, path, ts.defaults[.Black_Cube]); done do return handle
 
 	img, ok := decode_rgba8_file(path)
 	if !ok do return ts.defaults[.Black_Cube]
@@ -427,7 +516,7 @@ texture_load_cubemap :: proc(engine: ^Engine, path: string) -> TextureHandle {
 	}
 
 	t := cubemap_upload(&engine.vk_ctx, staging, face_w)
-	return texture_register(engine, &ts.cubemap_map, path, t)
+	return texture_register(engine, .Cube, path, t)
 }
 
 // Uploads six tightly packed RGBA8 sRGB faces (+X, -X, +Y, -Y, +Z, -Z) of size x size
