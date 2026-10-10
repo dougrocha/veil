@@ -270,3 +270,21 @@ buffer_upload :: proc(ctx: ^Context, data: []$T, usage: BufferUsageFlags) -> Buf
 	vk.CmdCopyBuffer(cmd.handle, buffer_slot(ctx, staging).buffer, buffer_slot(ctx, dest).buffer, 1, &region)
 	return dest
 }
+
+// Copies data into an existing device-local buffer at element offset first.
+buffer_upload_range :: proc(ctx: ^Context, buf: Buffer($T), data: []T, first: int) {
+	dest_slot := buffer_slot(ctx, buf)
+	capacity := dest_slot.desc.size / size_of(T)
+	fmt.assertf(first >= 0 && first + len(data) <= capacity, "buffer_upload_range: range out of bounds")
+	staging := buffer_create(T, ctx, len(data), {.Transfer_Src}, .Upload)
+	defer buffer_destroy(ctx, staging)
+	buffer_write(ctx, staging, data)
+
+	cmd := immediate_submit(ctx)
+	region := vk.BufferCopy {
+		srcOffset = 0,
+		dstOffset = vk.DeviceSize(first * size_of(T)),
+		size      = vk.DeviceSize(len(data) * size_of(T)),
+	}
+	vk.CmdCopyBuffer(cmd.handle, buffer_slot(ctx, staging).buffer, dest_slot.buffer, 1, &region)
+}

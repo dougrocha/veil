@@ -304,7 +304,7 @@ draw_shadow :: proc(
 		pc.instance_offset = batch.first_id
 		pc.material_index = u32(mesh.material.index)
 		backend.pipeline_push(cmd, &pc)
-		backend.cmd_draw_indexed(cmd, mesh.index_count, batch.count, mesh.first_index)
+		backend.cmd_draw_indexed(cmd, mesh.index_count, batch.count, mesh.first_index, mesh.first_vertex)
 		stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 	}
 }
@@ -387,7 +387,7 @@ mesh_draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, pass_pc: Me
 	pc.material_index = u32(mesh.material.index)
 	pc.instance_offset = batch.first_id
 	backend.pipeline_push(cmd, &pc)
-	backend.cmd_draw_indexed(cmd, mesh.index_count, batch.count, mesh.first_index)
+	backend.cmd_draw_indexed(cmd, mesh.index_count, batch.count, mesh.first_index, mesh.first_vertex)
 	stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 }
 

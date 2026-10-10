@@ -3,6 +3,7 @@ import types;
 
 struct VSInput {
     uint vertex_index : SV_VertexID;
+    uint start_vertex_location : SV_StartVertexLocation;
     uint instance_id : SV_InstanceID;
 };
 
@@ -17,7 +18,8 @@ struct VSOutput {
 
 [shader("vertex")]
 VSOutput vertex_main(VSInput input) {
-    let v = pc.vertex_buffer[input.vertex_index];
+    // Slang's SV_VertexID excludes the Vulkan base vertex; add SV_StartVertexLocation to restore it.
+    let v = pc.vertex_buffer[input.vertex_index + input.start_vertex_location];
     let transform = pc.transform_buffer[pc.instance_ids[pc.instance_offset + input.instance_id]];
 
     VSOutput output;

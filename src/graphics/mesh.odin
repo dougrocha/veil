@@ -82,23 +82,23 @@ ModelSystem :: struct {
 
 // Fixed capacity for the largest scene plus its primitive and material-variant geometry. Ranges
 // are bump-allocated and remain reserved until shutdown; models have no runtime unload operation.
-MODEL_VERTEX_CAPACITY :: 4 * 1024 * 1024
-MODEL_INDEX_CAPACITY :: 12 * 1024 * 1024
+MODEL_VERTEX_CAPACITY :: 1 * 1024 * 1024
+MODEL_INDEX_CAPACITY :: 4 * 1024 * 1024
 
 model_system_create :: proc(engine: ^Engine) {
 	engine.model_system.vertex_buffer = backend.buffer_create(
 		Vertex,
 		&engine.vk_ctx,
 		MODEL_VERTEX_CAPACITY,
-		{.Storage},
-		.Shared,
+		{.Storage, .Transfer_Dst},
+		.Gpu,
 	)
 	engine.model_system.index_buffer = backend.buffer_create(
 		u32,
 		&engine.vk_ctx,
 		MODEL_INDEX_CAPACITY,
-		{.Index},
-		.Shared,
+		{.Index, .Transfer_Dst},
+		.Gpu,
 	)
 	engine.model_system.models = pool_init(16384, Model)
 	engine.model_system.model_map = make(map[string]ModelHandle)
@@ -193,7 +193,7 @@ model_load :: proc(engine: ^Engine, path: string) -> ModelHandle {
 	return model_register(engine, path, vertices[:], indices[:])
 }
 
-// A vertex as loaders and primitives build it. vertex_buffer_upload packs it into the GPU Vertex.
+// A vertex as loaders and primitives build it. mesh_geometry_upload packs it into the GPU Vertex.
 MeshVertex :: struct {
 	pos:     Vec3,
 	uv:      Vec2,
@@ -201,8 +201,7 @@ MeshVertex :: struct {
 	tangent: Vec4, // xyz tangent, w bitangent sign
 }
 
-// Packs one mesh into shared buffers. Indices are rebased to the shared vertex range because the
-// Slang storage-buffer SV_VertexID path does not apply Vulkan's base vertex to the shader index.
+// Packs one mesh into shared buffers. Indices remain local to the mesh; draws provide the base vertex.
 mesh_geometry_upload :: proc(
 	engine: ^Engine,
 	vertices: []MeshVertex,
@@ -234,10 +233,8 @@ mesh_geometry_upload :: proc(
 	}
 	first_vertex = i32(ms.next_vertex)
 	first_index = u32(ms.next_index)
-	backend.buffer_write(&engine.vk_ctx, ms.vertex_buffer, packed, ms.next_vertex)
-	global_indices := make([]u32, len(indices), context.temp_allocator)
-	for index, i in indices do global_indices[i] = index + u32(first_vertex)
-	backend.buffer_write(&engine.vk_ctx, ms.index_buffer, global_indices, ms.next_index)
+	backend.buffer_upload_range(&engine.vk_ctx, ms.vertex_buffer, packed, ms.next_vertex)
+	backend.buffer_upload_range(&engine.vk_ctx, ms.index_buffer, indices, ms.next_index)
 	ms.next_vertex += len(vertices)
 	ms.next_index += len(indices)
 	return
@@ -357,7 +354,7 @@ model_load_parts :: proc(engine: ^Engine, path: string, split_primitives := fals
 	return parts
 }
 
-// Binds source's geometry to another material. The variant borrows the source's GPU buffers and CPU
+// Binds source's geometry to another material. The variant borrows the source's shared ranges and CPU
 // geometry, and is cached per (root asset, material), so repeated calls return the same handle. A
 // variant of a variant resolves to its root asset first. Both models live until engine_destroy.
 model_with_material :: proc(engine: ^Engine, source: ModelHandle, material: MaterialHandle) -> ModelHandle {

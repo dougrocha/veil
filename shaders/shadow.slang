@@ -8,8 +8,8 @@ struct VSOutput {
 };
 
 [shader("vertex")]
-VSOutput vertex_main(uint vertex_index : SV_VertexID, uint instance_id : SV_InstanceID) {
-    let v = pc.vertex_buffer[vertex_index];
+VSOutput vertex_main(uint vertex_index : SV_VertexID, uint start_vertex_location : SV_StartVertexLocation, uint instance_id : SV_InstanceID) {
+    let v = pc.vertex_buffer[vertex_index + start_vertex_location];
     let transform = pc.transform_buffer[pc.instance_ids[pc.instance_offset + instance_id]];
 
     float4 world_pos = mul(transform.model, float4(v.pos_uv_x.xyz, 1.0));

@@ -161,6 +161,7 @@ record_main :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandB
 		},
 	)
 	defer backend.end_render_pass(encoder)
+	backend.cmd_bind_index_buffer(encoder, engine.model_system.index_buffer)
 	// Opaque, then the sky (if any) where nothing opaque wrote depth, then transparent on top.
 	view_list := view_draw_list(engine, packet)
 	draw_meshes_opaque(engine, encoder, view_list)
