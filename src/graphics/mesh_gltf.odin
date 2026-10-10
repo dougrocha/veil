@@ -257,9 +257,14 @@ gltf_load_primitive :: proc(
 	}
 	for p, i in positions do vertices[i].pos = p
 
-	indices := make([]u32, prim.indices.count)
-	for i in 0 ..< prim.indices.count {
-		indices[i] = u32(cgltf.accessor_read_index(prim.indices, i))
+	// Non-indexed primitives draw their vertices in order.
+	indices: []u32
+	if prim.indices != nil {
+		indices = make([]u32, prim.indices.count)
+		for i in 0 ..< prim.indices.count do indices[i] = u32(cgltf.accessor_read_index(prim.indices, i))
+	} else {
+		indices = make([]u32, vertex_count)
+		for i in 0 ..< vertex_count do indices[i] = u32(i)
 	}
 	if mirrored {
 		for i := 0; i + 2 < len(indices); i += 3 do indices[i + 1], indices[i + 2] = indices[i + 2], indices[i + 1]
