@@ -29,10 +29,10 @@ gpu_spot_light :: proc(light: SpotLight) -> GpuSpotLight {
 	}
 }
 
-// Writes every SceneData header field and the active part of each light array through one typed
-// mapping of the per-frame buffer. The mapping is flushed when the function returns. Light array
-// entries past the uploaded count are not written, and the shaders loop only to these counts, so the
-// stale tail is never read.
+// Writes every SceneData header field and the active part of each light array through three typed
+// per-frame buffer mappings. Each mapping is flushed when its scope ends. Light array entries past
+// the uploaded count are not written, and the shaders loop only to these counts, so the stale tail
+// is never read.
 scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 	frame_index := backend.frame_slot(&engine.vk_ctx)
 	aspect := render_aspect(engine)

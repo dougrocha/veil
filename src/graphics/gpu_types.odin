@@ -51,14 +51,12 @@ SceneData :: struct #max_field_align(16) {
 	cam_pos_shadow_map_size: Vec4,
 	time_info:               GpuTimeInfo,
 	point_lights:            backend.GPUPtr(GpuPointLight),
+	spot_lights:             backend.GPUPtr(GpuSpotLight),
 	point_light_count:       u32,
 	directional_light_count: u32,
 	spot_light_count:        u32,
 	skybox_cube:             CubeIndex, // bindless cube slot the skybox (and later IBL) samples
-	_reserved_light_align:   [2]u32,
 	directional_lights:      [MAX_DIRECTIONAL_LIGHTS]GpuDirectionalLight,
-	spot_lights:             backend.GPUPtr(GpuSpotLight),
-	_reserved_ambient_align: [2]u32,
 	ambient_light:           GpuAmbientLight,
 	debug_settings:          GpuDebugSettings,
 }

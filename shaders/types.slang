@@ -65,18 +65,18 @@ struct PointLight {
     float4 specular_reserved;
 };
 
-struct DirectionalLight {
-    float4 direction_diffuse;
-    float4 color_specular;
-    float4 shadow_maximum_reserved;
-};
-
 struct SpotLight {
     float4 position_range;
     float4 direction_inner;
     float4 color_outer;
     float4 attenuation;
     float4 intensity;
+};
+
+struct DirectionalLight {
+    float4 direction_diffuse;
+    float4 color_specular;
+    float4 shadow_maximum_reserved;
 };
 
 struct AmbientLight {
@@ -99,14 +99,12 @@ struct SceneData {
     float4 cam_pos_shadow_map_size;
     TimeInfo time_info;
     PointLight* point_lights;
+    SpotLight* spot_lights;
     uint point_light_count;
     uint directional_light_count;
     uint spot_light_count;
     CubeIndex skybox_cube;
-    uint _reserved_light_align[2];
     DirectionalLight directional_lights[MAX_DIRECTIONAL_LIGHTS];
-    SpotLight* spot_lights;
-    uint _reserved_ambient_align[2];
     AmbientLight ambient_light;
     DebugSettings debug_settings;
 };
