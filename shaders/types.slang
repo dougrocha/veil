@@ -135,6 +135,14 @@ struct Transform {
     float4x4 normal_matrix;
 };
 
+struct DrawIndexedIndirectCommand {
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int vertex_offset;
+    uint first_instance;
+};
+
 struct LineVertex {
     float4 position;
     float4 color;

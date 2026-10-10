@@ -299,16 +299,20 @@ draw_shadow :: proc(
 	}
 	backend.pipeline_push(cmd, &view_pc)
 
-	for batch in draw_runs_upload(engine, runs) {
-		mesh := batch.mesh
-		backend.cmd_draw_indexed(
+	batches := draw_runs_upload(engine, runs)
+	start := draw_batches_indirect_upload(engine, batches)
+	if len(batches) > 0 {
+		backend.cmd_draw_indexed_indirect(
 			cmd,
-			mesh.index_count,
-			batch.count,
-			mesh.first_index,
-			mesh.first_vertex,
-			batch.first_id,
+			frame.indirect_buffer,
+			u64(start * size_of(DrawIndexedIndirectCommand)),
+			u32(len(batches)),
+			u32(size_of(DrawIndexedIndirectCommand)),
 		)
+		stats_count_indirect_call(engine)
+	}
+	for batch in batches {
+		mesh := batch.mesh
 		stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 	}
 }
@@ -336,15 +340,41 @@ shadow_view_runs :: proc(engine: ^Engine, light_type: LightType, view_proj: Mat4
 
 draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
 	pass_pc := mesh_pass_push_constants(engine)
-	bound: Maybe(PipelineKind)
-	for batch in draw_runs_upload(engine, list.opaque) {
-		kind: PipelineKind = .Mesh_Double_Sided if mesh_double_sided(engine, batch.mesh) else .Mesh
-		if bound != kind {
-			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
-			backend.pipeline_push(cmd, &pass_pc)
-			bound = kind
+	batches := draw_runs_upload(engine, list.opaque)
+	for i in 1 ..< len(batches) {
+		j := i
+		for j > 0 && mesh_double_sided(engine, batches[j].mesh) && !mesh_double_sided(engine, batches[j - 1].mesh) {
+			temp := batches[j]
+			batches[j] = batches[j - 1]
+			batches[j - 1] = temp
+			j -= 1
 		}
-		mesh_draw_batch(engine, cmd, batch)
+	}
+	start := draw_batches_indirect_upload(engine, batches)
+	backend.pipeline_push(cmd, &pass_pc)
+	group_start := 0
+	for group_start < len(batches) {
+		kind: PipelineKind = .Mesh_Double_Sided if mesh_double_sided(engine, batches[group_start].mesh) else .Mesh
+		group_end := group_start + 1
+		for group_end < len(batches) {
+			next_kind: PipelineKind =
+				.Mesh_Double_Sided if mesh_double_sided(engine, batches[group_end].mesh) else .Mesh
+			if next_kind != kind do break
+			group_end += 1
+		}
+		backend.pipeline_bind(cmd, pipeline_get(engine, kind))
+		backend.cmd_draw_indexed_indirect(
+			cmd,
+			current_frame_data(engine).indirect_buffer,
+			u64((start + group_start) * size_of(DrawIndexedIndirectCommand)),
+			u32(group_end - group_start),
+			u32(size_of(DrawIndexedIndirectCommand)),
+		)
+		stats_count_indirect_call(engine)
+		for batch in batches[group_start:group_end] {
+			stats_count_draw(engine, u64(batch.mesh.index_count / 3 * batch.count))
+		}
+		group_start = group_end
 	}
 }
 

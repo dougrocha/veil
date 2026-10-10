@@ -96,6 +96,19 @@ cmd_draw_indexed :: proc(
 	vk.CmdDrawIndexed(cmd.handle, index_count, instance_count, first_index, vertex_offset, first_instance)
 }
 
+cmd_draw_indexed_indirect :: proc(cmd: RenderEncoder, buffer: Buffer($T), offset: u64, draw_count, stride: u32) {
+	assert(draw_count <= cmd.ctx.max_draw_indirect_count, "cmd_draw_indexed_indirect: draw count exceeds device limit")
+	assert(stride >= size_of(T) && stride % 4 == 0, "cmd_draw_indexed_indirect: invalid stride")
+	assert(.Indirect in buffer_desc(cmd.ctx, buffer).usage, "cmd_draw_indexed_indirect: buffer lacks indirect usage")
+	vk.CmdDrawIndexedIndirect(
+		cmd.handle,
+		buffer_slot(cmd.ctx, buffer).buffer,
+		vk.DeviceSize(offset),
+		draw_count,
+		stride,
+	)
+}
+
 cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32) {
 	vk.CmdDispatch(cmd.handle, x, y, z)
 }

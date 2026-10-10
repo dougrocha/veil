@@ -13,6 +13,7 @@ STATS_WINDOW_SECONDS :: 0.5
 // Per-frame counts, filled while the command buffer is recorded.
 FrameCounters :: struct {
 	draw_calls:          u32,
+	indirect_calls:      u32,
 	triangles:           u64,
 	draws_visible:       u32, // main pass, after frustum culling
 	meshes_culled:       u32, // main pass, meshes of visible draws rejected by their AABB
@@ -109,6 +110,10 @@ stats_count_draw :: proc(engine: ^Engine, triangles: u64 = 0) {
 	engine.stats.counters.triangles += triangles
 }
 
+stats_count_indirect_call :: proc(engine: ^Engine) {
+	engine.stats.counters.indirect_calls += 1
+}
+
 stats_add_timings :: proc(engine: ^Engine, t: CpuTimings) {
 	s := &engine.stats
 	s.latest = t
@@ -179,8 +184,9 @@ stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32, e
 			max(s.avg.frame - s.avg.wait - s.avg.record - s.avg.submit, 0),
 		),
 		fmt.tprintf(
-			"draws %d  tris %.2fM  visible %d  meshes culled %d  shadow views %d (%d cached)",
+			"draws %d  indirect calls %d  tris %.2fM  visible %d  meshes culled %d  shadow views %d (%d cached)",
 			c.draw_calls,
+			c.indirect_calls,
 			f64(c.triangles) / 1e6,
 			c.draws_visible,
 			c.meshes_culled,

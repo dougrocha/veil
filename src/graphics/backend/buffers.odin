@@ -30,6 +30,7 @@ BufferUsage :: enum {
 	Index,
 	Transfer_Src,
 	Transfer_Dst,
+	Indirect,
 }
 
 BufferUsageFlags :: bit_set[BufferUsage]
@@ -70,6 +71,7 @@ buffer_usage_to_vk :: proc(usage: BufferUsageFlags) -> vk.BufferUsageFlags {
 	if .Index in usage do flags += {.INDEX_BUFFER}
 	if .Transfer_Src in usage do flags += {.TRANSFER_SRC}
 	if .Transfer_Dst in usage do flags += {.TRANSFER_DST}
+	if .Indirect in usage do flags += {.INDIRECT_BUFFER}
 	if usage & ADDRESS_USAGE != {} do flags += {.SHADER_DEVICE_ADDRESS}
 	return flags
 }

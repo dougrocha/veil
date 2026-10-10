@@ -17,12 +17,24 @@ INSTANCE_DRAW_ID_SHIFT :: INSTANCE_MATERIAL_BITS
 @(shader_shared)
 INSTANCE_DRAW_ID_BITS :: 15
 
+@(shader_shared)
+DrawIndexedIndirectCommand :: struct #max_field_align(16) {
+	index_count:    u32,
+	instance_count: u32,
+	first_index:    u32,
+	vertex_offset:  i32,
+	first_instance: u32,
+}
+
+#assert(size_of(DrawIndexedIndirectCommand) == 20)
+
 #assert(MAX_DRAWS <= 1 << INSTANCE_DRAW_ID_BITS)
 #assert(MAX_MATERIALS <= 1 << INSTANCE_MATERIAL_BITS)
 
 // Every pass in a frame appends to the same list: main, transparent and every shadow view.
 // Enough for one mesh per instance in the camera and every possible shadow view.
 MAX_INSTANCE_IDS :: MAX_DRAWS * (1 + MAX_SHADOW_2D_SLOTS + MAX_POINT_SHADOW_LIGHTS * 6)
+MAX_INDIRECT_COMMANDS :: MAX_DRAWS * (1 + MAX_SHADOW_2D_SLOTS + MAX_POINT_SHADOW_LIGHTS * 6)
 
 // One draw: count instances of mesh, their ids at first_id in the frame's id list.
 DrawBatch :: struct {
@@ -46,6 +58,27 @@ draw_runs_upload :: proc(engine: ^Engine, runs: []DrawRun) -> []DrawBatch {
 	return batches[:]
 }
 
+// Appends one command per batch to this frame's mapped indirect buffer. Pass/view commands occupy
+// distinct ranges because the GPU consumes all recorded commands after CPU recording has finished.
+draw_batches_indirect_upload :: proc(engine: ^Engine, batches: []DrawBatch) -> int {
+	frame := current_frame_data(engine)
+	start := int(frame.indirect_command_count)
+	assert(start + len(batches) <= MAX_INDIRECT_COMMANDS, "indirect command buffer overflow")
+	commands := backend.buffer_map_write(&engine.vk_ctx, frame.indirect_buffer, start, len(batches))
+	for batch, i in batches {
+		mesh := batch.mesh
+		commands[i] = DrawIndexedIndirectCommand {
+			index_count    = mesh.index_count,
+			instance_count = batch.count,
+			first_index    = mesh.first_index,
+			vertex_offset  = i32(mesh.first_vertex),
+			first_instance = batch.first_id,
+		}
+	}
+	frame.indirect_command_count += u32(len(batches))
+	return start
+}
+
 // A batch of one, for draws that must keep their order (transparent, back to front).
 single_draw_batch :: proc(engine: ^Engine, item: DrawItem) -> (batch: DrawBatch, ok: bool) {
 	packed_id := (u32(item.id) << u32(INSTANCE_DRAW_ID_SHIFT)) | u32(item.mesh.material.index)
@@ -55,7 +88,9 @@ single_draw_batch :: proc(engine: ^Engine, item: DrawItem) -> (batch: DrawBatch,
 
 // Resets the frame's id list; call once per frame before any pass draws.
 instance_ids_reset :: proc(engine: ^Engine) {
-	current_frame_data(engine).instance_id_count = 0
+	frame := current_frame_data(engine)
+	frame.instance_id_count = 0
+	frame.indirect_command_count = 0
 }
 
 // TODO: replace the @(static) warned flag.

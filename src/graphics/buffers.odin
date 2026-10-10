@@ -20,12 +20,14 @@ ParticlePushConstants :: struct #max_field_align(16) {
 }
 
 FrameData :: struct {
-	scene_data_buffer:   backend.Buffer(SceneData),
-	particle_buffer:     backend.Buffer(Particle),
-	transforms_buffer:   backend.Buffer(GpuTransform),
-	instance_ids_buffer: backend.Buffer(u32),
-	instance_id_count:   u32, // ids written this frame
-	transforms_dirty:    [MAX_DRAWS / 64]u64, // draw ids changed since transforms_buffer was written
+	scene_data_buffer:      backend.Buffer(SceneData),
+	particle_buffer:        backend.Buffer(Particle),
+	transforms_buffer:      backend.Buffer(GpuTransform),
+	instance_ids_buffer:    backend.Buffer(u32),
+	instance_id_count:      u32, // ids written this frame
+	indirect_buffer:        backend.Buffer(DrawIndexedIndirectCommand),
+	indirect_command_count: u32,
+	transforms_dirty:       [MAX_DRAWS / 64]u64, // draw ids changed since transforms_buffer was written
 }
 
 #assert(MAX_DRAWS % 64 == 0)
@@ -53,6 +55,13 @@ frame_data_create :: proc(engine: ^Engine) {
 			{.Storage},
 			.Shared,
 		)
+		engine.frame_data[i].indirect_buffer = backend.buffer_create(
+			DrawIndexedIndirectCommand,
+			&engine.vk_ctx,
+			MAX_INDIRECT_COMMANDS,
+			{.Storage, .Indirect},
+			.Shared,
+		)
 		engine.frame_data[i].particle_buffer = create_particle_buffer(&engine.vk_ctx)
 	}
 }
@@ -63,6 +72,7 @@ frame_data_destroy :: proc(engine: ^Engine) {
 		backend.buffer_destroy(&engine.vk_ctx, res.particle_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.transforms_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.instance_ids_buffer)
+		backend.buffer_destroy(&engine.vk_ctx, res.indirect_buffer)
 	}
 }
 

@@ -12,6 +12,7 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 	{"DebugSettings", GpuDebugSettings},
 	{"Transform", GpuTransform},
 	{"SceneData", SceneData},
+	{"DrawIndexedIndirectCommand", DrawIndexedIndirectCommand},
 	{"AmbientLight", GpuAmbientLight},
 	{"PointLight", GpuPointLight},
 	{"DirectionalLight", GpuDirectionalLight},
@@ -81,6 +82,13 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(SceneData, ambient_light) == 41296)
 #assert(offset_of(SceneData, debug_settings) == 41312)
 #assert(size_of(SceneData) == 41328)
+
+#assert(offset_of(DrawIndexedIndirectCommand, index_count) == 0)
+#assert(offset_of(DrawIndexedIndirectCommand, instance_count) == 4)
+#assert(offset_of(DrawIndexedIndirectCommand, first_index) == 8)
+#assert(offset_of(DrawIndexedIndirectCommand, vertex_offset) == 12)
+#assert(offset_of(DrawIndexedIndirectCommand, first_instance) == 16)
+#assert(size_of(DrawIndexedIndirectCommand) == 20)
 
 #assert(offset_of(GpuAmbientLight, color_brightness) == 0)
 #assert(size_of(GpuAmbientLight) == 16)
