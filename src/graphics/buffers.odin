@@ -21,6 +21,8 @@ ParticlePushConstants :: struct #max_field_align(16) {
 
 FrameData :: struct {
 	scene_data_buffer:   backend.Buffer(SceneData),
+	point_lights_buffer: backend.Buffer(GpuPointLight),
+	spot_lights_buffer:  backend.Buffer(GpuSpotLight),
 	particle_buffer:     backend.Buffer(Particle),
 	transforms_buffer:   backend.Buffer(GpuTransform),
 	instance_ids_buffer: backend.Buffer(u32),
@@ -37,6 +39,20 @@ frame_data_create :: proc(engine: ^Engine) {
 			&engine.vk_ctx,
 			1,
 			{.Uniform},
+			.Shared,
+		)
+		engine.frame_data[i].point_lights_buffer = backend.buffer_create(
+			GpuPointLight,
+			&engine.vk_ctx,
+			MAX_POINT_LIGHTS,
+			{.Storage},
+			.Shared,
+		)
+		engine.frame_data[i].spot_lights_buffer = backend.buffer_create(
+			GpuSpotLight,
+			&engine.vk_ctx,
+			MAX_SPOT_LIGHTS,
+			{.Storage},
 			.Shared,
 		)
 		engine.frame_data[i].transforms_buffer = backend.buffer_create(
@@ -60,6 +76,8 @@ frame_data_create :: proc(engine: ^Engine) {
 frame_data_destroy :: proc(engine: ^Engine) {
 	for &res in engine.frame_data {
 		backend.buffer_destroy(&engine.vk_ctx, res.scene_data_buffer)
+		backend.buffer_destroy(&engine.vk_ctx, res.point_lights_buffer)
+		backend.buffer_destroy(&engine.vk_ctx, res.spot_lights_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.particle_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.transforms_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.instance_ids_buffer)

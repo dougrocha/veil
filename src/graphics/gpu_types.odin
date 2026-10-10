@@ -1,5 +1,7 @@
 package graphics
 
+import "backend"
+
 // Scene-wide types shared with the shaders. Feature types live with their feature; anything
 // tagged @(shader_shared) is written to shaders/types.slang by `just gpu-types`, which also
 // asserts every struct's layout in gpu_layout_generated.odin.
@@ -48,13 +50,15 @@ SceneData :: struct #max_field_align(16) {
 	shadow_cascade_data:     [MAX_DIRECTIONAL_LIGHTS]GpuShadowCascadeData,
 	cam_pos_shadow_map_size: Vec4,
 	time_info:               GpuTimeInfo,
-	point_lights:            [MAX_POINT_LIGHTS]GpuPointLight,
+	point_lights:            backend.GPUPtr(GpuPointLight),
 	point_light_count:       u32,
 	directional_light_count: u32,
 	spot_light_count:        u32,
 	skybox_cube:             CubeIndex, // bindless cube slot the skybox (and later IBL) samples
+	_reserved_light_align:   [2]u32,
 	directional_lights:      [MAX_DIRECTIONAL_LIGHTS]GpuDirectionalLight,
-	spot_lights:             [MAX_SPOT_LIGHTS]GpuSpotLight,
+	spot_lights:             backend.GPUPtr(GpuSpotLight),
+	_reserved_ambient_align: [2]u32,
 	ambient_light:           GpuAmbientLight,
 	debug_settings:          GpuDebugSettings,
 }

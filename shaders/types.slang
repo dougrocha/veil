@@ -98,13 +98,15 @@ struct SceneData {
     ShadowCascadeData shadow_cascade_data[MAX_DIRECTIONAL_LIGHTS];
     float4 cam_pos_shadow_map_size;
     TimeInfo time_info;
-    PointLight point_lights[MAX_POINT_LIGHTS];
+    PointLight* point_lights;
     uint point_light_count;
     uint directional_light_count;
     uint spot_light_count;
     CubeIndex skybox_cube;
+    uint _reserved_light_align[2];
     DirectionalLight directional_lights[MAX_DIRECTIONAL_LIGHTS];
-    SpotLight spot_lights[MAX_SPOT_LIGHTS];
+    SpotLight* spot_lights;
+    uint _reserved_ambient_align[2];
     AmbientLight ambient_light;
     DebugSettings debug_settings;
 };

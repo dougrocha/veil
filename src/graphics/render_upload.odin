@@ -46,7 +46,8 @@ scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 	directional_count := min(int(packet.lights.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
 	spot_count := min(int(packet.lights.spot_light_count), MAX_SPOT_LIGHTS)
 
-	dst := backend.buffer_map_write(&engine.vk_ctx, engine.frame_data[frame_index].scene_data_buffer, 0, 1)
+	frame := &engine.frame_data[frame_index]
+	dst := backend.buffer_map_write(&engine.vk_ctx, frame.scene_data_buffer, 0, 1)
 
 	dst[0].view = camera_get_view_matrix(active_camera^)
 	dst[0].proj = camera_get_projection_matrix(active_camera^, aspect)
@@ -70,6 +71,8 @@ scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 	dst[0].directional_light_count = u32(directional_count)
 	dst[0].spot_light_count = u32(spot_count)
 	dst[0].skybox_cube = texture_cube_slot(engine, sky)
+	dst[0].point_lights = backend.buffer_address(&engine.vk_ctx, frame.point_lights_buffer)
+	dst[0].spot_lights = backend.buffer_address(&engine.vk_ctx, frame.spot_lights_buffer)
 	dst[0].ambient_light = {
 		color_brightness = {
 			packet.lights.ambient_light.color.x,
@@ -85,13 +88,19 @@ scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 		_reserved       = 0,
 	}
 
-	for i in 0 ..< point_count {
-		dst[0].point_lights[i] = gpu_point_light(packet.lights.point_lights[i])
+	if point_count > 0 {
+		lights := backend.buffer_map_write(&engine.vk_ctx, frame.point_lights_buffer, 0, point_count)
+		for i in 0 ..< point_count {
+			lights[i] = gpu_point_light(packet.lights.point_lights[i])
+		}
 	}
 	for i in 0 ..< directional_count {
 		dst[0].directional_lights[i] = gpu_directional_light(packet.lights.directional_lights[i])
 	}
-	for i in 0 ..< spot_count {
-		dst[0].spot_lights[i] = gpu_spot_light(packet.lights.spot_lights[i])
+	if spot_count > 0 {
+		lights := backend.buffer_map_write(&engine.vk_ctx, frame.spot_lights_buffer, 0, spot_count)
+		for i in 0 ..< spot_count {
+			lights[i] = gpu_spot_light(packet.lights.spot_lights[i])
+		}
 	}
 }
