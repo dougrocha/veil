@@ -37,12 +37,11 @@ frame_begin :: proc(ctx: ^Context, swapchain: ^Swapchain, width, height: u32) ->
 // Copies present into the acquired swapchain image, then ends, submits and presents the frame.
 // present must have the swapchain's extent.
 frame_end :: proc(ctx: ^Context, swapchain: ^Swapchain, cmd: CommandBuffer, present: Image) {
-	present_blit(ctx, cmd, swapchain, present)
+	present_blit(cmd, swapchain, present)
 	cmd_end_recording(cmd)
 
-	frame_sync := current_frame_sync(ctx)
-	queue_submit_frame(ctx, cmd, swapchain, frame_sync)
-	switch queue_present_frame(ctx, cmd, swapchain, frame_sync) {
+	queue_submit_frame(ctx, cmd, swapchain)
+	switch queue_present_frame(ctx, swapchain) {
 	case .Success:
 	case .OutOfDate, .Suboptimal:
 		swapchain.require_recreate = true

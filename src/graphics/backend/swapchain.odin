@@ -199,12 +199,12 @@ swapchain_acquire_barrier :: proc(cmd: CommandBuffer, image: vk.Image, dst: Imag
 }
 
 // Copies src (same extent as the swapchain) into the acquired image and readies it for present.
-present_blit :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain, src: Image) {
+present_blit :: proc(cmd: CommandBuffer, swapchain: ^Swapchain, src: Image) {
 	image_barrier(cmd, src, .Transfer_Src, ImageAspectFlags{.Color})
 	swapchain_acquire_barrier(cmd, swapchain.images[swapchain.current_image_index], .Transfer_Dst)
 	copy_image_to_image(
 		cmd,
-		image_slot(ctx, src).image,
+		image_slot(cmd.ctx, src).image,
 		swapchain.images[swapchain.current_image_index],
 		swapchain.extent,
 		swapchain.extent,
@@ -218,12 +218,7 @@ present_blit :: proc(ctx: ^Context, cmd: CommandBuffer, swapchain: ^Swapchain, s
 	)
 }
 
-queue_present_frame :: proc(
-	ctx: ^Context,
-	cmd: CommandBuffer,
-	swapchain: ^Swapchain,
-	frame_sync: ^FrameSync,
-) -> PresentFrameResult {
+queue_present_frame :: proc(ctx: ^Context, swapchain: ^Swapchain) -> PresentFrameResult {
 	sem := swapchain.present_semaphores[swapchain.current_image_index]
 	handle := swapchain.handle
 	idx := swapchain.current_image_index
