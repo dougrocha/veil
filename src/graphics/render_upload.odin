@@ -35,8 +35,6 @@ gpu_spot_light :: proc(light: SpotLight) -> GpuSpotLight {
 // stale tail is never read.
 scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 	frame_index := backend.frame_slot(&engine.vk_ctx)
-	buf := engine.frame_data[frame_index].scene_data_buffer
-	ctx := &engine.vk_ctx
 	aspect := render_aspect(engine)
 	// With a color background nothing samples the sky cube; the black default keeps the slot valid.
 	sky := engine.texture_system.defaults[.Black_Cube]
@@ -48,20 +46,20 @@ scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 	directional_count := min(int(packet.lights.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
 	spot_count := min(int(packet.lights.spot_light_count), MAX_SPOT_LIGHTS)
 
-	dst := backend.buffer_map_write(ctx, buf, 0, 1)
+	dst := backend.buffer_map_write(&engine.vk_ctx, engine.frame_data[frame_index].scene_data_buffer, 0, 1)
 
 	dst[0].view = camera_get_view_matrix(active_camera^)
 	dst[0].proj = camera_get_projection_matrix(active_camera^, aspect)
 	dst[0].point_light_view_proj = plan.point_view_proj
 	dst[0].shadow_2d_view_proj = plan.shadow_2d_view_proj
 	dst[0].shadow_cascade_data = plan.cascade_data
-	dst[0].cam_pos_shadow_map_size = Vec4 {
+	dst[0].cam_pos_shadow_map_size = {
 		active_camera.position.x,
 		active_camera.position.y,
 		active_camera.position.z,
 		f32(SHADOW_MAP_SIZE),
 	}
-	dst[0].time_info = GpuTimeInfo {
+	dst[0].time_info = {
 		time        = packet.time,
 		delta_time  = packet.delta_time,
 		frame_count = engine.frame_count,
@@ -72,7 +70,7 @@ scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 	dst[0].directional_light_count = u32(directional_count)
 	dst[0].spot_light_count = u32(spot_count)
 	dst[0].skybox_cube = texture_cube_slot(engine, sky)
-	dst[0].ambient_light = GpuAmbientLight {
+	dst[0].ambient_light = {
 		color_brightness = {
 			packet.lights.ambient_light.color.x,
 			packet.lights.ambient_light.color.y,
@@ -80,7 +78,7 @@ scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 			packet.lights.ambient_light.brightness,
 		},
 	}
-	dst[0].debug_settings = GpuDebugSettings {
+	dst[0].debug_settings = {
 		show_cascades   = u32(engine.settings.cascade_colors),
 		disable_shadows = u32(!engine.settings.shadows),
 		light_mask      = transmute(u32)engine.settings.lights,
