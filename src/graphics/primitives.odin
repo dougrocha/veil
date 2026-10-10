@@ -12,7 +12,6 @@ PrimitiveKind :: enum u32 {
 
 // Base shapes are cached by these parameters, not by caller name, so each shape is built once and
 // every material binds to it with model_with_material. Fields a kind does not use stay zero.
-// Packed with no padding (28 bytes), so the map hashes stable bytes.
 PrimitiveKey :: struct {
 	size:          Vec3, // half extents; {radius, 0, 0} for spheres
 	kind:          PrimitiveKind,
