@@ -28,7 +28,8 @@ DrawState :: struct {
 
 DrawChangeKind :: enum {
 	Spawn, // old is unused
-	Update,
+	Update, // same model: moved or casts_shadow toggled
+	Replace, // same id, different model: old and new bounds differ in shape, not just place
 	Despawn, // new is unused
 }
 
@@ -57,7 +58,8 @@ draw_history_live :: proc(history: ^DrawHistory) -> []DrawRecord {
 }
 
 // Diffs packet's draws against the previous ones: records a change for each id that appeared,
-// moved, toggled casts_shadow or went away, and marks it dirty in every frame's transforms buffer.
+// moved, swapped its model, toggled casts_shadow or went away, and marks it dirty in every frame's
+// transforms buffer.
 // TODO: O(draws) per frame, comparing every draw's matrix even when nothing moved. See the
 // matching TODO on world_update in src/world.odin.
 draw_history_sync :: proc(engine: ^Engine, packet: ^FramePacket) {
@@ -81,7 +83,15 @@ draw_history_sync :: proc(engine: ^Engine, packet: ^FramePacket) {
 			casts_shadow = draw.casts_shadow,
 		}
 		if prev.model != draw.model do next.bounds = pool_get(&engine.model_system.models, draw.model).bounds
-		kind: DrawChangeKind = .Spawn if prev.model == INVALID_MODEL else .Update
+		kind: DrawChangeKind
+		switch {
+		case prev.model == INVALID_MODEL:
+			kind = .Spawn
+		case prev.model != draw.model:
+			kind = .Replace
+		case:
+			kind = .Update
+		}
 		draw_change(engine, kind, draw.id, prev^, next)
 		prev^ = next
 		history.high = max(history.high, int(draw.id) + 1)
