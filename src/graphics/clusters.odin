@@ -137,19 +137,19 @@ cluster_debug_validate :: proc(engine: ^Engine, slot: int) {
 	headers := make([]ClusterHeader, CLUSTER_COUNT, context.temp_allocator)
 	indices := make([]u32, CLUSTER_INDEX_CAPACITY, context.temp_allocator)
 	count_out := make([]u32, 1, context.temp_allocator)
-	backend.buffer_copy_readback(
+	backend.buffer_copy_compute_readback(
 		&engine.vk_ctx,
 		frame.clusters.headers,
 		frame.clusters.readback_headers,
 		CLUSTER_COUNT,
 	)
-	backend.buffer_copy_readback(
+	backend.buffer_copy_compute_readback(
 		&engine.vk_ctx,
 		frame.clusters.indices,
 		frame.clusters.readback_indices,
 		CLUSTER_INDEX_CAPACITY,
 	)
-	backend.buffer_copy_readback(&engine.vk_ctx, frame.clusters.counter, frame.clusters.readback_counter, 1)
+	backend.buffer_copy_compute_readback(&engine.vk_ctx, frame.clusters.counter, frame.clusters.readback_counter, 1)
 	backend.buffer_read(&engine.vk_ctx, frame.clusters.readback_headers, headers)
 	backend.buffer_read(&engine.vk_ctx, frame.clusters.readback_indices, indices)
 	backend.buffer_read(&engine.vk_ctx, frame.clusters.readback_counter, count_out)
@@ -262,7 +262,7 @@ cluster_debug_validate :: proc(engine: ^Engine, slot: int) {
 				light := spots[index]
 				position, radius = light.position_range.xyz, light.position_range.w
 			}
-			if !cluster_sphere_overlaps(proj, view, near_z, far_z, c, position, radius) do extras += 1
+			if !cluster_sphere_overlaps(inv_proj, proj, view, near_z, far_z, c, position, radius) do extras += 1
 		}
 	}
 	log.infof(
@@ -283,6 +283,7 @@ cluster_debug_validate :: proc(engine: ^Engine, slot: int) {
 
 @(private = "file")
 cluster_sphere_overlaps :: proc(
+	inv_proj: Mat4x4,
 	proj, view: Mat4x4,
 	near_z, far_z: f32,
 	cluster: int,
@@ -292,36 +293,27 @@ cluster_sphere_overlaps :: proc(
 	x, y, z := cluster % CLUSTER_X, (cluster / CLUSTER_X) % CLUSTER_Y, cluster / (CLUSTER_X * CLUSTER_Y)
 	z0 := near_z * math.pow_f32(far_z / near_z, f32(z) / f32(CLUSTER_Z))
 	z1 := near_z * math.pow_f32(far_z / near_z, f32(z + 1) / f32(CLUSTER_Z))
-	ndc_x0, ndc_x1 := f32(x) / f32(CLUSTER_X) * 2 - 1, f32(x + 1) / f32(CLUSTER_X) * 2 - 1
-	ndc_y0, ndc_y1 := f32(y) / f32(CLUSTER_Y) * 2 - 1, f32(y + 1) / f32(CLUSTER_Y) * 2 - 1
 	ortho := abs(proj[3, 2]) < 1e-6
 	forward_sign: f32 = 1
 	if proj[3, 2] < 0 || (ortho && proj[2, 2] < 0) {forward_sign = -1}
-	x0, x1, y0, y1: f32
-	if ortho {
-		x0, x1 = (ndc_x0 - proj[0, 3]) / proj[0, 0], (ndc_x1 - proj[0, 3]) / proj[0, 0]
-		y0, y1 = (ndc_y0 - proj[1, 3]) / proj[1, 1], (ndc_y1 - proj[1, 3]) / proj[1, 1]
-	} else {
-		scale := abs(proj[3, 2])
-		x0 = min(
-			((ndc_x0 * scale - proj[0, 2] * forward_sign) * z0 - proj[0, 3]) / proj[0, 0],
-			((ndc_x0 * scale - proj[0, 2] * forward_sign) * z1 - proj[0, 3]) / proj[0, 0],
-		)
-		x1 = max(
-			((ndc_x1 * scale - proj[0, 2] * forward_sign) * z0 - proj[0, 3]) / proj[0, 0],
-			((ndc_x1 * scale - proj[0, 2] * forward_sign) * z1 - proj[0, 3]) / proj[0, 0],
-		)
-		y0 = min(
-			((ndc_y0 * scale - proj[1, 2] * forward_sign) * z0 - proj[1, 3]) / proj[1, 1],
-			((ndc_y0 * scale - proj[1, 2] * forward_sign) * z1 - proj[1, 3]) / proj[1, 1],
-		)
-		y1 = max(
-			((ndc_y1 * scale - proj[1, 2] * forward_sign) * z0 - proj[1, 3]) / proj[1, 1],
-			((ndc_y1 * scale - proj[1, 2] * forward_sign) * z1 - proj[1, 3]) / proj[1, 1],
-		)
+	lo := Vec3{3.402823e38, 3.402823e38, z0}
+	hi := Vec3{-3.402823e38, -3.402823e38, z1}
+	for corner in 0 ..< 8 {
+		ndc_x := f32(x + corner % 2) / f32(CLUSTER_X) * 2 - 1
+		ndc_y := f32(y + (corner / 2) % 2) / f32(CLUSTER_Y) * 2 - 1
+		depth := z0
+		if corner >= 4 {depth = z1}
+		point := inv_proj * Vec4{ndc_x, ndc_y, 1, 1}
+		point.xyz /= point.w
+		if ortho {
+			point.z = depth
+		} else {
+			point.xyz *= depth / abs(point.z)
+			point.z = depth
+		}
+		lo.x, lo.y = min(lo.x, point.x), min(lo.y, point.y)
+		hi.x, hi.y = max(hi.x, point.x), max(hi.y, point.y)
 	}
-	lo := Vec3{min(x0, x1), min(y0, y1), z0}
-	hi := Vec3{max(x0, x1), max(y0, y1), z1}
 	center4 := view * Vec4{position.x, position.y, position.z, 1}
 	center := Vec3{center4.x, center4.y, center4.z * forward_sign}
 	closest := Vec3{clamp(center.x, lo.x, hi.x), clamp(center.y, lo.y, hi.y), clamp(center.z, lo.z, hi.z)}
