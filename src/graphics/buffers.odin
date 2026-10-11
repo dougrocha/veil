@@ -32,6 +32,10 @@ FrameData :: struct {
 	cull_output_ids:        backend.Buffer(u32),
 	cull_commands:          backend.Buffer(DrawIndexedIndirectCommand),
 	cull_planes:            backend.Buffer(Vec4),
+	cull_readback_ids:      backend.Buffer(u32),
+	cull_readback_commands: backend.Buffer(DrawIndexedIndirectCommand),
+	cull_run_count:         int,
+	cull_candidate_count:   int,
 	transforms_dirty:       [MAX_DRAWS / 64]u64, // draw ids changed since transforms_buffer was written
 }
 
@@ -86,16 +90,32 @@ frame_data_create :: proc(engine: ^Engine) {
 			u32,
 			&engine.vk_ctx,
 			MAX_INSTANCE_IDS,
-			{.Storage},
+			{.Storage, .Transfer_Src},
 			.Gpu,
 		)
 		engine.frame_data[i].cull_commands = backend.buffer_create(
 			DrawIndexedIndirectCommand,
 			&engine.vk_ctx,
 			MAX_INDIRECT_COMMANDS_PER_FRAME,
-			{.Storage, .Indirect},
+			{.Storage, .Indirect, .Transfer_Src},
 			.Gpu,
 		)
+		if engine.gpu_cull_validate {
+			engine.frame_data[i].cull_readback_ids = backend.buffer_create(
+				u32,
+				&engine.vk_ctx,
+				MAX_INSTANCE_IDS,
+				{.Transfer_Dst},
+				.Readback,
+			)
+			engine.frame_data[i].cull_readback_commands = backend.buffer_create(
+				DrawIndexedIndirectCommand,
+				&engine.vk_ctx,
+				MAX_INDIRECT_COMMANDS_PER_FRAME,
+				{.Transfer_Dst},
+				.Readback,
+			)
+		}
 		engine.frame_data[i].cull_planes = backend.buffer_create(Vec4, &engine.vk_ctx, 6, {.Storage}, .Shared)
 	}
 }
@@ -112,6 +132,8 @@ frame_data_destroy :: proc(engine: ^Engine) {
 		backend.buffer_destroy(&engine.vk_ctx, res.cull_output_ids)
 		backend.buffer_destroy(&engine.vk_ctx, res.cull_commands)
 		backend.buffer_destroy(&engine.vk_ctx, res.cull_planes)
+		if backend.buffer_is_valid(&engine.vk_ctx, res.cull_readback_ids) do backend.buffer_destroy(&engine.vk_ctx, res.cull_readback_ids)
+		if backend.buffer_is_valid(&engine.vk_ctx, res.cull_readback_commands) do backend.buffer_destroy(&engine.vk_ctx, res.cull_readback_commands)
 	}
 }
 

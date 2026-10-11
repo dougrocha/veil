@@ -19,29 +19,32 @@ Extent2D :: backend.Extent2D
 
 // Runtime and graphics resources; world state is owned by World.
 Engine :: struct {
-	vk_ctx:            backend.Context,
-	swapchain:         backend.Swapchain,
-	render_targets:    RenderTargets,
-	shader_system:     ShaderSystem,
-	pipeline_registry: PipelineRegistry,
-	frame_data:        [backend.MAX_FRAMES_IN_FLIGHT]FrameData,
-	shadows:           Shadows,
-	gpu_profiler:      GpuProfiler,
-	frame_dump:        FrameDump,
-	line_renderer:     LineRenderer,
-	ui_renderer:       UIRenderer,
-	debug_views:       DebugViewQueue,
-	model_system:      ModelSystem,
-	prev_draws:        DrawHistory,
-	material_system:   MaterialSystem,
-	texture_system:    TextureSystem,
-	frame_count:       u32, // frames recorded
-	last_render:       time.Tick, // when engine_render last ran, for the stats frame time
-	stats:             Stats,
-	config:            EngineConfig,
-	settings:          RenderSettings,
+	vk_ctx:                 backend.Context,
+	swapchain:              backend.Swapchain,
+	render_targets:         RenderTargets,
+	shader_system:          ShaderSystem,
+	pipeline_registry:      PipelineRegistry,
+	frame_data:             [backend.MAX_FRAMES_IN_FLIGHT]FrameData,
+	shadows:                Shadows,
+	gpu_profiler:           GpuProfiler,
+	frame_dump:             FrameDump,
+	line_renderer:          LineRenderer,
+	ui_renderer:            UIRenderer,
+	debug_views:            DebugViewQueue,
+	model_system:           ModelSystem,
+	prev_draws:             DrawHistory,
+	material_system:        MaterialSystem,
+	texture_system:         TextureSystem,
+	frame_count:            u32, // frames recorded
+	gpu_cull_validate:      bool,
+	gpu_cull_validated:     bool,
+	gpu_cull_validate_slot: int,
+	last_render:            time.Tick, // when engine_render last ran, for the stats frame time
+	stats:                  Stats,
+	config:                 EngineConfig,
+	settings:               RenderSettings,
 	// Scratch for engine_render, reset independently of the game loop.
-	frame_arena:       virtual.Arena,
+	frame_arena:            virtual.Arena,
 }
 
 PresentMode :: backend.PresentMode

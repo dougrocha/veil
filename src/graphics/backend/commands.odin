@@ -176,6 +176,29 @@ cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
 	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
 }
 
+cmd_barrier_compute_write_to_transfer_read :: proc(cmd: ComputeEncoder) {
+	barrier := vk.MemoryBarrier2 {
+		sType         = .MEMORY_BARRIER_2,
+		srcStageMask  = {.COMPUTE_SHADER},
+		srcAccessMask = {.SHADER_WRITE},
+		dstStageMask  = {.COPY},
+		dstAccessMask = {.TRANSFER_READ},
+	}
+	dep_info := vk.DependencyInfo {
+		sType              = .DEPENDENCY_INFO,
+		memoryBarrierCount = 1,
+		pMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
+}
+
+cmd_copy_buffer :: proc(cmd: CommandBuffer, src: Buffer($T), dst: Buffer(T), count: int) {
+	region := vk.BufferCopy {
+		size = vk.DeviceSize(count * size_of(T)),
+	}
+	vk.CmdCopyBuffer(cmd.handle, buffer_slot(cmd.ctx, src).buffer, buffer_slot(cmd.ctx, dst).buffer, 1, &region)
+}
+
 // Host reads of a buffer the GPU just wrote. The queue wait only orders device work, so this barrier is
 // what makes the writes visible to the CPU.
 cmd_barrier_transfer_write_to_host_read :: proc(cmd: CommandBuffer, buf: Buffer($T)) {

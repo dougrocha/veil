@@ -176,6 +176,11 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 			_ = sdl.PushEvent(&quit)
 		}
 	}
+	if engine.gpu_cull_validate && !engine.gpu_cull_validated {
+		backend.device_wait_idle(&engine.vk_ctx)
+		gpu_cull_validate_frame(engine, packet)
+		engine.gpu_cull_validated = true
+	}
 	return true
 }
 
@@ -214,6 +219,9 @@ dispatch_particles :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.C
 
 dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer, runs: []DrawRun) -> bool {
 	frame := current_frame_data(engine)
+	engine.gpu_cull_validate_slot = backend.frame_slot(&engine.vk_ctx)
+	frame.cull_run_count = 0
+	frame.cull_candidate_count = 0
 	candidate_count, run_count: int
 	candidates := make([dynamic]GpuCullCandidate, context.temp_allocator)
 	run_data := make([dynamic]GpuCullRun, context.temp_allocator)
@@ -240,6 +248,8 @@ dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Co
 		run_count += 1
 	}
 	if run_count == 0 do return true
+	frame.cull_run_count = run_count
+	frame.cull_candidate_count = candidate_count
 	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_candidates, candidates[:])
 	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_runs, run_data[:])
 	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
@@ -267,10 +277,79 @@ dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Co
 	pc.init_commands = 0
 	backend.pipeline_push_compute(encoder, &pc)
 	backend.cmd_dispatch(encoder, (u32(candidate_count) + 255) / 256, 1, 1)
+	if engine.gpu_cull_validate {
+		backend.cmd_barrier_compute_write_to_transfer_read(encoder)
+		backend.cmd_copy_buffer(cmd, frame.cull_commands, frame.cull_readback_commands, run_count)
+		backend.cmd_copy_buffer(cmd, frame.cull_output_ids, frame.cull_readback_ids, candidate_count)
+		backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_commands)
+		backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_ids)
+	}
 	backend.cmd_barrier_compute_write_to_draw_read(encoder)
 	backend.end_compute_pass(encoder)
 	gpu_scope_end(engine, cmd, scope)
 	return true
+}
+
+gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
+	frame := &engine.frame_data[engine.gpu_cull_validate_slot]
+	if frame.cull_run_count == 0 do return
+	commands := make([]DrawIndexedIndirectCommand, frame.cull_run_count, context.temp_allocator)
+	ids := make([]u32, frame.cull_candidate_count, context.temp_allocator)
+	backend.buffer_read(&engine.vk_ctx, frame.cull_readback_commands, commands)
+	backend.buffer_read(&engine.vk_ctx, frame.cull_readback_ids, ids)
+	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
+	candidate_runs := build_draw_list(draw_input(engine), frustum, packet.camera.position, true).opaque
+	cpu_runs := build_draw_list(draw_input(engine), frustum, packet.camera.position).opaque
+	false_negatives, extras, kept: int
+	for command, run_index in commands {
+		gpu_run := candidate_runs[run_index]
+		cpu_ids: []u32
+		for cpu_run in cpu_runs {
+			if cpu_run.mesh == gpu_run.mesh {
+				cpu_ids = make([]u32, len(cpu_run.ids), context.temp_allocator)
+				for id, i in cpu_run.ids {
+					cpu_ids[i] = (id << u32(INSTANCE_DRAW_ID_SHIFT)) | u32(cpu_run.mesh.material.index)
+				}
+				break
+			}
+		}
+		gpu_ids := ids[command.first_instance:][:command.instance_count]
+		run_fn, run_extras: int
+		for cpu_id in cpu_ids {
+			found := false
+			for gpu_id in gpu_ids do if cpu_id == gpu_id {found = true; break}
+			if !found do run_fn += 1
+		}
+		for gpu_id in gpu_ids {
+			found := false
+			for cpu_id in cpu_ids do if gpu_id == cpu_id {found = true; break}
+			if !found do run_extras += 1
+		}
+		false_negatives += run_fn
+		extras += run_extras
+		kept += int(command.instance_count)
+		if run_fn != 0 || run_extras != 0 {
+			log.infof(
+				"GPU culling validation run %d: mismatches=%d false negatives=%d extras=%d",
+				run_index,
+				run_fn + run_extras,
+				run_fn,
+				run_extras,
+			)
+			if run_fn != 0 do log.errorf("GPU culling validation found false negatives in run %d", run_index)
+		}
+	}
+	culled := frame.cull_candidate_count - kept
+	log.infof(
+		"GPU culling validation: runs=%d candidates=%d kept=%d culled=%d mismatches=%d false_negatives=%d extras=%d (extras are conservative mesh-AABB visibility beyond CPU model bounds)",
+		frame.cull_run_count,
+		frame.cull_candidate_count,
+		kept,
+		culled,
+		false_negatives + extras,
+		false_negatives,
+		extras,
+	)
 }
 
 draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
