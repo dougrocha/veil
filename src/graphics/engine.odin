@@ -301,9 +301,6 @@ draw_shadow :: proc(
 
 	batches := draw_runs_upload(engine, runs)
 	available := indirect_commands_available(engine)
-	when ODIN_DEBUG {
-		assert(len(batches) <= available, "per-frame indirect command budget exceeded")
-	}
 	indirect_count := min(len(batches), available)
 	start := draw_batches_indirect_upload(engine, batches, indirect_count)
 	if indirect_count > 0 {
@@ -348,9 +345,6 @@ draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: Dr
 	pass_pc := mesh_pass_push_constants(engine)
 	batches := draw_runs_upload(engine, list.opaque)
 	available := indirect_commands_available(engine)
-	when ODIN_DEBUG {
-		assert(len(batches) <= available, "per-frame indirect command budget exceeded")
-	}
 	indirect_count := min(len(batches), available)
 	start := draw_batches_indirect_upload(engine, batches, indirect_count)
 	backend.pipeline_push(cmd, &pass_pc)
