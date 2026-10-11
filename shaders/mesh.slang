@@ -287,7 +287,8 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
 
     if (pc.scene_data.debug_settings.show_cascades != 0) total_light *= cascade_tint;
 
-    if (pc.scene_data.debug_settings.clustered_lighting != 0) {
+    bool use_cluster_list = pc.scene_data.debug_settings.clustered_lighting != 0;
+    if (use_cluster_list) {
         float3 view_pos = mul(pc.scene_data.view, float4(vert.frag_pos, 1.0)).xyz;
         float4x4 proj = pc.scene_data.proj;
         bool ortho = abs(proj[3][2]) < 1e-6;
@@ -300,7 +301,8 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
         uint z = uint(clamp(floor(log(view_depth / near_z) / log(far_z / near_z) * float(CLUSTER_Z)), 0.0, float(CLUSTER_Z - 1)));
         uint cluster = x + y * CLUSTER_X + z * CLUSTER_X * CLUSTER_Y;
         ClusterHeader header = pc.scene_data.cluster_headers[cluster];
-        for (uint i = 0; i < header.light_count; ++i) {
+        use_cluster_list = (header.light_count & CLUSTER_OVERFLOW_BIT) == 0;
+        for (uint i = 0; use_cluster_list && i < header.light_count; ++i) {
             uint light_index = pc.scene_data.cluster_indices[header.light_offset + i];
             if (light_index < MAX_POINT_LIGHTS) {
                 if ((light_mask & (1u << LIGHT_TYPE_POINT)) == 0 || light_index >= pc.scene_data.point_light_count) continue;
@@ -314,7 +316,8 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
                 total_light += calc_spot_light(pc.scene_data.spot_lights[spot_index], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
             }
         }
-    } else {
+    }
+    if (!use_cluster_list) {
         for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_POINT)) != 0 ? pc.scene_data.point_light_count : 0); i++) {
             float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[i], i, vert.frag_pos, normalize(vert.frag_normal));
             total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;

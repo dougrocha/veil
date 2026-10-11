@@ -161,6 +161,7 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 
 	frame_slot := backend.frame_slot(&engine.vk_ctx)
 	render_targets_end_frame(engine, cmd)
+	cluster_debug_report_overflow(engine, frame_slot)
 	// Once per recorded frame, shadow passes on or off. Skipped frames return early above, so their
 	// changes carry over.
 	shadow_cache_commit(&engine.shadows.cache, &engine.shadows.plan, packet.lights)

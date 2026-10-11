@@ -5,6 +5,7 @@ static const uint CLUSTER_Y = 9;
 static const uint CLUSTER_Z = 24;
 static const uint CLUSTER_COUNT = ((CLUSTER_X * CLUSTER_Y) * CLUSTER_Z);
 static const uint CLUSTER_INDEX_CAPACITY = 131072;
+static const uint CLUSTER_OVERFLOW_BIT = 0x80000000;
 static const uint SAMPLER_LINEAR_REPEAT = 0;
 static const uint SAMPLER_LINEAR_CLAMP = 1;
 static const uint SAMPLER_NEAREST_CLAMP = 2;

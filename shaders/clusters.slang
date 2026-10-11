@@ -67,5 +67,5 @@ void compute_main(uint3 id : SV_DispatchThreadID) {
     uint stored = offset < CLUSTER_INDEX_CAPACITY ? min(count, CLUSTER_INDEX_CAPACITY - offset) : 0;
     for (uint i = 0; i < stored; ++i) indices[offset + i] = candidates[i];
     headers[id.x].light_offset = min(offset, CLUSTER_INDEX_CAPACITY);
-    headers[id.x].light_count = stored;
+    headers[id.x].light_count = stored | (stored < count ? CLUSTER_OVERFLOW_BIT : 0);
 }

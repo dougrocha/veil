@@ -63,7 +63,7 @@ PASSES := [PassKind]PassSpec {
 		record = record_shadow_point,
 		uses = {{.Shadow_Cube, .Depth_Write}},
 	},
-	.Clusters = {name = "clusters", record = dispatch_clusters},
+	.Clusters = {name = "clusters", enabled = clusters_enabled, record = dispatch_clusters},
 	// Main and Overlay declaring the atlases Depth_Read is what leaves them readable, including
 	// when the shadow passes are disabled.
 	.Main = {
@@ -145,6 +145,10 @@ particles_enabled :: proc(engine: ^Engine) -> bool {
 
 shadows_enabled :: proc(engine: ^Engine) -> bool {
 	return engine.settings.shadows
+}
+
+clusters_enabled :: proc(engine: ^Engine) -> bool {
+	return engine.clustered_lighting || engine.cluster_heatmap || engine.cluster_validate
 }
 
 @(private = "file")

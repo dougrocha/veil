@@ -16,6 +16,8 @@ CLUSTER_COUNT :: CLUSTER_X * CLUSTER_Y * CLUSTER_Z
 // Cap global storage at 128K indices (512 KiB per frame slot); overflow is clamped and reported.
 @(shader_shared)
 CLUSTER_INDEX_CAPACITY :: 131072
+@(shader_shared)
+CLUSTER_OVERFLOW_BIT :: 0x80000000
 
 @(shader_shared)
 ClusterHeader :: struct #max_field_align(16) {
@@ -26,6 +28,7 @@ ClusterHeader :: struct #max_field_align(16) {
 @(private = "file")
 cluster_has :: proc(headers: []ClusterHeader, indices: []u32, cluster: int, item: u32) -> bool {
 	h := headers[cluster]
+	if (h.light_count & CLUSTER_OVERFLOW_BIT) != 0 do return false
 	for value in indices[int(h.light_offset):][:int(h.light_count)] {
 		if value == item do return true
 	}
@@ -47,6 +50,7 @@ ClusterBuffers :: struct {
 	readback_headers: backend.Buffer(ClusterHeader),
 	readback_indices: backend.Buffer(u32),
 	readback_counter: backend.Buffer(u32),
+	debug_counter:    backend.Buffer(u32),
 }
 
 cluster_buffers_create :: proc(engine: ^Engine) {
@@ -71,6 +75,13 @@ cluster_buffers_create :: proc(engine: ^Engine) {
 			1,
 			{.Storage, .Transfer_Dst, .Transfer_Src},
 			.Gpu,
+		)
+		engine.frame_data[i].clusters.debug_counter = backend.buffer_create(
+			u32,
+			&engine.vk_ctx,
+			1,
+			{.Transfer_Dst},
+			.Readback,
 		)
 		if engine.cluster_validate {
 			engine.frame_data[i].clusters.readback_headers = backend.buffer_create(
@@ -103,10 +114,24 @@ cluster_buffers_destroy :: proc(engine: ^Engine) {
 		backend.buffer_destroy(&engine.vk_ctx, frame.clusters.headers)
 		backend.buffer_destroy(&engine.vk_ctx, frame.clusters.indices)
 		backend.buffer_destroy(&engine.vk_ctx, frame.clusters.counter)
+		backend.buffer_destroy(&engine.vk_ctx, frame.clusters.debug_counter)
 		if backend.buffer_is_valid(&engine.vk_ctx, frame.clusters.readback_headers) {
 			backend.buffer_destroy(&engine.vk_ctx, frame.clusters.readback_headers)
 			backend.buffer_destroy(&engine.vk_ctx, frame.clusters.readback_indices)
 			backend.buffer_destroy(&engine.vk_ctx, frame.clusters.readback_counter)
+		}
+	}
+}
+
+cluster_debug_report_overflow :: proc(engine: ^Engine, slot: int) {
+	when ODIN_DEBUG {
+		if engine.frame_count % 120 != 0 || !clusters_enabled(engine) do return
+		frame := &engine.frame_data[slot]
+		backend.buffer_copy_compute_readback(&engine.vk_ctx, frame.clusters.counter, frame.clusters.debug_counter, 1)
+		count := make([]u32, 1, context.temp_allocator)
+		backend.buffer_read(&engine.vk_ctx, frame.clusters.debug_counter, count)
+		if count[0] > CLUSTER_INDEX_CAPACITY {
+			log.warnf("cluster index overflow: requested %d indices, capacity %d", count[0], CLUSTER_INDEX_CAPACITY)
 		}
 	}
 }
@@ -249,7 +274,7 @@ cluster_debug_validate :: proc(engine: ^Engine, slot: int) {
 	}
 	for c in 0 ..< len(headers) {
 		header := headers[c]
-		for item in indices[int(header.light_offset):][:int(header.light_count)] {
+		for item in indices[int(header.light_offset):][:int(header.light_count & 0x7fffffff)] {
 			position: Vec3
 			radius: f32
 			if item < MAX_POINT_LIGHTS {
