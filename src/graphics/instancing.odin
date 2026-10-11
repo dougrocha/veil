@@ -34,7 +34,8 @@ DrawIndexedIndirectCommand :: struct #max_field_align(16) {
 // Every pass in a frame appends to the same list: main, transparent and every shadow view.
 // Enough for one mesh per instance in the camera and every possible shadow view.
 MAX_INSTANCE_IDS :: MAX_DRAWS * (1 + MAX_SHADOW_2D_SLOTS + MAX_POINT_SHADOW_LIGHTS * 6)
-MAX_INDIRECT_COMMANDS :: MAX_DRAWS * (1 + MAX_SHADOW_2D_SLOTS + MAX_POINT_SHADOW_LIGHTS * 6)
+// 64k commands covers several views of the maximum 32k draws while keeping each slot near 1.25 MiB.
+MAX_INDIRECT_COMMANDS_PER_FRAME :: 64 * 1024
 
 // One draw: count instances of mesh, their ids at first_id in the frame's id list.
 DrawBatch :: struct {
@@ -58,14 +59,13 @@ draw_runs_upload :: proc(engine: ^Engine, runs: []DrawRun) -> []DrawBatch {
 	return batches[:]
 }
 
-// Appends one command per batch to this frame's mapped indirect buffer. Pass/view commands occupy
-// distinct ranges because the GPU consumes all recorded commands after CPU recording has finished.
-draw_batches_indirect_upload :: proc(engine: ^Engine, batches: []DrawBatch) -> int {
+// Appends up to count commands to this frame's mapped indirect buffer.
+draw_batches_indirect_upload :: proc(engine: ^Engine, batches: []DrawBatch, count: int) -> int {
 	frame := current_frame_data(engine)
 	start := int(frame.indirect_command_count)
-	assert(start + len(batches) <= MAX_INDIRECT_COMMANDS, "indirect command buffer overflow")
-	commands := backend.buffer_map_write(&engine.vk_ctx, frame.indirect_buffer, start, len(batches))
-	for batch, i in batches {
+	assert(count <= len(batches) && start + count <= MAX_INDIRECT_COMMANDS_PER_FRAME)
+	commands := backend.buffer_map_write(&engine.vk_ctx, frame.indirect_buffer, start, count)
+	for batch, i in batches[:count] {
 		mesh := batch.mesh
 		commands[i] = DrawIndexedIndirectCommand {
 			index_count    = mesh.index_count,
@@ -75,7 +75,7 @@ draw_batches_indirect_upload :: proc(engine: ^Engine, batches: []DrawBatch) -> i
 			first_instance = batch.first_id,
 		}
 	}
-	frame.indirect_command_count += u32(len(batches))
+	frame.indirect_command_count += u32(count)
 	return start
 }
 
@@ -91,6 +91,10 @@ instance_ids_reset :: proc(engine: ^Engine) {
 	frame := current_frame_data(engine)
 	frame.instance_id_count = 0
 	frame.indirect_command_count = 0
+}
+
+indirect_commands_available :: proc(engine: ^Engine) -> int {
+	return MAX_INDIRECT_COMMANDS_PER_FRAME - int(current_frame_data(engine).indirect_command_count)
 }
 
 // TODO: replace the @(static) warned flag.

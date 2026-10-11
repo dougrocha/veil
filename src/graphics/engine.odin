@@ -300,21 +300,27 @@ draw_shadow :: proc(
 	backend.pipeline_push(cmd, &view_pc)
 
 	batches := draw_runs_upload(engine, runs)
-	start := draw_batches_indirect_upload(engine, batches)
-	if len(batches) > 0 {
+	available := indirect_commands_available(engine)
+	when ODIN_DEBUG {
+		assert(len(batches) <= available, "per-frame indirect command budget exceeded")
+	}
+	indirect_count := min(len(batches), available)
+	start := draw_batches_indirect_upload(engine, batches, indirect_count)
+	if indirect_count > 0 {
 		backend.cmd_draw_indexed_indirect(
 			cmd,
 			frame.indirect_buffer,
 			u64(start * size_of(DrawIndexedIndirectCommand)),
-			u32(len(batches)),
+			u32(indirect_count),
 			u32(size_of(DrawIndexedIndirectCommand)),
 		)
 		stats_count_indirect_call(engine)
 	}
-	for batch in batches {
+	for batch in batches[:indirect_count] {
 		mesh := batch.mesh
 		stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 	}
+	for batch in batches[indirect_count:] do mesh_draw_batch(engine, cmd, batch)
 }
 
 // The camera's draw list for this frame. Counts its culling stats.
@@ -341,17 +347,14 @@ shadow_view_runs :: proc(engine: ^Engine, light_type: LightType, view_proj: Mat4
 draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
 	pass_pc := mesh_pass_push_constants(engine)
 	batches := draw_runs_upload(engine, list.opaque)
-	for i in 1 ..< len(batches) {
-		j := i
-		for j > 0 && mesh_double_sided(engine, batches[j].mesh) && !mesh_double_sided(engine, batches[j - 1].mesh) {
-			temp := batches[j]
-			batches[j] = batches[j - 1]
-			batches[j - 1] = temp
-			j -= 1
-		}
+	available := indirect_commands_available(engine)
+	when ODIN_DEBUG {
+		assert(len(batches) <= available, "per-frame indirect command budget exceeded")
 	}
-	start := draw_batches_indirect_upload(engine, batches)
+	indirect_count := min(len(batches), available)
+	start := draw_batches_indirect_upload(engine, batches, indirect_count)
 	backend.pipeline_push(cmd, &pass_pc)
+	// Preserve run order; PR #50's kind sort will make these contiguous spans collapse by kind.
 	group_start := 0
 	for group_start < len(batches) {
 		kind: PipelineKind = .Mesh_Double_Sided if mesh_double_sided(engine, batches[group_start].mesh) else .Mesh
@@ -363,17 +366,22 @@ draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: Dr
 			group_end += 1
 		}
 		backend.pipeline_bind(cmd, pipeline_get(engine, kind))
-		backend.cmd_draw_indexed_indirect(
-			cmd,
-			current_frame_data(engine).indirect_buffer,
-			u64((start + group_start) * size_of(DrawIndexedIndirectCommand)),
-			u32(group_end - group_start),
-			u32(size_of(DrawIndexedIndirectCommand)),
-		)
-		stats_count_indirect_call(engine)
-		for batch in batches[group_start:group_end] {
-			stats_count_draw(engine, u64(batch.mesh.index_count / 3 * batch.count))
+		indirect_end := min(group_end, indirect_count)
+		if group_start < indirect_end {
+			backend.cmd_draw_indexed_indirect(
+				cmd,
+				current_frame_data(engine).indirect_buffer,
+				u64((start + group_start) * size_of(DrawIndexedIndirectCommand)),
+				u32(indirect_end - group_start),
+				u32(size_of(DrawIndexedIndirectCommand)),
+			)
+			stats_count_indirect_call(engine)
+			for batch in batches[group_start:indirect_end] {
+				stats_count_draw(engine, u64(batch.mesh.index_count / 3 * batch.count))
+			}
 		}
+		direct_start := min(max(group_start, indirect_count), group_end)
+		for batch in batches[direct_start:group_end] do mesh_draw_batch(engine, cmd, batch)
 		group_start = group_end
 	}
 }

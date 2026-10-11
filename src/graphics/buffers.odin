@@ -58,9 +58,9 @@ frame_data_create :: proc(engine: ^Engine) {
 		engine.frame_data[i].indirect_buffer = backend.buffer_create(
 			DrawIndexedIndirectCommand,
 			&engine.vk_ctx,
-			MAX_INDIRECT_COMMANDS,
+			MAX_INDIRECT_COMMANDS_PER_FRAME,
 			{.Storage, .Indirect},
-			.Shared,
+			.Upload,
 		)
 		engine.frame_data[i].particle_buffer = create_particle_buffer(&engine.vk_ctx)
 	}
