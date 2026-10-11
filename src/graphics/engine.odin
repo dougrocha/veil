@@ -277,6 +277,10 @@ dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Co
 	pc.init_commands = 0
 	backend.pipeline_push_compute(encoder, &pc)
 	backend.cmd_dispatch(encoder, (u32(candidate_count) + 255) / 256, 1, 1)
+	backend.cmd_barrier_compute_write_to_compute_read(encoder)
+	pc.init_commands = 2
+	backend.pipeline_push_compute(encoder, &pc)
+	backend.cmd_dispatch(encoder, (u32(run_count) + 255) / 256, 1, 1)
 	if engine.gpu_cull_validate {
 		backend.cmd_barrier_compute_write_to_transfer_read(encoder)
 		backend.cmd_copy_buffer(cmd, frame.cull_commands, frame.cull_readback_commands, run_count)

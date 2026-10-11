@@ -166,7 +166,7 @@ cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
 		srcStageMask  = {.COMPUTE_SHADER},
 		srcAccessMask = {.SHADER_WRITE},
 		dstStageMask  = {.COMPUTE_SHADER},
-		dstAccessMask = {.SHADER_READ},
+		dstAccessMask = {.SHADER_READ, .SHADER_WRITE},
 	}
 	dep_info := vk.DependencyInfo {
 		sType              = .DEPENDENCY_INFO,

@@ -153,6 +153,10 @@ record_main :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandB
 	if engine.settings.gpu_cull && !gpu_culled {
 		view_list = build_draw_list(draw_input(engine), frustum, packet.camera.position)
 	}
+	if !gpu_culled {
+		engine.stats.counters.draws_visible += view_list.draws_visible
+		engine.stats.counters.meshes_culled += view_list.meshes_culled
+	}
 	// A sky covers every pixel left uncovered, so its clear value never shows.
 	clear_color, _ := packet.background.(Vec4)
 	_, has_sky := packet.background.(TextureHandle)

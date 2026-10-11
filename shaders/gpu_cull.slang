@@ -6,7 +6,7 @@ import types;
 [numthreads(256,1,1)]
 void compute_main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint index = dispatch_id.x;
-    if (pc.init_commands != 0) {
+    if (pc.init_commands == 1) {
         if (index >= pc.run_count) return;
         CullRun run = pc.runs[index];
         run.instance_count = 0;
@@ -19,6 +19,23 @@ void compute_main(uint3 dispatch_id : SV_DispatchThreadID) {
         command.vertex_offset = run.vertex_offset;
         command.first_instance = run.first_candidate;
         pc.commands[index] = command;
+        return;
+    }
+    if (pc.init_commands == 2) {
+        if (index >= pc.run_count) return;
+        CullRun run = pc.runs[index];
+        uint visible_count = 0;
+        // A run contains at most 4096 candidates. One invocation scans it in O(n), avoiding
+        // atomics and preserving candidate order while keeping the scan simple at engine scale.
+        for (uint offset = 0; offset < run.candidate_count; ++offset) {
+            uint candidate_index = run.first_candidate + offset;
+            if (pc.output_ids[candidate_index] == 0) continue;
+            pc.output_ids[run.first_candidate + visible_count] = pc.candidates[candidate_index].packed_id;
+            visible_count++;
+        }
+        run.instance_count = visible_count;
+        pc.runs[index] = run;
+        pc.commands[index].instance_count = visible_count;
         return;
     }
     if (index >= pc.candidate_count) return;
@@ -36,11 +53,10 @@ void compute_main(uint3 dispatch_id : SV_DispatchThreadID) {
     for (uint p = 0; p < 6; ++p) {
         float4 plane = pc.planes[p];
         float radius = dot(world_extents, abs(plane.xyz));
-        if (dot(plane.xyz, center4.xyz) - plane.w < -radius) return;
+        if (dot(plane.xyz, center4.xyz) - plane.w < -radius) {
+            pc.output_ids[index] = 0;
+            return;
+        }
     }
-
-    uint output_index;
-    InterlockedAdd(pc.runs[candidate.run_index].instance_count, 1, output_index);
-    pc.output_ids[run.first_candidate + output_index] = candidate.packed_id;
-    InterlockedAdd(pc.commands[candidate.run_index].instance_count, 1);
+    pc.output_ids[index] = 1;
 }
