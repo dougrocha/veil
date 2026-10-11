@@ -98,7 +98,7 @@ struct DebugSettings {
     uint show_cascades;
     uint disable_shadows;
     uint light_mask;
-    uint _reserved;
+    uint clustered_lighting;
 };
 
 struct SceneData {

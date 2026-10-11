@@ -70,7 +70,7 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(GpuDebugSettings, show_cascades) == 0)
 #assert(offset_of(GpuDebugSettings, disable_shadows) == 4)
 #assert(offset_of(GpuDebugSettings, light_mask) == 8)
-#assert(offset_of(GpuDebugSettings, _reserved) == 12)
+#assert(offset_of(GpuDebugSettings, clustered_lighting) == 12)
 #assert(size_of(GpuDebugSettings) == 16)
 
 #assert(offset_of(GpuTransform, model) == 0)

@@ -86,10 +86,10 @@ scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 		},
 	}
 	dst[0].debug_settings = {
-		show_cascades   = u32(engine.settings.cascade_colors),
-		disable_shadows = u32(!engine.settings.shadows),
-		light_mask      = transmute(u32)engine.settings.lights,
-		_reserved       = 0,
+		show_cascades      = u32(engine.settings.cascade_colors),
+		disable_shadows    = u32(!engine.settings.shadows),
+		light_mask         = transmute(u32)engine.settings.lights,
+		clustered_lighting = u32(engine.clustered_lighting),
 	}
 
 	if point_count > 0 {

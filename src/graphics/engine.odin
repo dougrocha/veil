@@ -31,6 +31,7 @@ engine_create :: proc(
 	}
 	engine.config = config
 	engine.settings = RENDER_SETTINGS_DEFAULT
+	engine.clustered_lighting = true
 	frame_dump_init(engine)
 	debug_env_init(engine)
 

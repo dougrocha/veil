@@ -29,10 +29,10 @@ GpuTimeInfo :: struct #max_field_align(16) {
 
 @(shader_shared)
 GpuDebugSettings :: struct #max_field_align(16) {
-	show_cascades:   u32,
-	disable_shadows: u32,
-	light_mask:      u32,
-	_reserved:       u32,
+	show_cascades:      u32,
+	disable_shadows:    u32,
+	light_mask:         u32,
+	clustered_lighting: u32,
 }
 
 @(shader_shared)
