@@ -76,13 +76,15 @@ cluster_buffers_create :: proc(engine: ^Engine) {
 			{.Storage, .Transfer_Dst, .Transfer_Src},
 			.Gpu,
 		)
-		engine.frame_data[i].clusters.debug_counter = backend.buffer_create(
-			u32,
-			&engine.vk_ctx,
-			1,
-			{.Transfer_Dst},
-			.Readback,
-		)
+		when ODIN_DEBUG {
+			engine.frame_data[i].clusters.debug_counter = backend.buffer_create(
+				u32,
+				&engine.vk_ctx,
+				1,
+				{.Transfer_Dst},
+				.Readback,
+			)
+		}
 		if engine.cluster_validate {
 			engine.frame_data[i].clusters.readback_headers = backend.buffer_create(
 				ClusterHeader,
@@ -114,7 +116,9 @@ cluster_buffers_destroy :: proc(engine: ^Engine) {
 		backend.buffer_destroy(&engine.vk_ctx, frame.clusters.headers)
 		backend.buffer_destroy(&engine.vk_ctx, frame.clusters.indices)
 		backend.buffer_destroy(&engine.vk_ctx, frame.clusters.counter)
-		backend.buffer_destroy(&engine.vk_ctx, frame.clusters.debug_counter)
+		when ODIN_DEBUG {
+			backend.buffer_destroy(&engine.vk_ctx, frame.clusters.debug_counter)
+		}
 		if backend.buffer_is_valid(&engine.vk_ctx, frame.clusters.readback_headers) {
 			backend.buffer_destroy(&engine.vk_ctx, frame.clusters.readback_headers)
 			backend.buffer_destroy(&engine.vk_ctx, frame.clusters.readback_indices)

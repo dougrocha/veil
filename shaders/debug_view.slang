@@ -52,7 +52,7 @@ float4 fragment_main(VSOutput input) : SV_TARGET {
         uint count = 0;
         for (uint z = 0; z < CLUSTER_Z; ++z) {
             uint cluster = tile.x + tile.y * CLUSTER_X + z * CLUSTER_X * CLUSTER_Y;
-            count = max(count, headers[cluster].light_count);
+            count = max(count, headers[cluster].light_count & ~CLUSTER_OVERFLOW_BIT);
         }
         float t = saturate(float(count) / 24.0);
         return float4(t, 1.0 - abs(t * 2.0 - 1.0), 1.0 - t, 0.72);
