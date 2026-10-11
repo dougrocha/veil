@@ -15,6 +15,8 @@ FrameCounters :: struct {
 	draw_calls:          u32,
 	indirect_calls:      u32,
 	triangles:           u64,
+	candidate_instances: u32,
+	candidate_triangles: u64,
 	draws_visible:       u32, // main pass, after frustum culling
 	meshes_culled:       u32, // main pass, meshes of visible draws rejected by their AABB
 	shadow_views:        u32, // cascades + spot maps + cube faces rendered
@@ -174,6 +176,27 @@ tick_ms :: proc(start: time.Tick) -> f64 {
 stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32, extra: []string = nil) {
 	s := &engine.stats
 	c := &s.last
+	draw_line := fmt.tprintf(
+		"draws %d  indirect calls %d  tris %.2fM  visible %d  meshes culled %d  shadow views %d (%d cached)",
+		c.draw_calls,
+		c.indirect_calls,
+		f64(c.triangles) / 1e6,
+		c.draws_visible,
+		c.meshes_culled,
+		c.shadow_views,
+		c.shadow_views_cached,
+	)
+	if c.candidate_instances > 0 {
+		draw_line = fmt.tprintf(
+			"draws %d  indirect calls %d  GPU visibility unknown  candidates %d / %.2fM tris  shadow views %d (%d cached)",
+			c.draw_calls,
+			c.indirect_calls,
+			c.candidate_instances,
+			f64(c.candidate_triangles) / 1e6,
+			c.shadow_views,
+			c.shadow_views_cached,
+		)
+	}
 	lines := [?]string {
 		fmt.tprintf("%.0f fps  %.2f ms  (min %.2f  max %.2f)", s.fps, s.avg.frame, s.frame_min, s.frame_max),
 		fmt.tprintf(
@@ -183,16 +206,7 @@ stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32, e
 			s.avg.submit,
 			max(s.avg.frame - s.avg.wait - s.avg.record - s.avg.submit, 0),
 		),
-		fmt.tprintf(
-			"draws %d  indirect calls %d  tris %.2fM  visible %d  meshes culled %d  shadow views %d (%d cached)",
-			c.draw_calls,
-			c.indirect_calls,
-			f64(c.triangles) / 1e6,
-			c.draws_visible,
-			c.meshes_culled,
-			c.shadow_views,
-			c.shadow_views_cached,
-		),
+		draw_line,
 	}
 	gpu_line := "gpu  timestamps unsupported"
 	if s.gpu_count > 0 {

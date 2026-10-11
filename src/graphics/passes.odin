@@ -147,6 +147,12 @@ shadows_enabled :: proc(engine: ^Engine) -> bool {
 
 @(private = "file")
 record_main :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
+	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
+	view_list := build_draw_list(draw_input(engine), frustum, packet.camera.position, engine.settings.gpu_cull)
+	gpu_culled := engine.settings.gpu_cull && dispatch_gpu_cull(engine, packet, cmd, view_list.opaque)
+	if engine.settings.gpu_cull && !gpu_culled {
+		view_list = build_draw_list(draw_input(engine), frustum, packet.camera.position)
+	}
 	// A sky covers every pixel left uncovered, so its clear value never shows.
 	clear_color, _ := packet.background.(Vec4)
 	_, has_sky := packet.background.(TextureHandle)
@@ -163,8 +169,7 @@ record_main :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandB
 	defer backend.end_render_pass(encoder)
 	backend.cmd_bind_index_buffer(encoder, engine.model_system.index_buffer)
 	// Opaque, then the sky (if any) where nothing opaque wrote depth, then transparent on top.
-	view_list := view_draw_list(engine, packet)
-	draw_meshes_opaque(engine, encoder, view_list)
+	draw_meshes_opaque(engine, encoder, view_list, gpu_culled)
 	if has_sky do draw_skybox(engine, encoder)
 	draw_meshes_transparent(engine, encoder, view_list)
 	if engine.settings.particles do draw_particles(engine, encoder)

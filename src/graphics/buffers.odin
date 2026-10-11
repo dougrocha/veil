@@ -27,6 +27,11 @@ FrameData :: struct {
 	instance_id_count:      u32, // ids written this frame
 	indirect_buffer:        backend.Buffer(DrawIndexedIndirectCommand),
 	indirect_command_count: u32,
+	cull_candidates:        backend.Buffer(GpuCullCandidate),
+	cull_runs:              backend.Buffer(GpuCullRun),
+	cull_output_ids:        backend.Buffer(u32),
+	cull_commands:          backend.Buffer(DrawIndexedIndirectCommand),
+	cull_planes:            backend.Buffer(Vec4),
 	transforms_dirty:       [MAX_DRAWS / 64]u64, // draw ids changed since transforms_buffer was written
 }
 
@@ -63,6 +68,35 @@ frame_data_create :: proc(engine: ^Engine) {
 			.Upload,
 		)
 		engine.frame_data[i].particle_buffer = create_particle_buffer(&engine.vk_ctx)
+		engine.frame_data[i].cull_candidates = backend.buffer_create(
+			GpuCullCandidate,
+			&engine.vk_ctx,
+			MAX_INSTANCE_IDS,
+			{.Storage},
+			.Shared,
+		)
+		engine.frame_data[i].cull_runs = backend.buffer_create(
+			GpuCullRun,
+			&engine.vk_ctx,
+			MAX_INDIRECT_COMMANDS_PER_FRAME,
+			{.Storage},
+			.Shared,
+		)
+		engine.frame_data[i].cull_output_ids = backend.buffer_create(
+			u32,
+			&engine.vk_ctx,
+			MAX_INSTANCE_IDS,
+			{.Storage},
+			.Gpu,
+		)
+		engine.frame_data[i].cull_commands = backend.buffer_create(
+			DrawIndexedIndirectCommand,
+			&engine.vk_ctx,
+			MAX_INDIRECT_COMMANDS_PER_FRAME,
+			{.Storage, .Indirect},
+			.Gpu,
+		)
+		engine.frame_data[i].cull_planes = backend.buffer_create(Vec4, &engine.vk_ctx, 6, {.Storage}, .Shared)
 	}
 }
 
@@ -73,6 +107,11 @@ frame_data_destroy :: proc(engine: ^Engine) {
 		backend.buffer_destroy(&engine.vk_ctx, res.transforms_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.instance_ids_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.indirect_buffer)
+		backend.buffer_destroy(&engine.vk_ctx, res.cull_candidates)
+		backend.buffer_destroy(&engine.vk_ctx, res.cull_runs)
+		backend.buffer_destroy(&engine.vk_ctx, res.cull_output_ids)
+		backend.buffer_destroy(&engine.vk_ctx, res.cull_commands)
+		backend.buffer_destroy(&engine.vk_ctx, res.cull_planes)
 	}
 }
 

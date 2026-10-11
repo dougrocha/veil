@@ -212,6 +212,67 @@ dispatch_particles :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.C
 	backend.end_compute_pass(encoder)
 }
 
+dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer, runs: []DrawRun) -> bool {
+	frame := current_frame_data(engine)
+	candidate_count, run_count: int
+	candidates := make([dynamic]GpuCullCandidate, context.temp_allocator)
+	run_data := make([dynamic]GpuCullRun, context.temp_allocator)
+	for run, run_index in runs {
+		if candidate_count + len(run.ids) > MAX_INSTANCE_IDS || run_count >= MAX_INDIRECT_COMMANDS_PER_FRAME do return false
+		mesh := run.mesh
+		append(
+			&run_data,
+			GpuCullRun {
+				first_candidate = u32(candidate_count),
+				candidate_count = u32(len(run.ids)),
+				first_index = mesh.first_index,
+				vertex_offset = i32(mesh.first_vertex),
+				index_count = mesh.index_count,
+				bounds_center = Vec4{mesh.bounds.center.x, mesh.bounds.center.y, mesh.bounds.center.z, 0},
+				bounds_extents = Vec4{mesh.bounds.extents.x, mesh.bounds.extents.y, mesh.bounds.extents.z, 0},
+			},
+		)
+		for id in run.ids {
+			packed := (u32(id) << u32(INSTANCE_DRAW_ID_SHIFT)) | u32(mesh.material.index)
+			append(&candidates, GpuCullCandidate{packed_id = packed, run_index = u32(run_index)})
+		}
+		candidate_count += len(run.ids)
+		run_count += 1
+	}
+	if run_count == 0 do return true
+	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_candidates, candidates[:])
+	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_runs, run_data[:])
+	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
+	planes: [6]Vec4
+	for plane, i in frustum.planes do planes[i] = Vec4{plane.normal.x, plane.normal.y, plane.normal.z, plane.distance}
+	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_planes, planes[:])
+	pc := GpuCullPushConstants {
+		candidates      = backend.buffer_address(&engine.vk_ctx, frame.cull_candidates),
+		runs            = backend.buffer_address(&engine.vk_ctx, frame.cull_runs),
+		transforms      = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
+		planes          = backend.buffer_address(&engine.vk_ctx, frame.cull_planes),
+		output_ids      = backend.buffer_address(&engine.vk_ctx, frame.cull_output_ids),
+		commands        = backend.buffer_address(&engine.vk_ctx, frame.cull_commands),
+		candidate_count = u32(candidate_count),
+		run_count       = u32(run_count),
+	}
+	encoder := backend.begin_compute_pass(cmd)
+	scope := gpu_scope_begin(engine, cmd, "culling")
+	backend.cmd_barrier_host_write_to_compute(encoder)
+	backend.pipeline_bind_compute(encoder, pipeline_get(engine, .Gpu_Cull))
+	pc.init_commands = 1
+	backend.pipeline_push_compute(encoder, &pc)
+	backend.cmd_dispatch(encoder, (u32(run_count) + 255) / 256, 1, 1)
+	backend.cmd_barrier_compute_write_to_compute_read(encoder)
+	pc.init_commands = 0
+	backend.pipeline_push_compute(encoder, &pc)
+	backend.cmd_dispatch(encoder, (u32(candidate_count) + 255) / 256, 1, 1)
+	backend.cmd_barrier_compute_write_to_draw_read(encoder)
+	backend.end_compute_pass(encoder)
+	gpu_scope_end(engine, cmd, scope)
+	return true
+}
+
 draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
 	pipeline := pipeline_get(engine, .Particle)
 
@@ -341,8 +402,41 @@ shadow_view_runs :: proc(engine: ^Engine, light_type: LightType, view_proj: Mat4
 	)
 }
 
-draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
+draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList, gpu_culled := false) {
 	pass_pc := mesh_pass_push_constants(engine)
+	if gpu_culled {
+		frame := current_frame_data(engine)
+		pass_pc.instance_ids = backend.buffer_address(&engine.vk_ctx, frame.cull_output_ids)
+		group_start := 0
+		for group_start < len(list.opaque) {
+			kind: PipelineKind =
+				.Mesh_Double_Sided if mesh_double_sided(engine, list.opaque[group_start].mesh) else .Mesh
+			group_end := group_start + 1
+			for group_end < len(list.opaque) {
+				next_kind: PipelineKind =
+					.Mesh_Double_Sided if mesh_double_sided(engine, list.opaque[group_end].mesh) else .Mesh
+				if next_kind != kind do break
+				group_end += 1
+			}
+			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
+			backend.pipeline_push(cmd, &pass_pc)
+			backend.cmd_draw_indexed_indirect(
+				cmd,
+				frame.cull_commands,
+				u64(group_start * size_of(DrawIndexedIndirectCommand)),
+				u32(group_end - group_start),
+				u32(size_of(DrawIndexedIndirectCommand)),
+			)
+			stats_count_indirect_call(engine)
+			for batch in list.opaque[group_start:group_end] {
+				stats_count_draw(engine)
+				engine.stats.counters.candidate_instances += u32(len(batch.ids))
+				engine.stats.counters.candidate_triangles += u64(batch.mesh.index_count / 3) * u64(len(batch.ids))
+			}
+			group_start = group_end
+		}
+		return
+	}
 	batches := draw_runs_upload(engine, list.opaque)
 	available := indirect_commands_available(engine)
 	indirect_count := min(len(batches), available)

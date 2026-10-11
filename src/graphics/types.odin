@@ -62,9 +62,11 @@ RenderSettings :: struct {
 	lights:         LightTypes, // the types that light the scene and cast shadows
 	cascade_colors: bool, // tints lighting by directional shadow cascade
 	particles:      bool,
+	gpu_cull:       bool,
 }
 
 RENDER_SETTINGS_DEFAULT :: RenderSettings {
-	shadows = true,
-	lights  = LIGHT_TYPES_ALL,
+	shadows  = true,
+	gpu_cull = true,
+	lights   = LIGHT_TYPES_ALL,
 }

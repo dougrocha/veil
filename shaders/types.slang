@@ -143,6 +143,36 @@ struct DrawIndexedIndirectCommand {
     uint first_instance;
 };
 
+struct CullCandidate {
+    uint packed_id;
+    uint run_index;
+};
+
+struct CullRun {
+    uint first_candidate;
+    uint candidate_count;
+    uint first_index;
+    int vertex_offset;
+    uint index_count;
+    uint instance_count;
+    uint first_instance;
+    uint _reserved;
+    float4 bounds_center;
+    float4 bounds_extents;
+};
+
+struct CullPushConstants {
+    CullCandidate* candidates;
+    CullRun* runs;
+    Transform* transforms;
+    float4* planes;
+    uint* output_ids;
+    DrawIndexedIndirectCommand* commands;
+    uint candidate_count;
+    uint run_count;
+    uint init_commands;
+};
+
 struct LineVertex {
     float4 position;
     float4 color;

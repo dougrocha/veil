@@ -44,6 +44,39 @@ DrawBatch :: struct {
 	count:    u32,
 }
 
+@(shader_shared)
+GpuCullCandidate :: struct #max_field_align(16) {
+	packed_id: u32,
+	run_index: u32,
+}
+
+@(shader_shared)
+GpuCullRun :: struct #max_field_align(16) {
+	first_candidate: u32,
+	candidate_count: u32,
+	first_index:     u32,
+	vertex_offset:   i32,
+	index_count:     u32,
+	instance_count:  u32,
+	first_instance:  u32,
+	_reserved:       u32,
+	bounds_center:   Vec4,
+	bounds_extents:  Vec4,
+}
+
+@(shader_shared)
+GpuCullPushConstants :: struct #max_field_align(16) {
+	candidates:      backend.GPUPtr(GpuCullCandidate),
+	runs:            backend.GPUPtr(GpuCullRun),
+	transforms:      backend.GPUPtr(GpuTransform),
+	planes:          backend.GPUPtr(Vec4),
+	output_ids:      backend.GPUPtr(u32),
+	commands:        backend.GPUPtr(DrawIndexedIndirectCommand),
+	candidate_count: u32,
+	run_count:       u32,
+	init_commands:   u32,
+}
+
 // Writes each run's ids into the frame's id list and returns one batch per run, temp-allocated. A
 // full id list drops the remaining runs for this frame.
 draw_runs_upload :: proc(engine: ^Engine, runs: []DrawRun) -> []DrawBatch {

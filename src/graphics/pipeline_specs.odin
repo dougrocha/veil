@@ -19,6 +19,7 @@ PipelineKind :: enum u8 {
 	Debug_Line_Overlay,
 	Debug_Sector,
 	Particle_Simulate, // compute
+	Gpu_Cull, // compute
 	Tonemap,
 	Bloom_Down,
 	Bloom_Up,
@@ -93,6 +94,7 @@ PIPELINE_SPECS := [PipelineKind]PipelineSpec {
 	.Debug_Line_Overlay = {shader = "line", targets = .Main, cull = .None, blend = .Alpha},
 	.Debug_Sector = {shader = "sector", targets = .Main, cull = .None, blend = .Alpha},
 	.Particle_Simulate = {shader = "particle", stage = .Compute},
+	.Gpu_Cull = {shader = "gpu_cull", stage = .Compute},
 	.Tonemap = {shader = "tonemap", stage = .Compute},
 	.Bloom_Down = {shader = "bloom_down", stage = .Compute},
 	.Bloom_Up = {shader = "bloom_up", stage = .Compute},

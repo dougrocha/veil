@@ -42,7 +42,7 @@ DrawList :: struct {
 // - Visible transparent meshes are sorted back to front across all draws, by distance from
 //   camera_pos to each mesh's world-space AABB center.
 // - Count draws_visible and meshes_culled (opaque and transparent AABB misses both count).
-build_draw_list :: proc(view: DrawInput, frustum: Frustum, camera_pos: Vec3) -> DrawList {
+build_draw_list :: proc(view: DrawInput, frustum: Frustum, camera_pos: Vec3, gpu_candidates := false) -> DrawList {
 	opaque_items := make([dynamic]DrawItem, context.temp_allocator)
 	transparent_items := make([dynamic]DrawItem, context.temp_allocator)
 	draws_viewed, culled: u32
@@ -58,12 +58,16 @@ build_draw_list :: proc(view: DrawInput, frustum: Frustum, camera_pos: Vec3) -> 
 
 		model := pool_get(view.models, record.model)
 
-		if !volume_is_on_frustum(frustum, model.bounds, record.world) do continue
+		if !gpu_candidates && !volume_is_on_frustum(frustum, model.bounds, record.world) do continue
 
 		for &mesh in model.meshes {
 			material := pool_get(view.materials, mesh.material)
 
 			transparent := material.alpha_mode == .Blend
+			if material.alpha_mode != .Blend && gpu_candidates {
+				append(&opaque_items, DrawItem{mesh = &mesh, id = u32(id)})
+				continue
+			}
 			if !aabb_is_on_frustum(frustum, mesh.bounds, record.world) {
 				culled += 1
 				continue
