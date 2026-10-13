@@ -1,8 +1,6 @@
 package graphics
 
-import "base:intrinsics"
 import "core:log"
-import "core:math/linalg"
 import "core:mem/virtual"
 import "core:time"
 
@@ -30,8 +28,6 @@ engine_create :: proc(
 		return false
 	}
 	engine.config = config
-	engine.settings = RENDER_SETTINGS_DEFAULT
-	engine.clustered_lighting = true
 	frame_dump_init(engine)
 	debug_env_init(engine)
 
@@ -126,12 +122,6 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 	context.temp_allocator = virtual.arena_allocator(&engine.frame_arena)
 	defer free_all(context.temp_allocator)
 	defer stats_memory_sample(engine) // deferred later, so it runs before free_all
-	// Batches are filled every tick; drain them even when this frame isn't drawn, or they overflow.
-	defer {
-		line_renderer_clear(engine)
-		ui_renderer_clear(engine)
-		debug_view_clear(engine)
-	}
 	// Wall clock, not packet time: a paused or slowed game still renders at the real rate.
 	frame_ms: f64
 	if engine.last_render != {} do frame_ms = tick_ms(engine.last_render)
@@ -150,28 +140,29 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 
 	// Reload first: a shadow shader reload invalidates the cache, and the plan must see it.
 	shader_poll_hotreload(engine)
-	shadow_plan_update(engine, packet)
-	scene_data_buffer_update(engine, packet)
-	update_transforms_buffer(engine)
-
-	instance_ids_reset(engine)
-	record_frame(engine, packet, cmd)
+	shadow_casters_sync(&engine.shadows.casters, draw_input(engine), engine.prev_draws.changes[:])
+	prepared := frame_prepare(prepare_input(engine, packet))
+	if prepared.uploads.layout.dropped_runs > 0 {
+		if !engine.instance_overflow_warned do log.errorf("instance id list full (%d); dropping draws", MAX_INSTANCE_IDS)
+		engine.instance_overflow_warned = true
+	}
+	recorder := recorder_make(engine, cmd)
+	frame_upload(&recorder, &prepared, &engine.line_renderer, &engine.ui_renderer)
+	frame_record(&recorder, &prepared)
 	record_ms := tick_ms(record_start)
 	submit_start := time.tick_now()
 
 	frame_slot := backend.frame_slot(&engine.vk_ctx)
 	render_targets_end_frame(engine, cmd)
-	cluster_debug_report_overflow(engine, frame_slot)
+	if prepared.debug.cluster_overflow_report do cluster_debug_report_overflow(engine, frame_slot)
 	// Once per recorded frame, shadow passes on or off. Skipped frames return early above, so their
 	// changes carry over.
-	shadow_cache_commit(&engine.shadows.cache, &engine.shadows.plan, packet.lights)
-	clear(&engine.prev_draws.changes)
-	engine.shadows.plan.views = nil // frame arena memory, freed when engine_render returns
+	frame_commit(engine, &prepared, packet)
 	stats_add_timings(engine, {frame = frame_ms, wait = wait_ms, record = record_ms, submit = tick_ms(submit_start)})
 
 	if engine.frame_dump.enabled {
 		backend.device_wait_idle(&engine.vk_ctx)
-		cluster_debug_validate(engine, frame_slot)
+		if prepared.passes.clusters != nil do cluster_debug_validate(engine, frame_slot)
 		pick_test_run(engine, packet)
 		if frame_dump_capture(engine) {
 			quit := sdl.Event {
@@ -180,9 +171,9 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 			_ = sdl.PushEvent(&quit)
 		}
 	}
-	if engine.gpu_cull_validate && !engine.gpu_cull_validated {
+	if prepared.debug.cull_readback && !engine.gpu_cull_validated {
 		backend.device_wait_idle(&engine.vk_ctx)
-		gpu_cull_validate_frame(engine, packet)
+		gpu_cull_validate_frame(engine, packet, &prepared)
 		engine.gpu_cull_validated = true
 	}
 	return true
@@ -200,126 +191,16 @@ current_frame_data :: #force_inline proc(engine: ^Engine) -> ^FrameData {
 	return &engine.frame_data[backend.frame_slot(&engine.vk_ctx)]
 }
 
-dispatch_particles :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
-	pipeline := pipeline_get(engine, .Particle_Simulate)
-
-	frame_res_index := backend.frame_slot(&engine.vk_ctx)
-	last_frame := (frame_res_index + backend.MAX_FRAMES_IN_FLIGHT - 1) % backend.MAX_FRAMES_IN_FLIGHT
-	compute_pc := ParticlePushConstants {
-		particles_in  = backend.buffer_address(&engine.vk_ctx, engine.frame_data[last_frame].particle_buffer),
-		particles_out = backend.buffer_address(&engine.vk_ctx, engine.frame_data[frame_res_index].particle_buffer),
-		delta_time    = packet.delta_time,
-	}
-	encoder := backend.begin_compute_pass(cmd)
-	// particles_in was written by the previous frame's dispatch in an earlier submission.
-	backend.cmd_barrier_compute_write_to_compute_read(encoder)
-	backend.pipeline_bind_compute(encoder, pipeline)
-	backend.pipeline_push_compute(encoder, &compute_pc)
-	#assert(PARTICLE_COUNT % PARTICLE_GROUP_SIZE == 0)
-	backend.cmd_dispatch(encoder, PARTICLE_COUNT / PARTICLE_GROUP_SIZE, 1, 1)
-	backend.cmd_barrier_compute_write_to_vertex_read(encoder)
-	backend.end_compute_pass(encoder)
-}
-
-// Commands a run takes: one per GPU_CULL_BATCH_CANDIDATES ids. An empty run keeps one, so its draw stays counted.
-gpu_cull_batch_count :: proc(id_count: int) -> int {
-	return max(1, (id_count + GPU_CULL_BATCH_CANDIDATES - 1) / GPU_CULL_BATCH_CANDIDATES)
-}
-
-dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer, runs: []DrawRun) -> bool {
-	frame := current_frame_data(engine)
-	engine.gpu_cull_validate_slot = backend.frame_slot(&engine.vk_ctx)
-	frame.cull_batch_count = 0
-	frame.cull_candidate_count = 0
-	candidate_count, batch_count: int
-	candidates := make([dynamic]GpuCullCandidate, context.temp_allocator)
-	run_data := make([dynamic]GpuCullRun, context.temp_allocator)
-	// Batches stay in run order and candidate order, so each batch's output lands at its own first_candidate.
-	for run in runs {
-		run_ids := len(run.ids)
-		run_batches := gpu_cull_batch_count(run_ids)
-		if candidate_count + run_ids > MAX_INSTANCE_IDS || batch_count + run_batches > MAX_INDIRECT_COMMANDS_PER_FRAME do return false
-		mesh := run.mesh
-		for b in 0 ..< run_batches {
-			first := min(b * GPU_CULL_BATCH_CANDIDATES, run_ids)
-			last := min(first + GPU_CULL_BATCH_CANDIDATES, run_ids)
-			append(
-				&run_data,
-				GpuCullRun {
-					first_candidate = u32(candidate_count),
-					candidate_count = u32(last - first),
-					first_index = mesh.first_index,
-					vertex_offset = i32(mesh.first_vertex),
-					index_count = mesh.index_count,
-					bounds_center = Vec4{mesh.bounds.center.x, mesh.bounds.center.y, mesh.bounds.center.z, 0},
-					bounds_extents = Vec4{mesh.bounds.extents.x, mesh.bounds.extents.y, mesh.bounds.extents.z, 0},
-				},
-			)
-			for id in run.ids[first:last] {
-				packed := (u32(id) << u32(INSTANCE_DRAW_ID_SHIFT)) | u32(mesh.material.index)
-				append(&candidates, GpuCullCandidate{packed_id = packed, run_index = u32(batch_count)})
-			}
-			candidate_count += last - first
-			batch_count += 1
-		}
-	}
-	if batch_count == 0 do return true
-	frame.cull_batch_count = batch_count
-	frame.cull_candidate_count = candidate_count
-	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_candidates, candidates[:])
-	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_runs, run_data[:])
-	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
-	planes: [6]Vec4
-	for plane, i in frustum.planes do planes[i] = Vec4{plane.normal.x, plane.normal.y, plane.normal.z, plane.distance}
-	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_planes, planes[:])
-	pc := GpuCullPushConstants {
-		candidates      = backend.buffer_address(&engine.vk_ctx, frame.cull_candidates),
-		runs            = backend.buffer_address(&engine.vk_ctx, frame.cull_runs),
-		transforms      = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
-		planes          = backend.buffer_address(&engine.vk_ctx, frame.cull_planes),
-		output_ids      = backend.buffer_address(&engine.vk_ctx, frame.cull_output_ids),
-		commands        = backend.buffer_address(&engine.vk_ctx, frame.cull_commands),
-		candidate_count = u32(candidate_count),
-		run_count       = u32(batch_count),
-	}
-	encoder := backend.begin_compute_pass(cmd)
-	scope := gpu_scope_begin(engine, cmd, "culling")
-	backend.cmd_barrier_host_write_to_compute(encoder)
-	backend.pipeline_bind_compute(encoder, pipeline_get(engine, .Gpu_Cull))
-	pc.init_commands = 1
-	backend.pipeline_push_compute(encoder, &pc)
-	backend.cmd_dispatch(encoder, (u32(batch_count) + 255) / 256, 1, 1)
-	backend.cmd_barrier_compute_write_to_compute_read(encoder)
-	pc.init_commands = 0
-	backend.pipeline_push_compute(encoder, &pc)
-	backend.cmd_dispatch(encoder, (u32(candidate_count) + 255) / 256, 1, 1)
-	backend.cmd_barrier_compute_write_to_compute_read(encoder)
-	pc.init_commands = 2
-	backend.pipeline_push_compute(encoder, &pc)
-	backend.cmd_dispatch(encoder, (u32(batch_count) + 255) / 256, 1, 1)
-	if engine.gpu_cull_validate {
-		backend.cmd_barrier_compute_write_to_copy_read(encoder)
-		backend.cmd_copy_buffer(cmd, frame.cull_commands, frame.cull_readback_commands, batch_count)
-		backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_commands)
-		// A zero-size copy is invalid. Runs can all be empty, which leaves no candidates to read back.
-		if candidate_count > 0 {
-			backend.cmd_copy_buffer(cmd, frame.cull_output_ids, frame.cull_readback_ids, candidate_count)
-			backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_ids)
-		}
-	}
-	backend.cmd_barrier_compute_write_to_draw_read(encoder)
-	backend.end_compute_pass(encoder)
-	gpu_scope_end(engine, cmd, scope)
-	return true
-}
-
-gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
-	frame := &engine.frame_data[engine.gpu_cull_validate_slot]
-	if frame.cull_batch_count == 0 do return
-	commands := make([]DrawIndexedIndirectCommand, frame.cull_batch_count, context.temp_allocator)
-	ids := make([]u32, frame.cull_candidate_count, context.temp_allocator)
+gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket, prepared: ^PreparedFrame) {
+	cull, ok := prepared.uploads.cull.(CullUpload)
+	if !ok || len(cull.runs) == 0 do return
+	frame := &engine.frame_data[prepared.slot]
+	batch_count := len(cull.runs)
+	candidate_count := len(cull.candidates)
+	commands := make([]DrawIndexedIndirectCommand, batch_count, context.temp_allocator)
+	ids := make([]u32, candidate_count, context.temp_allocator)
 	backend.buffer_read(&engine.vk_ctx, frame.cull_readback_commands, commands)
-	if frame.cull_candidate_count > 0 do backend.buffer_read(&engine.vk_ctx, frame.cull_readback_ids, ids)
+	if candidate_count > 0 do backend.buffer_read(&engine.vk_ctx, frame.cull_readback_ids, ids)
 	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
 	candidate_runs := build_draw_list(draw_input(engine), frustum, packet.camera.position, true).opaque
 	cpu_runs := build_draw_list(draw_input(engine), frustum, packet.camera.position).opaque
@@ -407,23 +288,19 @@ gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
 			if run_fn != 0 do log.errorf("GPU culling validation found false negatives in run %d", run_index)
 		}
 	}
-	if command_index != frame.cull_batch_count {
+	if command_index != batch_count {
 		structural += 1
-		log.errorf("GPU culling validation: recorded %d batches, validated %d", frame.cull_batch_count, command_index)
+		log.errorf("GPU culling validation: recorded %d batches, validated %d", batch_count, command_index)
 	}
-	if candidate_offset != frame.cull_candidate_count {
+	if candidate_offset != candidate_count {
 		structural += 1
-		log.errorf(
-			"GPU culling validation: recorded %d candidates, expected %d",
-			frame.cull_candidate_count,
-			candidate_offset,
-		)
+		log.errorf("GPU culling validation: recorded %d candidates, expected %d", candidate_count, candidate_offset)
 	}
-	culled := frame.cull_candidate_count - kept
+	culled := candidate_count - kept
 	log.infof(
 		"GPU culling validation: batches=%d candidates=%d kept=%d culled=%d mismatches=%d false_negatives=%d extras=%d structural=%d (extras are conservative mesh-AABB visibility beyond CPU model bounds)",
-		frame.cull_batch_count,
-		frame.cull_candidate_count,
+		batch_count,
+		candidate_count,
 		kept,
 		culled,
 		false_negatives + extras,
@@ -433,267 +310,79 @@ gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
 	)
 }
 
-draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	pipeline := pipeline_get(engine, .Particle)
-
-	frame_res_index := backend.frame_slot(&engine.vk_ctx)
-	particle_pc := ParticlePushConstants {
-		scene_data    = backend.buffer_address(&engine.vk_ctx, engine.frame_data[frame_res_index].scene_data_buffer),
-		particles_out = backend.buffer_address(&engine.vk_ctx, engine.frame_data[frame_res_index].particle_buffer),
-	}
-	backend.pipeline_bind(cmd, pipeline)
-	backend.pipeline_push(cmd, &particle_pc)
-	backend.cmd_draw_points(cmd, PARTICLE_COUNT)
-	stats_count_draw(engine)
-}
-
-// Each frame slot has its own transforms buffer, so draw_history_sync marks every changed id dirty in
-// all of them; a buffer is then patched only where its own marks say.
-update_transforms_buffer :: proc(engine: ^Engine) {
-	frame := current_frame_data(engine)
-	first, last, dirty := transforms_dirty_range(frame.transforms_dirty[:])
-	if !dirty do return
-
-	transforms := backend.buffer_map_write(&engine.vk_ctx, frame.transforms_buffer, first, last - first + 1)
-	for &word, word_i in frame.transforms_dirty {
-		for word != 0 {
-			bit := int(intrinsics.count_trailing_zeros(word))
-			word &= word - 1
-			transform_write(engine, transforms, first, word_i * 64 + bit)
-		}
-	}
-}
-
-// Lowest and highest set draw id; dirty is false when no id is set.
-@(private = "file")
-transforms_dirty_range :: proc(dirty: []u64) -> (first, last: int, ok: bool) {
-	first = -1
-	for word, word_i in dirty {
-		if word == 0 do continue
-		if first < 0 do first = word_i * 64 + int(intrinsics.count_trailing_zeros(word))
-		last = word_i * 64 + 63 - int(intrinsics.count_leading_zeros(word))
-	}
-	return first, last, first >= 0
-}
-
-// Skips a free id: nothing draws it, and reusing it records a Spawn change.
-// window holds ids [first, ...) of the mapped transforms buffer.
-@(private = "file")
-transform_write :: proc(engine: ^Engine, window: []GpuTransform, first: int, slot: int) {
-	record := engine.prev_draws.records[slot]
-	if record.model == INVALID_MODEL do return
-	model_matrix := record.world
-	normal3 := linalg.transpose(linalg.inverse(linalg.matrix3_from_matrix4(model_matrix)))
-
-	window[slot - first] = GpuTransform {
-		model         = model_matrix,
-		normal_matrix = linalg.matrix4_from_matrix3(normal3),
+// Snapshots the retained CPU state frame_prepare reads: history, shadow casters and cache, pools,
+// target sizes and this slot's buffer addresses. Nothing is written back.
+prepare_input :: proc(engine: ^Engine, packet: ^FramePacket) -> PrepareInput {
+	slot := backend.frame_slot(&engine.vk_ctx)
+	buffers := &engine.frame_data[slot]
+	bloom := backend.image_desc(&engine.vk_ctx, engine.render_targets.bloom)
+	// With a color background nothing samples the sky cube; the black default keeps the slot valid.
+	sky := engine.texture_system.defaults[.Black_Cube]
+	if cube, ok := packet.background.(TextureHandle); ok do sky = cube
+	return {
+		packet = packet,
+		history = &engine.prev_draws,
+		casters = &engine.shadows.casters,
+		cache = &engine.shadows.cache,
+		models = &engine.model_system.models,
+		materials = &engine.material_system.materials,
+		sky = texture_cube_slot(engine, sky),
+		targets = {
+			extent = render_extent(engine),
+			bloom_extent = {bloom.extent.width, bloom.extent.height},
+			bloom_mips = bloom.mip_levels,
+		},
+		addresses = {
+			point_lights = backend.buffer_address(&engine.vk_ctx, buffers.point_lights_buffer),
+			spot_lights = backend.buffer_address(&engine.vk_ctx, buffers.spot_lights_buffer),
+			cluster_headers = backend.buffer_address(&engine.vk_ctx, buffers.clusters.headers),
+			cluster_indices = backend.buffer_address(&engine.vk_ctx, buffers.clusters.indices),
+		},
+		slot = slot,
+		frame_count = engine.frame_count,
+		budget = FRAME_BUDGET_DEFAULT,
+		cull_readback = engine.gpu_cull_validate,
+		cluster_validate = engine.cluster_validate,
 	}
 }
 
-draw_shadow :: proc(
-	engine: ^Engine,
-	cmd: backend.RenderEncoder,
-	light_type: LightType,
-	light_i: u32,
-	view_proj: Mat4x4,
-	runs: []DrawRun,
-) {
-	directional := light_type == .Directional
-	shadow_pipeline := pipeline_get(engine, .Shadow_Directional if directional else .Shadow)
-
-	backend.pipeline_bind(cmd, shadow_pipeline)
-	backend.cmd_bind_index_buffer(cmd, engine.model_system.index_buffer)
-	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
-
-	frame := current_frame_data(engine)
-	// Same for every batch in this view; shared geometry and frame addresses are pass constants.
-	view_pc := ShadowPushConstants {
-		view_proj        = view_proj,
-		scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
-		vertex_buffer    = backend.buffer_address(&engine.vk_ctx, engine.model_system.vertex_buffer),
-		material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
-		transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
-		instance_ids     = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
-		light_type       = light_type,
-		light_index      = light_i,
-	}
-	backend.pipeline_push(cmd, &view_pc)
-
-	batches := draw_runs_upload(engine, runs)
-	available := indirect_commands_available(engine)
-	indirect_count := min(len(batches), available)
-	start := draw_batches_indirect_upload(engine, batches, indirect_count)
-	if indirect_count > 0 {
-		backend.cmd_draw_indexed_indirect(
-			cmd,
-			frame.indirect_buffer,
-			u64(start * size_of(DrawIndexedIndirectCommand)),
-			u32(indirect_count),
-			u32(size_of(DrawIndexedIndirectCommand)),
-		)
-		stats_count_indirect_call(engine)
-	}
-	for batch in batches[:indirect_count] {
-		mesh := batch.mesh
-		stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
-	}
-	for batch in batches[indirect_count:] do mesh_draw_batch(engine, cmd, batch)
-}
-
-// A shadow view's draw runs: the cached casters inside its frustum. Directional cascades ignore the near
-// plane, since their depth is clamped rather than clipped.
-shadow_view_runs :: proc(engine: ^Engine, light_type: LightType, view_proj: Mat4x4) -> []DrawRun {
-	frustums := []Frustum{frustum_from_view_proj(view_proj)}
-	return shadow_casters_filter(
-		&engine.shadows.casters,
-		draw_history_live(&engine.prev_draws),
-		frustums,
-		skip_near = light_type == .Directional,
-	)
-}
-
-draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList, gpu_culled := false) {
-	pass_pc := mesh_pass_push_constants(engine)
-	if gpu_culled {
-		frame := current_frame_data(engine)
-		pass_pc.instance_ids = backend.buffer_address(&engine.vk_ctx, frame.cull_output_ids)
-		// Each run owns gpu_cull_batch_count commands in run order, so a group's commands are contiguous too.
-		command_start := 0
-		group_start := 0
-		for group_start < len(list.opaque) {
-			kind := list.opaque[group_start].kind
-			assert(
-				kind == .Mesh ||
-				kind == .Mesh_Double_Sided ||
-				kind == .Mesh_Masked ||
-				kind == .Mesh_Masked_Double_Sided,
-				"opaque batch needs an opaque mesh pipeline kind",
-			)
-			group_end := group_start + 1
-			for group_end < len(list.opaque) && list.opaque[group_end].kind == kind do group_end += 1
-			group_commands := 0
-			for batch in list.opaque[group_start:group_end] do group_commands += gpu_cull_batch_count(len(batch.ids))
-			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
-			backend.pipeline_push(cmd, &pass_pc)
-			backend.cmd_draw_indexed_indirect(
-				cmd,
-				frame.cull_commands,
-				u64(command_start * size_of(DrawIndexedIndirectCommand)),
-				u32(group_commands),
-				u32(size_of(DrawIndexedIndirectCommand)),
-			)
-			stats_count_indirect_call(engine)
-			for batch in list.opaque[group_start:group_end] {
-				stats_count_draw(engine)
-				engine.stats.counters.candidate_instances += u32(len(batch.ids))
-				engine.stats.counters.candidate_triangles += u64(batch.mesh.index_count / 3) * u64(len(batch.ids))
-			}
-			command_start += group_commands
-			group_start = group_end
-		}
-		return
-	}
-	batches := draw_runs_upload(engine, list.opaque)
-	available := indirect_commands_available(engine)
-	indirect_count := min(len(batches), available)
-	start := draw_batches_indirect_upload(engine, batches, indirect_count)
-	backend.pipeline_push(cmd, &pass_pc)
-	// Runs arrive kind-first, so each kind is one contiguous span.
-	group_start := 0
-	for group_start < len(batches) {
-		kind := batches[group_start].kind
-		group_end := group_start + 1
-		for group_end < len(batches) && batches[group_end].kind == kind do group_end += 1
-		backend.pipeline_bind(cmd, pipeline_get(engine, kind))
-		indirect_end := min(group_end, indirect_count)
-		if group_start < indirect_end {
-			backend.cmd_draw_indexed_indirect(
-				cmd,
-				current_frame_data(engine).indirect_buffer,
-				u64((start + group_start) * size_of(DrawIndexedIndirectCommand)),
-				u32(indirect_end - group_start),
-				u32(size_of(DrawIndexedIndirectCommand)),
-			)
-			stats_count_indirect_call(engine)
-			for batch in batches[group_start:indirect_end] {
-				stats_count_draw(engine, u64(batch.mesh.index_count / 3 * batch.count))
-			}
-		}
-		direct_start := min(max(group_start, indirect_count), group_end)
-		for batch in batches[direct_start:group_end] do mesh_draw_batch(engine, cmd, batch)
-		group_start = group_end
+// Snapshots the GPU handles and buffer addresses that record needs for this slot. Holds no CPU state.
+recorder_make :: proc(engine: ^Engine, cmd: backend.CommandBuffer) -> Recorder {
+	slot := backend.frame_slot(&engine.vk_ctx)
+	prev := (slot + backend.MAX_FRAMES_IN_FLIGHT - 1) % backend.MAX_FRAMES_IN_FLIGHT
+	return {
+		ctx = &engine.vk_ctx,
+		cmd = cmd,
+		slot = slot,
+		frame = &engine.frame_data[slot],
+		prev_frame = &engine.frame_data[prev],
+		targets = &engine.render_targets,
+		atlas_2d = engine.shadows.atlas_2d.image,
+		atlas_cube = engine.shadows.point_atlas.image,
+		pipelines = &engine.pipeline_registry,
+		geometry = {
+			index = engine.model_system.index_buffer,
+			vertices = backend.buffer_address(&engine.vk_ctx, engine.model_system.vertex_buffer),
+			materials = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
+		},
+		profiler = &engine.gpu_profiler,
 	}
 }
 
-// Back to front, one draw per mesh so the order holds. Draw after everything opaque, skybox
-// included: these don't write depth, so anything drawn later would cover them.
-draw_meshes_transparent :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
-	pass_pc := mesh_pass_push_constants(engine)
-	bound: Maybe(PipelineKind)
-	for item in list.transparent {
-		kind: PipelineKind =
-			.Mesh_Transparent_Double_Sided if mesh_double_sided(engine, item.mesh) else .Mesh_Transparent
-		if bound != kind {
-			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
-			backend.pipeline_push(cmd, &pass_pc)
-			bound = kind
-		}
-		batch := single_draw_batch(engine, item) or_break
-		mesh_draw_batch(engine, cmd, batch)
+frame_record :: proc(r: ^Recorder, f: ^PreparedFrame) {
+	gpu_profiler_reset(r, f.frame_count)
+	scope := gpu_scope_begin(r, "frame")
+	run_passes(r, f)
+	gpu_scope_end(r, scope)
+	when ODIN_DEBUG {
+		assert(r.tally.draw_calls == f.counters.draw_calls, "prepared and recorded draw counts differ")
+		assert(r.tally.indirect_calls == f.counters.indirect_calls, "prepared and recorded indirect counts differ")
 	}
 }
 
-@(private = "file")
-mesh_double_sided :: proc(engine: ^Engine, mesh: ^Mesh) -> bool {
-	return pool_get(&engine.material_system.materials, mesh.material).double_sided
-}
-
-// The fields every mesh draw in a pass shares. Frame buffers and the material buffer keep their
-// addresses for the whole pass.
-@(private = "file")
-mesh_pass_push_constants :: proc(engine: ^Engine) -> MeshPushConstants {
-	frame := current_frame_data(engine)
-	return MeshPushConstants {
-		scene_data = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
-		vertex_buffer = backend.buffer_address(&engine.vk_ctx, engine.model_system.vertex_buffer),
-		material_buffer = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
-		transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
-		instance_ids = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
-	}
-}
-
-@(private = "file")
-mesh_draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: DrawBatch) {
-	mesh := batch.mesh
-	backend.cmd_draw_indexed(cmd, mesh.index_count, batch.count, mesh.first_index, mesh.first_vertex, batch.first_id)
-	stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
-}
-
-draw_skybox :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	pipeline := pipeline_get(engine, .Skybox)
-	backend.pipeline_bind(cmd, pipeline)
-	pc := SkyboxPushConstants {
-		scene_data = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
-	}
-	backend.pipeline_push(cmd, &pc)
-	backend.cmd_draw(cmd)
-	stats_count_draw(engine)
-}
-
-draw_ui :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	pipeline := pipeline_get(engine, .UI)
-	backend.pipeline_bind(cmd, pipeline)
-	ui_renderer_flush(engine, cmd)
-}
-
-record_frame :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
-	stats_record_begin(engine)
-	defer stats_record_end(engine)
-	engine.stats.counters.shadow_views_cached = engine.shadows.plan.views_cached
-	gpu_profiler_reset(engine, cmd)
-
-	frame_scope := gpu_scope_begin(engine, cmd, "frame")
-	run_passes(engine, packet, cmd)
-	gpu_scope_end(engine, cmd, frame_scope)
+// Runs once per submitted frame; a skipped frame keeps its changes and dirty bits for the next one.
+frame_commit :: proc(engine: ^Engine, f: ^PreparedFrame, packet: ^FramePacket) {
+	shadow_cache_commit(&engine.shadows.cache, &f.shadow_plan, packet.lights)
+	draw_history_commit(&engine.prev_draws, f.slot)
+	engine.stats.last = f.counters
 }

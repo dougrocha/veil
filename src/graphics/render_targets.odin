@@ -63,9 +63,12 @@ render_viewport :: proc(engine: ^Engine) -> Vec2 {
 	return {f32(extent.width), f32(extent.height)}
 }
 
-render_aspect :: proc(engine: ^Engine) -> f32 {
-	extent := render_extent(engine)
+extent_aspect :: proc(extent: Extent2D) -> f32 {
 	return f32(extent.width) / f32(extent.height)
+}
+
+render_aspect :: proc(engine: ^Engine) -> f32 {
+	return extent_aspect(render_extent(engine))
 }
 
 // Begins a frame. The backend recreates the swapchain when the window size changed or it went stale;

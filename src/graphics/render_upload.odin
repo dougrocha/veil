@@ -29,55 +29,53 @@ gpu_spot_light :: proc(light: SpotLight) -> GpuSpotLight {
 	}
 }
 
-// Writes every SceneData header field and the active part of each light array through three typed
-// per-frame buffer mappings. Each mapping is flushed when its scope ends. Light array entries past
-// the uploaded count are not written, and the shaders loop only to these counts, so the stale tail
-// is never read.
-scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
-	frame_index := backend.frame_slot(&engine.vk_ctx)
-	aspect := render_aspect(engine)
-	// With a color background nothing samples the sky cube; the black default keeps the slot valid.
-	sky := engine.texture_system.defaults[.Black_Cube]
-	if cube, ok := packet.background.(TextureHandle); ok do sky = cube
+// Pure: builds SceneData and the active light arrays without touching a buffer. Light array entries past
+// the counts are not written, and the shaders loop only to the counts, so the stale tail is never read.
+scene_data_build :: proc(
+	input: PrepareInput,
+	plan: ^ShadowPlan,
+) -> (
+	scene: SceneData,
+	points: []GpuPointLight,
+	spots: []GpuSpotLight,
+) {
+	packet := input.packet
+	aspect := extent_aspect(input.targets.extent)
 	active_camera := &packet.camera
-	plan := &engine.shadows.plan
 
 	point_count := min(int(packet.lights.point_light_count), MAX_POINT_LIGHTS)
 	directional_count := min(int(packet.lights.directional_light_count), MAX_DIRECTIONAL_LIGHTS)
 	spot_count := min(int(packet.lights.spot_light_count), MAX_SPOT_LIGHTS)
 
-	frame := &engine.frame_data[frame_index]
-	dst := backend.buffer_map_write(&engine.vk_ctx, frame.scene_data_buffer, 0, 1)
-
-	dst[0].view = camera_get_view_matrix(active_camera^)
-	dst[0].proj = camera_get_projection_matrix(active_camera^, aspect)
-	dst[0].point_light_view_proj = plan.point_view_proj
-	dst[0].shadow_2d_view_proj = plan.shadow_2d_view_proj
-	dst[0].shadow_cascade_data = plan.cascade_data
-	dst[0].cam_pos_shadow_map_size = {
+	scene.view = camera_get_view_matrix(active_camera^)
+	scene.proj = camera_get_projection_matrix(active_camera^, aspect)
+	scene.point_light_view_proj = plan.point_view_proj
+	scene.shadow_2d_view_proj = plan.shadow_2d_view_proj
+	scene.shadow_cascade_data = plan.cascade_data
+	scene.cam_pos_shadow_map_size = {
 		active_camera.position.x,
 		active_camera.position.y,
 		active_camera.position.z,
 		f32(SHADOW_MAP_SIZE),
 	}
-	dst[0].time_info = {
+	scene.time_info = {
 		time        = packet.time,
 		delta_time  = packet.delta_time,
-		frame_count = engine.frame_count,
+		frame_count = input.frame_count,
 		_reserved   = 0,
 	}
 
-	dst[0].point_light_count = u32(point_count)
-	dst[0].directional_light_count = u32(directional_count)
-	dst[0].spot_light_count = u32(spot_count)
-	dst[0].skybox_cube = texture_cube_slot(engine, sky)
-	dst[0].point_lights = backend.buffer_address(&engine.vk_ctx, frame.point_lights_buffer)
-	dst[0].spot_lights = backend.buffer_address(&engine.vk_ctx, frame.spot_lights_buffer)
-	dst[0].cluster_headers = backend.buffer_address(&engine.vk_ctx, frame.clusters.headers)
-	dst[0].cluster_indices = backend.buffer_address(&engine.vk_ctx, frame.clusters.indices)
-	dst[0].cluster_extent = {f32(render_extent(engine).width), f32(render_extent(engine).height)}
-	dst[0].cluster_near_far = {active_camera.near, active_camera.far}
-	dst[0].ambient_light = {
+	scene.point_light_count = u32(point_count)
+	scene.directional_light_count = u32(directional_count)
+	scene.spot_light_count = u32(spot_count)
+	scene.skybox_cube = input.sky
+	scene.point_lights = input.addresses.point_lights
+	scene.spot_lights = input.addresses.spot_lights
+	scene.cluster_headers = input.addresses.cluster_headers
+	scene.cluster_indices = input.addresses.cluster_indices
+	scene.cluster_extent = {f32(input.targets.extent.width), f32(input.targets.extent.height)}
+	scene.cluster_near_far = {active_camera.near, active_camera.far}
+	scene.ambient_light = {
 		color_brightness = {
 			packet.lights.ambient_light.color.x,
 			packet.lights.ambient_light.color.y,
@@ -85,26 +83,51 @@ scene_data_buffer_update :: proc(engine: ^Engine, packet: ^FramePacket) {
 			packet.lights.ambient_light.brightness,
 		},
 	}
-	dst[0].debug_settings = {
-		show_cascades      = u32(engine.settings.cascade_colors),
-		disable_shadows    = u32(!engine.settings.shadows),
-		light_mask         = transmute(u32)engine.settings.lights,
-		clustered_lighting = u32(engine.clustered_lighting),
+	scene.debug_settings = {
+		show_cascades      = u32(packet.settings.cascade_colors),
+		disable_shadows    = u32(!packet.settings.shadows),
+		light_mask         = transmute(u32)packet.settings.lights,
+		clustered_lighting = u32(packet.settings.clustered_lighting),
 	}
 
 	if point_count > 0 {
-		lights := backend.buffer_map_write(&engine.vk_ctx, frame.point_lights_buffer, 0, point_count)
+		points = make([]GpuPointLight, point_count, context.temp_allocator)
 		for i in 0 ..< point_count {
-			lights[i] = gpu_point_light(packet.lights.point_lights[i])
+			points[i] = gpu_point_light(packet.lights.point_lights[i])
 		}
 	}
 	for i in 0 ..< directional_count {
-		dst[0].directional_lights[i] = gpu_directional_light(packet.lights.directional_lights[i])
+		scene.directional_lights[i] = gpu_directional_light(packet.lights.directional_lights[i])
 	}
 	if spot_count > 0 {
-		lights := backend.buffer_map_write(&engine.vk_ctx, frame.spot_lights_buffer, 0, spot_count)
+		spots = make([]GpuSpotLight, spot_count, context.temp_allocator)
 		for i in 0 ..< spot_count {
-			lights[i] = gpu_spot_light(packet.lights.spot_lights[i])
+			spots[i] = gpu_spot_light(packet.lights.spot_lights[i])
 		}
 	}
+	return
+}
+
+// The only host writes into this slot's buffers. Copies prepared data; makes no decisions.
+frame_upload :: proc(r: ^Recorder, f: ^PreparedFrame, lines: ^LineRenderer, ui: ^UIRenderer) {
+	scene := backend.buffer_map_write(r.ctx, r.frame.scene_data_buffer, 0, 1)
+	scene[0] = f.uploads.scene
+	if len(f.uploads.point_lights) > 0 {
+		lights := backend.buffer_map_write(r.ctx, r.frame.point_lights_buffer, 0, len(f.uploads.point_lights))
+		copy(lights, f.uploads.point_lights)
+	}
+	if len(f.uploads.spot_lights) > 0 {
+		lights := backend.buffer_map_write(r.ctx, r.frame.spot_lights_buffer, 0, len(f.uploads.spot_lights))
+		copy(lights, f.uploads.spot_lights)
+	}
+	writes := f.uploads.transforms
+	if len(writes) > 0 {
+		first := writes[0].id
+		last := writes[len(writes) - 1].id
+		dst := backend.buffer_map_write(r.ctx, r.frame.transforms_buffer, int(first), int(last - first + 1))
+		for write in writes do dst[write.id - first] = write.value
+	}
+	layout_upload(r, &f.uploads.layout)
+	if cull, ok := f.uploads.cull.(CullUpload); ok do cull_upload(r, &cull)
+	r.overlay = overlay_upload(r.ctx, lines, ui, &f.passes.overlay)
 }

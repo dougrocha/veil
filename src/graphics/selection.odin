@@ -15,7 +15,7 @@ Selection :: union {
 	DirectionalLightIndex,
 }
 
-// A texture tied to an entity, ready to pass to debug_view_draw.
+// A texture tied to an entity, ready to pass to overlay_texture_view.
 EntityTexture :: struct {
 	label: string,
 	view:  DebugViewPushConstants,

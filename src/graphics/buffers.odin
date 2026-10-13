@@ -27,9 +27,7 @@ FrameData :: struct {
 	particle_buffer:        backend.Buffer(Particle),
 	transforms_buffer:      backend.Buffer(GpuTransform),
 	instance_ids_buffer:    backend.Buffer(u32),
-	instance_id_count:      u32, // ids written this frame
 	indirect_buffer:        backend.Buffer(DrawIndexedIndirectCommand),
-	indirect_command_count: u32,
 	cull_candidates:        backend.Buffer(GpuCullCandidate),
 	cull_runs:              backend.Buffer(GpuCullRun),
 	cull_output_ids:        backend.Buffer(u32),
@@ -37,9 +35,6 @@ FrameData :: struct {
 	cull_planes:            backend.Buffer(Vec4),
 	cull_readback_ids:      backend.Buffer(u32),
 	cull_readback_commands: backend.Buffer(DrawIndexedIndirectCommand),
-	cull_batch_count:       int,
-	cull_candidate_count:   int,
-	transforms_dirty:       [MAX_DRAWS / 64]u64, // draw ids changed since transforms_buffer was written
 }
 
 #assert(MAX_DRAWS % 64 == 0)

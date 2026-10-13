@@ -129,10 +129,10 @@ font_load_from_file :: proc(engine: ^Engine, path: string, pixel_height: f32) ->
 	return font, true
 }
 
-// Appends `text`'s glyph quads to the engine's UI text batch, in screen-pixel
+// Appends `text`'s glyph quads to the game overlay, in screen-pixel
 // space (top-left origin, y-down — matches stb_truetype's baked-quad convention).
-ui_draw_text :: proc(engine: ^Engine, font: ^Baked_Font, text: string, x, y: f32, color: [4]u8) {
-	batch := ui_renderer_batch_for(engine, u32(font.texture.index))
+overlay_text :: proc(overlay: ^Overlay, font: ^Baked_Font, text: string, x, y: f32, color: [4]u8) {
+	batch := overlay_ui_batch(overlay, u32(font.texture.index))
 
 	xpos, ypos := x, y
 	for r in text {
@@ -175,6 +175,6 @@ ui_draw_text :: proc(engine: ^Engine, font: ^Baked_Font, text: string, x, y: f32
 			color    = color,
 		}
 
-		append(&batch.items, top_left, top_right, bottom_right, top_left, bottom_right, bottom_left)
+		append(batch, top_left, top_right, bottom_right, top_left, bottom_right, bottom_left)
 	}
 }

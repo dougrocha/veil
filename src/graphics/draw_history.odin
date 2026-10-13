@@ -1,6 +1,10 @@
 package graphics
 
+import "base:intrinsics"
 import "core:log"
+import "core:math/linalg"
+
+import "backend"
 
 // The previous packet's draws, kept so each new packet can be diffed against it. The diff drives
 // the partial transform uploads and the shadow cache invalidation; nothing else is retained.
@@ -10,6 +14,9 @@ DrawHistory :: struct {
 	seen:    []u64, // scratch for draw_history_sync: the ids in this packet
 	// Since the last recorded frame. A skipped frame keeps them, so the shadow cache still sees them.
 	changes: [dynamic]DrawChange,
+	// Per frame slot: draw ids changed since that slot's transforms buffer was written. Each slot's
+	// bits clear only when that slot submits.
+	dirty:   [backend.MAX_FRAMES_IN_FLIGHT][MAX_DRAWS / 64]u64,
 }
 
 // One id's draw as of the previous packet. model is INVALID_MODEL for a free id.
@@ -112,11 +119,48 @@ draw_change :: proc(engine: ^Engine, kind: DrawChangeKind, id: u32, old, new: Dr
 	if kind != .Spawn do change.old = {draw_world_sphere(old), old.casts_shadow}
 	if kind != .Despawn do change.new = {draw_world_sphere(new), new.casts_shadow}
 	append(&engine.prev_draws.changes, change)
-	for &frame in engine.frame_data do frame.transforms_dirty[id / 64] |= 1 << (id % 64)
+	for &slot in engine.prev_draws.dirty do slot[id / 64] |= 1 << (id % 64)
 }
 
 // World-space bounding sphere: the model's sphere moved by the world matrix, radius scaled by the
 // largest axis scale.
 draw_world_sphere :: proc(record: DrawRecord) -> BoundingSphere {
 	return sphere_to_global(record.bounds, record.world)
+}
+
+// One draw's GPU transform, keyed by its id.
+TransformWrite :: struct {
+	id:    u32,
+	value: GpuTransform,
+}
+
+// This slot's dirty ids as GPU transforms, in id order. Skips a free id: nothing draws it, and
+// reusing it records a Spawn change.
+transform_writes :: proc(history: ^DrawHistory, slot: int) -> []TransformWrite {
+	writes := make([dynamic]TransformWrite, context.temp_allocator)
+	for word, word_i in history.dirty[slot] {
+		remaining := word
+		for remaining != 0 {
+			bit := int(intrinsics.count_trailing_zeros(remaining))
+			remaining &= remaining - 1
+			id := word_i * 64 + bit
+			record := history.records[id]
+			if record.model == INVALID_MODEL do continue
+			normal3 := linalg.transpose(linalg.inverse(linalg.matrix3_from_matrix4(record.world)))
+			append(
+				&writes,
+				TransformWrite {
+					id = u32(id),
+					value = {model = record.world, normal_matrix = linalg.matrix4_from_matrix3(normal3)},
+				},
+			)
+		}
+	}
+	return writes[:]
+}
+
+// Submission is the acknowledgement of both this slot's uploads and the consumed scene changes.
+draw_history_commit :: proc(history: ^DrawHistory, slot: int) {
+	history.dirty[slot] = {}
+	clear(&history.changes)
 }

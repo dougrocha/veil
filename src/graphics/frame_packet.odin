@@ -14,6 +14,8 @@ FramePacket :: struct {
 	camera:     Camera, // world space: position, front, up and right are final
 	lights:     ^LightData,
 	background: Background,
+	settings:   RenderSettings,
+	overlay:    ^Overlay,
 }
 
 // One model to draw. id names the same object across frames, so the renderer can tell what moved,

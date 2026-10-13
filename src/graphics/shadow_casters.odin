@@ -8,11 +8,10 @@ import "core:slice"
 // so the list only changes with the set of casters: spawns, despawns, model replacements and
 // casts_shadow toggles. Model meshes never change once added, so the mesh pointers stay valid.
 ShadowCasters :: struct {
-	built:          bool, // false before the first build
-	runs:           [dynamic]DrawRun, // ids slice into ids
-	ids:            [dynamic]u32,
-	bounds:         [dynamic]CasterBounds, // parallel to ids; this frame's once bounds_current
-	bounds_current: bool, // cleared every frame by shadow_casters_sync, filled by the first filter
+	built:  bool, // false before the first build
+	runs:   [dynamic]DrawRun, // ids slice into ids
+	ids:    [dynamic]u32,
+	bounds: [dynamic]CasterBounds, // parallel to ids, current after sync
 }
 
 // The world-space volumes the culling tests check, computed once per frame and shared by every view.
@@ -30,8 +29,10 @@ shadow_casters_destroy :: proc(casters: ^ShadowCasters) {
 // Rebuilds the list when the casters changed since the last recorded frame. Call once per recorded
 // frame, before the draw changes are cleared, shadow passes on or off.
 shadow_casters_sync :: proc(casters: ^ShadowCasters, view: DrawInput, changes: []DrawChange) {
-	casters.bounds_current = false // transforms may have changed
-	if casters.built && !caster_set_changed(changes) do return
+	if casters.built && !caster_set_changed(changes) {
+		shadow_casters_update_bounds(casters, view.draws)
+		return
+	}
 	casters.built = true
 
 	items := make([dynamic]DrawItem, context.temp_allocator)
@@ -52,6 +53,7 @@ shadow_casters_sync :: proc(casters: ^ShadowCasters, view: DrawInput, changes: [
 		append(&casters.runs, DrawRun{mesh = items[start].mesh, ids = casters.ids[start:i]})
 		start = i
 	}
+	shadow_casters_update_bounds(casters, view.draws)
 }
 
 // The casters a shadow view draws, temp-allocated, in list order. An id is kept when its draw's
@@ -59,27 +61,7 @@ shadow_casters_sync :: proc(casters: ^ShadowCasters, view: DrawInput, changes: [
 // build_draw_list). skip_near ignores the near plane, for passes that clamp depth (directional
 // cascades). Transparent meshes cast solid shadows, like the rest (as in Bevy; opt out per draw
 // with casts_shadow).
-shadow_casters_filter :: proc(
-	casters: ^ShadowCasters,
-	draws: []DrawRecord,
-	frustums: []Frustum,
-	skip_near: bool,
-) -> []DrawRun {
-	if !casters.bounds_current {
-		entry := 0
-		for run in casters.runs {
-			for id in run.ids {
-				record := &draws[id]
-				casters.bounds[entry] = {
-					sphere = sphere_to_global(record.bounds, record.world),
-					aabb   = aabb_to_global(run.mesh.bounds, record.world),
-				}
-				entry += 1
-			}
-		}
-		casters.bounds_current = true
-	}
-
+shadow_casters_filter :: proc(casters: ^ShadowCasters, frustums: []Frustum, skip_near: bool) -> []DrawRun {
 	runs := make([dynamic]DrawRun, 0, len(casters.runs), context.temp_allocator)
 	ids := make([]u32, len(casters.ids), context.temp_allocator)
 	entry, count := 0, 0
@@ -109,4 +91,20 @@ caster_set_changed :: proc(changes: []DrawChange) -> bool {
 		if change.kind != .Update || change.old.casts_shadow != change.new.casts_shadow do return true
 	}
 	return false
+}
+
+// Refreshes every caster's bounds from its draw's current transform, so filtering stays read-only.
+@(private = "file")
+shadow_casters_update_bounds :: proc(casters: ^ShadowCasters, draws: []DrawRecord) {
+	entry := 0
+	for run in casters.runs {
+		for id in run.ids {
+			record := &draws[id]
+			casters.bounds[entry] = {
+				sphere = sphere_to_global(record.bounds, record.world),
+				aabb   = aabb_to_global(run.mesh.bounds, record.world),
+			}
+			entry += 1
+		}
+	}
 }

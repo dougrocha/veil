@@ -55,23 +55,23 @@ gpu_profiler_collect_slot :: proc(engine: ^Engine, slot: int) {
 }
 
 // Starts this slot's recording. Call at the top of the command buffer, outside any pass.
-gpu_profiler_reset :: proc(engine: ^Engine, cmd: backend.CommandBuffer) {
-	p := &engine.gpu_profiler
-	slot := backend.frame_slot(&engine.vk_ctx)
+gpu_profiler_reset :: proc(r: ^Recorder, frame_count: u32) {
+	p := r.profiler
+	slot := r.slot
 	p.scope_count[slot] = 0
-	p.frame_ids[slot] = engine.frame_count
+	p.frame_ids[slot] = frame_count
 	p.collected[slot] = false
-	backend.gpu_timer_reset(cmd, &p.timer, slot)
+	backend.gpu_timer_reset(r.cmd, &p.timer, slot)
 }
 
-gpu_scope_begin :: proc(engine: ^Engine, cmd: backend.CommandBuffer, name: string) -> int {
-	p := &engine.gpu_profiler
-	slot := backend.frame_slot(&engine.vk_ctx)
+gpu_scope_begin :: proc(r: ^Recorder, name: string) -> int {
+	p := r.profiler
+	slot := r.slot
 	if p.scope_count[slot] >= MAX_GPU_SCOPES do return -1
 
 	id := p.scope_count[slot]
 	p.scope_count[slot] += 1
-	begin, ok := backend.gpu_timer_write(cmd, &p.timer, slot)
+	begin, ok := backend.gpu_timer_write(r.cmd, &p.timer, slot)
 	p.scopes[slot][id] = {
 		name  = name,
 		begin = begin,
@@ -80,12 +80,12 @@ gpu_scope_begin :: proc(engine: ^Engine, cmd: backend.CommandBuffer, name: strin
 	return id
 }
 
-gpu_scope_end :: proc(engine: ^Engine, cmd: backend.CommandBuffer, id: int) {
+gpu_scope_end :: proc(r: ^Recorder, id: int) {
 	if id < 0 do return
-	p := &engine.gpu_profiler
-	slot := backend.frame_slot(&engine.vk_ctx)
+	p := r.profiler
+	slot := r.slot
 	scope := &p.scopes[slot][id]
-	end, ok := backend.gpu_timer_write(cmd, &p.timer, slot)
+	end, ok := backend.gpu_timer_write(r.cmd, &p.timer, slot)
 	scope.end = end
 	scope.ok = scope.ok && ok
 }

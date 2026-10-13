@@ -77,6 +77,10 @@ main :: proc() {
 		world.active_camera = entity_spawn_camera(&world, gfx.camera_create())
 	}
 
+	// The game owns the render settings and hands a copy to the renderer in each packet.
+	settings := gfx.RENDER_SETTINGS_DEFAULT
+	gfx.render_settings_from_env(&settings)
+
 	gizmo: GizmoController
 	show_stats := true
 	post_control: PostControl
@@ -120,19 +124,19 @@ main :: proc() {
 				case .F3:
 					show_stats = !show_stats
 				case .C:
-					engine.settings.cascade_colors = !engine.settings.cascade_colors
+					settings.cascade_colors = !settings.cascade_colors
 				case .V:
-					engine.settings.shadows = !engine.settings.shadows
-					log.infof("shadows: %v", engine.settings.shadows)
+					settings.shadows = !settings.shadows
+					log.infof("shadows: %v", settings.shadows)
 				case .P:
-					engine.settings.lights ~= {.Point}
-					log.infof("lights: %v", engine.settings.lights)
+					settings.lights ~= {.Point}
+					log.infof("lights: %v", settings.lights)
 				case .K:
-					engine.settings.lights ~= {.Spot}
-					log.infof("lights: %v", engine.settings.lights)
+					settings.lights ~= {.Spot}
+					log.infof("lights: %v", settings.lights)
 				case .J:
-					engine.settings.lights ~= {.Directional}
-					log.infof("lights: %v", engine.settings.lights)
+					settings.lights ~= {.Directional}
+					log.infof("lights: %v", settings.lights)
 				case .LEFT:
 					post_control_cycle(&post_control, -1)
 				case .RIGHT:
@@ -142,8 +146,8 @@ main :: proc() {
 				case .DOWN:
 					post_control_step(&active_cam.post, post_control, -1)
 				case .X:
-					engine.settings.particles = !engine.settings.particles
-					log.infof("particles: %v", engine.settings.particles)
+					settings.particles = !settings.particles
+					log.infof("particles: %v", settings.particles)
 				case .O:
 					switch _ in active_cam.projection {
 					case gfx.Perspective_Projection:
@@ -180,11 +184,10 @@ main :: proc() {
 					if !gizmo_mouse_down(&gizmo, &engine, &world, world_camera(&world), mouse_pos) {
 						world.selected = world_pick(&engine, &world, mouse_pos)
 						if world.selected != INVALID_ENTITY {
-							model := gfx.pool_get(
-								&engine.model_system.models,
-								entity_get(&world, world.selected).model,
+							log.infof(
+								"selected: %v",
+								gfx.model_name(&engine, entity_get(&world, world.selected).model),
 							)
-							log.infof("selected: %v", model.name)
 						}
 					}
 				}
@@ -209,10 +212,14 @@ main :: proc() {
 		world_update(&world, delta_time)
 		packet := world_extract(&world)
 
-		gizmo_draw(&gizmo, &engine, &world, packet.camera)
+		// Debug lines, text and views for this frame; game temp memory, so a skipped frame drops nothing it has to drain.
+		overlay := gfx.overlay_make()
+		packet.settings = settings
+		packet.overlay = &overlay
+		gizmo_draw(&gizmo, &engine, &overlay, &world, packet.camera)
 		if show_stats {
 			post_line := post_control_line(&engine, packet.camera.post, post_control)
-			gfx.stats_draw(&engine, &ui_font, 10, 24, 24, {post_line})
+			gfx.stats_draw(&engine, &overlay, &ui_font, 10, 24, 24, {post_line})
 		}
 
 		gfx.engine_render(&engine, &packet, width, height)
