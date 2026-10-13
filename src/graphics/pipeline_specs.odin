@@ -7,10 +7,14 @@ import "backend"
 PipelineKind :: enum u8 {
 	Shadow, // spot + point lights
 	Shadow_Directional, // directional cascades, depth-clamped
-	Mesh, // opaque and mask
+	Mesh, // opaque, no discard
 	Mesh_Transparent, // alpha blended, no depth write
 	Mesh_Double_Sided, // Mesh without back-face culling
 	Mesh_Transparent_Double_Sided,
+	// Alpha mask: fragments below the cutoff are discarded. Declared after the opaque kinds, so
+	// sorting runs by kind draws every opaque run before any masked one.
+	Mesh_Masked,
+	Mesh_Masked_Double_Sided,
 	Skybox,
 	UI,
 	Particle, // graphics: particles drawn as points
@@ -40,6 +44,7 @@ TargetLayout :: enum u8 {
 
 PipelineSpec :: struct {
 	shader:   string, // module name in shaders/
+	fragment: string, // fragment entry point of shader (graphics only); "" means FRAGMENT_MAIN
 	stage:    PipelineStage,
 	// Graphics only. Ignored by compute pipelines.
 	targets:  TargetLayout,
@@ -80,6 +85,19 @@ PIPELINE_SPECS := [PipelineKind]PipelineSpec {
 		blend = .Alpha,
 		depth = {test = true, compare = .Less},
 	},
+	.Mesh_Masked = {
+		shader = "mesh",
+		fragment = FRAGMENT_MASKED,
+		targets = .Main,
+		depth = {test = true, write = true, compare = .Less},
+	},
+	.Mesh_Masked_Double_Sided = {
+		shader = "mesh",
+		fragment = FRAGMENT_MASKED,
+		targets = .Main,
+		cull = .None,
+		depth = {test = true, write = true, compare = .Less},
+	},
 	.Skybox = {shader = "skybox", targets = .Main, cull = .None, depth = {test = true, compare = .LessOrEqual}},
 	.UI = {shader = "ui", targets = .Overlay, cull = .None, blend = .Alpha},
 	.Particle = {shader = "particle", targets = .Main, topology = .Points, cull = .None, blend = .Alpha},
@@ -98,6 +116,11 @@ PIPELINE_SPECS := [PipelineKind]PipelineSpec {
 	.Tonemap = {shader = "tonemap", stage = .Compute},
 	.Bloom_Down = {shader = "bloom_down", stage = .Compute},
 	.Bloom_Up = {shader = "bloom_up", stage = .Compute},
+}
+
+// The fragment entry point a graphics spec links: its own, or FRAGMENT_MAIN when unset.
+spec_fragment_entry :: proc(spec: PipelineSpec) -> string {
+	return spec.fragment if spec.fragment != "" else FRAGMENT_MAIN
 }
 
 // Built from the same format constants the targets are created with, so pipelines don't depend

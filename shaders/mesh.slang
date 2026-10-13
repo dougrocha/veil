@@ -244,8 +244,19 @@ float calc_spot_shadow_factor(SpotLight light, uint slot, float3 frag_pos, float
     return shadow_2d_maps.SampleCmp(float3(uv, float(slot)), current_depth - bias);
 }
 
-[shader("fragment")]
-float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET {
+// Split so fragment_masked can discard between sampling and lighting while fragment_main has no
+// discard in its call graph. Any OpKill in the module can keep early depth off for the opaque
+// pipeline, and a bool flag does not fold away in the emitted SPIR-V.
+struct MeshSurface {
+    float4 tex_color;
+    float3 normal;
+    float ao;
+    float smoothness;
+    float shininess;
+};
+
+// Every texture sample. Implicit-LOD samples need quad derivatives, so they all run before any discard.
+MeshSurface sample_mesh_surface(VSOutput vert, bool is_front) {
     let mat = pc.material_buffer[vert.material_index];
 
     // Double-sided back faces are lit as if they faced the viewer (only those pipelines skip culling).
@@ -269,9 +280,21 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
     float smoothness = 1.0 - roughness;
     float shininess = max(MAX_SHININESS * smoothness * smoothness, 1.0);
 
+    float ao = sample_occlusion(mat.occlusion_texture, vert.frag_uv).r;
+
+    return {tex_color, normal, ao, smoothness, shininess};
+}
+
+// Lighting only. Material textures are read in sample_mesh_surface; the shadow lookups here run after the masked discard.
+float4 light_mesh_surface(VSOutput vert, MeshSurface surf) {
+    let mat = pc.material_buffer[vert.material_index];
+    float4 tex_color = surf.tex_color;
+    float3 normal = surf.normal;
+    float smoothness = surf.smoothness;
+    float shininess = surf.shininess;
+    float ao = surf.ao;
     float3 view_dir = normalize(pc.scene_data.cam_pos_shadow_map_size.xyz - vert.frag_pos);
 
-    float ao = sample_occlusion(mat.occlusion_texture, vert.frag_uv).r;
     float3 total_light = pc.scene_data.ambient_light.color_brightness.rgb * pc.scene_data.ambient_light.color_brightness.w * ao;
 
     static const float3 CASCADE_DEBUG_COLORS[5] = {
@@ -307,9 +330,22 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
     }
 
     // 0 = opaque, 1 = mask, 2 = blend; matches AlphaMode in Odin.
-    if (mat.alpha_mode == ALPHA_MODE_MASK && tex_color.a < mat.alpha_cutoff) discard;
     float output_alpha = mat.alpha_mode == ALPHA_MODE_BLEND ? tex_color.a : 1.0;
     // Emission is light the surface gives off itself, so no lighting, shadow, AO or albedo scales it.
     float3 color = tex_color.rgb * total_light + mat.emissive.rgb;
     return float4(color, output_alpha);
+}
+
+[shader("fragment")]
+float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET {
+    return light_mesh_surface(vert, sample_mesh_surface(vert, is_front));
+}
+
+[shader("fragment")]
+float4 fragment_masked(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET {
+    MeshSurface surf = sample_mesh_surface(vert, is_front);
+    let mat = pc.material_buffer[vert.material_index];
+    // Masked texels skip lighting. Runs after every implicit-LOD sample in sample_mesh_surface.
+    if (mat.alpha_mode == ALPHA_MODE_MASK && surf.tex_color.a < mat.alpha_cutoff) discard;
+    return light_mesh_surface(vert, surf);
 }

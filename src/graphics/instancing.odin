@@ -39,9 +39,11 @@ MAX_INDIRECT_COMMANDS_PER_FRAME :: 64 * 1024
 // GPU culling compacts each batch serially in one invocation, so a batch caps that scan's length.
 GPU_CULL_BATCH_CANDIDATES :: 1024
 
-// One draw: count instances of mesh, their ids at first_id in the frame's id list.
+// One draw: count instances of mesh, their ids at first_id in the frame's id list. kind is the
+// main-pass pipeline the batch draws with (zero for single_draw_batch, which the caller binds itself).
 DrawBatch :: struct {
 	mesh:     ^Mesh,
+	kind:     PipelineKind,
 	first_id: u32,
 	count:    u32,
 }
@@ -89,7 +91,7 @@ draw_runs_upload :: proc(engine: ^Engine, runs: []DrawRun) -> []DrawBatch {
 			packed_ids[i] = (u32(id) << u32(INSTANCE_DRAW_ID_SHIFT)) | u32(run.mesh.material.index)
 		}
 		first := instance_ids_push(engine, packed_ids) or_break
-		append(&batches, DrawBatch{mesh = run.mesh, first_id = first, count = u32(len(run.ids))})
+		append(&batches, DrawBatch{mesh = run.mesh, kind = run.kind, first_id = first, count = u32(len(run.ids))})
 	}
 	return batches[:]
 }

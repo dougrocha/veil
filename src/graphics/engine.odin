@@ -558,15 +558,16 @@ draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: Dr
 		command_start := 0
 		group_start := 0
 		for group_start < len(list.opaque) {
-			kind: PipelineKind =
-				.Mesh_Double_Sided if mesh_double_sided(engine, list.opaque[group_start].mesh) else .Mesh
+			kind := list.opaque[group_start].kind
+			assert(
+				kind == .Mesh ||
+				kind == .Mesh_Double_Sided ||
+				kind == .Mesh_Masked ||
+				kind == .Mesh_Masked_Double_Sided,
+				"opaque batch needs an opaque mesh pipeline kind",
+			)
 			group_end := group_start + 1
-			for group_end < len(list.opaque) {
-				next_kind: PipelineKind =
-					.Mesh_Double_Sided if mesh_double_sided(engine, list.opaque[group_end].mesh) else .Mesh
-				if next_kind != kind do break
-				group_end += 1
-			}
+			for group_end < len(list.opaque) && list.opaque[group_end].kind == kind do group_end += 1
 			group_commands := 0
 			for batch in list.opaque[group_start:group_end] do group_commands += gpu_cull_batch_count(len(batch.ids))
 			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
@@ -594,17 +595,12 @@ draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: Dr
 	indirect_count := min(len(batches), available)
 	start := draw_batches_indirect_upload(engine, batches, indirect_count)
 	backend.pipeline_push(cmd, &pass_pc)
-	// Preserve run order; PR #50's kind sort will make these contiguous spans collapse by kind.
+	// Runs arrive kind-first, so each kind is one contiguous span.
 	group_start := 0
 	for group_start < len(batches) {
-		kind: PipelineKind = .Mesh_Double_Sided if mesh_double_sided(engine, batches[group_start].mesh) else .Mesh
+		kind := batches[group_start].kind
 		group_end := group_start + 1
-		for group_end < len(batches) {
-			next_kind: PipelineKind =
-				.Mesh_Double_Sided if mesh_double_sided(engine, batches[group_end].mesh) else .Mesh
-			if next_kind != kind do break
-			group_end += 1
-		}
+		for group_end < len(batches) && batches[group_end].kind == kind do group_end += 1
 		backend.pipeline_bind(cmd, pipeline_get(engine, kind))
 		indirect_end := min(group_end, indirect_count)
 		if group_start < indirect_end {
