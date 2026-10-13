@@ -1,5 +1,6 @@
 package graphics
 
+import "core:log"
 import "core:math"
 import "core:math/linalg"
 
@@ -42,6 +43,14 @@ Shadows :: struct {
 // Writes the atlases into their fixed bindless slots, so the bindless table must exist
 // (texture_system_create).
 shadows_create :: proc(ctx: ^backend.Context, shadows: ^Shadows) {
+	if backend.format_supports_linear_filter(ctx, SHADOW_DEPTH_FORMAT) {
+		log.infof("Shadow depth format %v supports linear filtering", SHADOW_DEPTH_FORMAT)
+	} else {
+		log.warnf(
+			"Shadow depth format %v lacks linear filtering; linear comparison filtering is not guaranteed, PCF quality may degrade",
+			SHADOW_DEPTH_FORMAT,
+		)
+	}
 	shadows.point_atlas = shadow_atlas_create(ctx, POINT_SHADOW_MAP_SIZE, MAX_POINT_SHADOW_LIGHTS * 6, cube = true)
 	backend.bindless_write_fixed(ctx, .Depth_Cube_Array, shadows.point_atlas.image, shadows.point_atlas.sampler)
 	shadows.atlas_2d = shadow_atlas_create(ctx, SHADOW_MAP_SIZE, MAX_SHADOW_2D_SLOTS, cube = false)

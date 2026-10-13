@@ -1,7 +1,6 @@
 package graphics
 
 import "backend"
-import "core:log"
 
 // Cascades and spot maps share the 2D atlas; point cube faces are lower-res since each light
 // costs 6 faces. Memory: 8 lights x 6 x 1024^2 x D32 = 192 MiB, 40 slots x 2048^2 x D32 = 640 MiB.
@@ -16,20 +15,8 @@ ShadowAtlas :: struct {
 	sampler: backend.Sampler,
 }
 
-// Both atlases share the depth format, so the filter check is logged once.
-shadow_filter_logged: bool
-
 shadow_atlas_create :: proc(ctx: ^backend.Context, size: u32, layers: u32, cube: bool) -> ShadowAtlas {
 	atlas: ShadowAtlas
-
-	if !shadow_filter_logged {
-		shadow_filter_logged = true
-		if backend.format_supports_linear_filter(ctx, SHADOW_DEPTH_FORMAT) {
-			log.infof("Shadow depth format %v supports linear filtering; PCF taps are hardware filtered", SHADOW_DEPTH_FORMAT)
-		} else {
-			log.warnf("Shadow depth format %v lacks linear filtering; PCF degrades to nearest taps", SHADOW_DEPTH_FORMAT)
-		}
-	}
 
 	desc := backend.image_desc_default(
 		backend.extent3d(size, size, 1),
