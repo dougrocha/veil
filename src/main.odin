@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:log"
 import "core:math/linalg"
 import "core:mem"
+import "core:os"
 import "core:time"
 
 import sdl "vendor:sdl3"
@@ -42,7 +43,11 @@ main :: proc() {
 	width, height := u32(1280), u32(720)
 	window: ^sdl.Window
 
-	window = sdl.CreateWindow("veil", i32(width), i32(height), {.VULKAN, .RESIZABLE})
+	// Frame dumps compare pixels across runs, so a fixed size keeps a tiling compositor from resizing mid-capture.
+	window_flags := sdl.WindowFlags{.VULKAN, .RESIZABLE}
+	if _, dumping := os.lookup_env("VEIL_DUMP_FRAME", context.temp_allocator); dumping do window_flags -= {.RESIZABLE}
+
+	window = sdl.CreateWindow("veil", i32(width), i32(height), window_flags)
 	if window == nil {
 		log.errorf("Failed to create window: %s", sdl.GetError())
 		return

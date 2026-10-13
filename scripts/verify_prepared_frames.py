@@ -26,6 +26,8 @@ CASES = [
     ('single_run_32k', 'load_cull_32k_single_run', {'VEIL_GPU_CULL': '1'}, False),
     ('toggles_resize_skip_overlay', 'load_cornell_box', {'VEIL_GPU_CULL': '1'}, True),
 ]
+DUMP_SIZE = (1280, 720)
+REPLAY_SIZE = (960, 540)
 
 
 def snapshot(dest, ref=None):
@@ -51,6 +53,8 @@ def configure(source, scene, replay):
     if count != 1:
         raise RuntimeError('Cannot locate the scene call')
     text = text.replace('show_stats := true', 'show_stats := false')
+    # Baselines predate the app-side fixed-size dump window; give both trees the same non-resizable window.
+    text = text.replace('{.VULKAN, .RESIZABLE}', '{.VULKAN}')
     if replay:
         modern = 'packet.overlay = &overlay' in text
         settings = 'settings' if modern else 'engine.settings'
@@ -161,6 +165,12 @@ def main():
                         ImageChops.difference(first, second).save(args.out / f'{name}_diff_{i:03}.png')
                     raise RuntimeError(f'{name} frame {i}: pixels differ ({first.size} vs {second.size})')
                 sizes.append(first.size)
+            # The window must keep its fixed size (the compositor can ignore it); the replay resizes once on purpose.
+            allowed = {DUMP_SIZE, REPLAY_SIZE} if replay else {DUMP_SIZE}
+            unexpected = sorted(set(sizes) - allowed)
+            if unexpected:
+                raise RuntimeError(f'{name}: captured extents {unexpected}, expected only {sorted(allowed)}; '
+                                   'the compositor resized the dump window (is it tiling it?)')
             if replay:
                 if not all('skipped zero-extent' in log and 'resize requested' in log for log in logs):
                     raise RuntimeError('Replay did not exercise skip and resize')
