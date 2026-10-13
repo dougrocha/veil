@@ -670,3 +670,9 @@ sampler_create :: proc(ctx: ^Context, desc: SamplerDesc) -> Sampler {
 sampler_destroy :: proc(ctx: ^Context, sampler: Sampler) {
 	vk.DestroySampler(ctx.device, vk.Sampler(sampler), nil)
 }
+
+// Depth formats may lack linear filtering; a comparison sampler then degrades PCF taps to nearest.
+format_supports_linear_filter :: proc(ctx: ^Context, format: Format) -> bool {
+	format_props := vk_get_physical_device_format_properties(ctx, format_to_vk(format))
+	return .SAMPLED_IMAGE_FILTER_LINEAR in format_props.optimalTilingFeatures
+}
