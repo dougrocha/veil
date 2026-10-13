@@ -1,11 +1,21 @@
 // Generated from the @(shader_shared) declarations in src/graphics. Do not edit.
 
+static const uint CLUSTER_X = 16;
+static const uint CLUSTER_Y = 9;
+static const uint CLUSTER_Z = 24;
+static const uint CLUSTER_COUNT = ((CLUSTER_X * CLUSTER_Y) * CLUSTER_Z);
+static const uint CLUSTER_INDEX_CAPACITY = 131072;
+static const uint CLUSTER_OVERFLOW_BIT = 0x80000000;
 static const uint SAMPLER_LINEAR_REPEAT = 0;
 static const uint SAMPLER_LINEAR_CLAMP = 1;
 static const uint SAMPLER_NEAREST_CLAMP = 2;
 static const uint BINDLESS_SAMPLER_COUNT = 3;
 static const uint BINDLESS_STORAGE_IMAGE_COUNT = 16;
 static const uint BINDLESS_CUBE_COUNT = 16;
+static const uint INSTANCE_MATERIAL_BITS = 14;
+static const uint INSTANCE_MATERIAL_MASK = (((1 << INSTANCE_MATERIAL_BITS)) - 1);
+static const uint INSTANCE_DRAW_ID_SHIFT = INSTANCE_MATERIAL_BITS;
+static const uint INSTANCE_DRAW_ID_BITS = 15;
 static const uint MAX_POINT_LIGHTS = 512;
 static const uint MAX_DIRECTIONAL_LIGHTS = 2;
 static const uint MAX_SPOT_LIGHTS = 32;
@@ -19,6 +29,7 @@ static const uint PARTICLE_GROUP_SIZE = 256;
 static const uint DEBUG_VIEW_MODE_TEXTURE_2D = 0;
 static const uint DEBUG_VIEW_MODE_SHADOW_CUBE_FACE = 1;
 static const uint DEBUG_VIEW_MODE_SHADOW_2D = 2;
+static const uint DEBUG_VIEW_MODE_CLUSTER_HEATMAP = 3;
 
 static const uint LIGHT_TYPE_DIRECTIONAL = 0;
 static const uint LIGHT_TYPE_SPOT = 1;
@@ -65,18 +76,23 @@ struct PointLight {
     float4 specular_reserved;
 };
 
-struct DirectionalLight {
-    float4 direction_diffuse;
-    float4 color_specular;
-    float4 shadow_maximum_reserved;
-};
-
 struct SpotLight {
     float4 position_range;
     float4 direction_inner;
     float4 color_outer;
     float4 attenuation;
     float4 intensity;
+};
+
+struct ClusterHeader {
+    uint light_offset;
+    uint light_count;
+};
+
+struct DirectionalLight {
+    float4 direction_diffuse;
+    float4 color_specular;
+    float4 shadow_maximum_reserved;
 };
 
 struct AmbientLight {
@@ -87,7 +103,7 @@ struct DebugSettings {
     uint show_cascades;
     uint disable_shadows;
     uint light_mask;
-    uint _reserved;
+    uint clustered_lighting;
 };
 
 struct SceneData {
@@ -98,13 +114,17 @@ struct SceneData {
     ShadowCascadeData shadow_cascade_data[MAX_DIRECTIONAL_LIGHTS];
     float4 cam_pos_shadow_map_size;
     TimeInfo time_info;
-    PointLight point_lights[MAX_POINT_LIGHTS];
+    PointLight* point_lights;
+    SpotLight* spot_lights;
+    ClusterHeader* cluster_headers;
+    uint* cluster_indices;
+    float2 cluster_extent;
+    float2 cluster_near_far;
     uint point_light_count;
     uint directional_light_count;
     uint spot_light_count;
     CubeIndex skybox_cube;
     DirectionalLight directional_lights[MAX_DIRECTIONAL_LIGHTS];
-    SpotLight spot_lights[MAX_SPOT_LIGHTS];
     AmbientLight ambient_light;
     DebugSettings debug_settings;
 };
@@ -116,10 +136,18 @@ struct ParticlePushConstants {
     float delta_time;
 };
 
+struct ClusterPushConstants {
+    SceneData* scene_data;
+    ClusterHeader* clusters;
+    uint* indices;
+    uint* counter;
+};
+
 struct DebugViewPushConstants {
     uint mode;
     uint index;
     uint face;
+    SceneData* scene_data;
 };
 
 struct SkyboxPushConstants {
@@ -129,6 +157,44 @@ struct SkyboxPushConstants {
 struct Transform {
     float4x4 model;
     float4x4 normal_matrix;
+};
+
+struct DrawIndexedIndirectCommand {
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int vertex_offset;
+    uint first_instance;
+};
+
+struct CullCandidate {
+    uint packed_id;
+    uint run_index;
+};
+
+struct CullRun {
+    uint first_candidate;
+    uint candidate_count;
+    uint first_index;
+    int vertex_offset;
+    uint index_count;
+    uint instance_count;
+    uint first_instance;
+    uint _reserved;
+    float4 bounds_center;
+    float4 bounds_extents;
+};
+
+struct CullPushConstants {
+    CullCandidate* candidates;
+    CullRun* runs;
+    Transform* transforms;
+    float4* planes;
+    uint* output_ids;
+    DrawIndexedIndirectCommand* commands;
+    uint candidate_count;
+    uint run_count;
+    uint init_commands;
 };
 
 struct LineVertex {
@@ -172,8 +238,6 @@ struct MeshPushConstants {
     Material* material_buffer;
     Transform* transform_buffer;
     uint* instance_ids;
-    uint material_index;
-    uint instance_offset;
 };
 
 struct TonemapPushConstants {
@@ -199,10 +263,8 @@ struct ShadowPushConstants {
     Material* material_buffer;
     Transform* transform_buffer;
     uint* instance_ids;
-    uint instance_offset;
     uint light_type;
     uint light_index;
-    uint material_index;
 };
 
 struct UIVertex {

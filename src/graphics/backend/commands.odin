@@ -80,14 +80,77 @@ cmd_draw_points :: proc(cmd: RenderEncoder, vertex_count: u32, instance_count: u
 	vk.CmdDraw(cmd.handle, vertex_count, instance_count, first_vertex, 0)
 }
 
-// firstInstance is always 0: pass any instance offset yourself (see instancing.odin).
-cmd_draw_indexed :: proc(cmd: RenderEncoder, index_buffer: Buffer(u32), index_count: u32, instance_count: u32 = 1) {
+cmd_bind_index_buffer :: proc(cmd: RenderEncoder, index_buffer: Buffer(u32)) {
 	vk.CmdBindIndexBuffer(cmd.handle, buffer_slot(cmd.ctx, index_buffer).buffer, 0, .UINT32)
-	vk.CmdDrawIndexed(cmd.handle, index_count, instance_count, 0, 0, 0)
+}
+
+// first_instance offsets SV_StartInstanceLocation; shaders add it to SV_InstanceID (see instancing.odin).
+cmd_draw_indexed :: proc(
+	cmd: RenderEncoder,
+	index_count: u32,
+	instance_count: u32 = 1,
+	first_index: u32 = 0,
+	vertex_offset: i32 = 0,
+	first_instance: u32 = 0,
+) {
+	vk.CmdDrawIndexed(cmd.handle, index_count, instance_count, first_index, vertex_offset, first_instance)
+}
+
+// Splits into several calls when draw_count exceeds the device's maxDrawIndirectCount.
+cmd_draw_indexed_indirect :: proc(cmd: RenderEncoder, buffer: Buffer($T), offset: u64, draw_count, stride: u32) {
+	assert(stride >= size_of(T) && stride % 4 == 0, "cmd_draw_indexed_indirect: invalid stride")
+	assert(.Indirect in buffer_desc(cmd.ctx, buffer).usage, "cmd_draw_indexed_indirect: buffer lacks indirect usage")
+	handle := buffer_slot(cmd.ctx, buffer).buffer
+	limit := max(cmd.ctx.max_draw_indirect_count, 1)
+	for first: u32 = 0; first < draw_count; first += limit {
+		count := min(limit, draw_count - first)
+		vk.CmdDrawIndexedIndirect(cmd.handle, handle, vk.DeviceSize(offset + u64(first) * u64(stride)), count, stride)
+	}
 }
 
 cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32) {
 	vk.CmdDispatch(cmd.handle, x, y, z)
+}
+
+cmd_fill_u32 :: proc(cmd: CommandBuffer, buf: Buffer(u32), value: u32) {
+	vk.CmdFillBuffer(cmd.handle, buffer_slot(cmd.ctx, buf).buffer, 0, vk.DeviceSize(vk.WHOLE_SIZE), value)
+	cmd_barrier_transfer_clear_write_to_compute_read_write(cmd, buf)
+}
+
+cmd_barrier_transfer_clear_write_to_compute_read_write :: proc(cmd: CommandBuffer, buf: Buffer($T)) {
+	barrier := vk.BufferMemoryBarrier2 {
+		sType         = .BUFFER_MEMORY_BARRIER_2,
+		srcStageMask  = {.CLEAR},
+		srcAccessMask = {.TRANSFER_WRITE},
+		dstStageMask  = {.COMPUTE_SHADER},
+		dstAccessMask = {.SHADER_READ, .SHADER_WRITE},
+		buffer        = buffer_slot(cmd.ctx, buf).buffer,
+		size          = vk.DeviceSize(vk.WHOLE_SIZE),
+	}
+	dep := vk.DependencyInfo {
+		sType                    = .DEPENDENCY_INFO,
+		bufferMemoryBarrierCount = 1,
+		pBufferMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep)
+}
+
+cmd_barrier_compute_write_to_transfer_read :: proc(cmd: CommandBuffer, buf: Buffer($T)) {
+	barrier := vk.BufferMemoryBarrier2 {
+		sType         = .BUFFER_MEMORY_BARRIER_2,
+		srcStageMask  = {.COMPUTE_SHADER},
+		srcAccessMask = {.SHADER_WRITE},
+		dstStageMask  = {.COPY},
+		dstAccessMask = {.TRANSFER_READ},
+		buffer        = buffer_slot(cmd.ctx, buf).buffer,
+		size          = vk.DeviceSize(vk.WHOLE_SIZE),
+	}
+	dep := vk.DependencyInfo {
+		sType                    = .DEPENDENCY_INFO,
+		bufferMemoryBarrierCount = 1,
+		pBufferMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep)
 }
 
 cmd_barrier_compute_write_to_vertex_read :: proc(cmd: ComputeEncoder) {
@@ -106,12 +169,28 @@ cmd_barrier_compute_write_to_vertex_read :: proc(cmd: ComputeEncoder) {
 	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
 }
 
-cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
+cmd_barrier_compute_write_to_draw_read :: proc(cmd: ComputeEncoder) {
 	barrier := vk.MemoryBarrier2 {
 		sType         = .MEMORY_BARRIER_2,
 		srcStageMask  = {.COMPUTE_SHADER},
 		srcAccessMask = {.SHADER_WRITE},
-		dstStageMask  = {.COMPUTE_SHADER},
+		dstStageMask  = {.VERTEX_SHADER, .DRAW_INDIRECT},
+		dstAccessMask = {.SHADER_READ, .INDIRECT_COMMAND_READ},
+	}
+	dep_info := vk.DependencyInfo {
+		sType              = .DEPENDENCY_INFO,
+		memoryBarrierCount = 1,
+		pMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
+}
+
+cmd_barrier_compute_write_to_fragment_read :: proc(cmd: ComputeEncoder) {
+	barrier := vk.MemoryBarrier2 {
+		sType         = .MEMORY_BARRIER_2,
+		srcStageMask  = {.COMPUTE_SHADER},
+		srcAccessMask = {.SHADER_WRITE},
+		dstStageMask  = {.FRAGMENT_SHADER},
 		dstAccessMask = {.SHADER_READ},
 	}
 	dep_info := vk.DependencyInfo {
@@ -120,6 +199,61 @@ cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
 		pMemoryBarriers    = &barrier,
 	}
 	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
+}
+
+cmd_barrier_host_write_to_compute :: proc(cmd: ComputeEncoder) {
+	barrier := vk.MemoryBarrier2 {
+		sType         = .MEMORY_BARRIER_2,
+		srcStageMask  = {.HOST},
+		srcAccessMask = {.HOST_WRITE},
+		dstStageMask  = {.COMPUTE_SHADER},
+		dstAccessMask = {.SHADER_READ, .SHADER_WRITE},
+	}
+	dep_info := vk.DependencyInfo {
+		sType              = .DEPENDENCY_INFO,
+		memoryBarrierCount = 1,
+		pMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
+}
+
+cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
+	barrier := vk.MemoryBarrier2 {
+		sType         = .MEMORY_BARRIER_2,
+		srcStageMask  = {.COMPUTE_SHADER},
+		srcAccessMask = {.SHADER_WRITE},
+		dstStageMask  = {.COMPUTE_SHADER},
+		dstAccessMask = {.SHADER_READ, .SHADER_WRITE},
+	}
+	dep_info := vk.DependencyInfo {
+		sType              = .DEPENDENCY_INFO,
+		memoryBarrierCount = 1,
+		pMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
+}
+
+cmd_barrier_compute_write_to_copy_read :: proc(cmd: ComputeEncoder) {
+	barrier := vk.MemoryBarrier2 {
+		sType         = .MEMORY_BARRIER_2,
+		srcStageMask  = {.COMPUTE_SHADER},
+		srcAccessMask = {.SHADER_WRITE},
+		dstStageMask  = {.COPY},
+		dstAccessMask = {.TRANSFER_READ},
+	}
+	dep_info := vk.DependencyInfo {
+		sType              = .DEPENDENCY_INFO,
+		memoryBarrierCount = 1,
+		pMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
+}
+
+cmd_copy_buffer :: proc(cmd: CommandBuffer, src: Buffer($T), dst: Buffer(T), count: int) {
+	region := vk.BufferCopy {
+		size = vk.DeviceSize(count * size_of(T)),
+	}
+	vk.CmdCopyBuffer(cmd.handle, buffer_slot(cmd.ctx, src).buffer, buffer_slot(cmd.ctx, dst).buffer, 1, &region)
 }
 
 // Host reads of a buffer the GPU just wrote. The queue wait only orders device work, so this barrier is

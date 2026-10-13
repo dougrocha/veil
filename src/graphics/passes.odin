@@ -7,6 +7,7 @@ PassKind :: enum {
 	Particles,
 	Shadow_2D,
 	Shadow_Point,
+	Clusters,
 	Main,
 	Bloom,
 	Tonemap,
@@ -62,6 +63,7 @@ PASSES := [PassKind]PassSpec {
 		record = record_shadow_point,
 		uses = {{.Shadow_Cube, .Depth_Write}},
 	},
+	.Clusters = {name = "clusters", enabled = clusters_enabled, record = dispatch_clusters},
 	// Main and Overlay declaring the atlases Depth_Read is what leaves them readable, including
 	// when the shadow passes are disabled.
 	.Main = {
@@ -145,8 +147,22 @@ shadows_enabled :: proc(engine: ^Engine) -> bool {
 	return engine.settings.shadows
 }
 
+clusters_enabled :: proc(engine: ^Engine) -> bool {
+	return engine.clustered_lighting || engine.cluster_heatmap || engine.cluster_validate
+}
+
 @(private = "file")
 record_main :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
+	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
+	view_list := build_draw_list(draw_input(engine), frustum, packet.camera.position, engine.settings.gpu_cull)
+	gpu_culled := engine.settings.gpu_cull && dispatch_gpu_cull(engine, packet, cmd, view_list.opaque)
+	if engine.settings.gpu_cull && !gpu_culled {
+		view_list = build_draw_list(draw_input(engine), frustum, packet.camera.position)
+	}
+	if !gpu_culled {
+		engine.stats.counters.draws_visible += view_list.draws_visible
+		engine.stats.counters.meshes_culled += view_list.meshes_culled
+	}
 	// A sky covers every pixel left uncovered, so its clear value never shows.
 	clear_color, _ := packet.background.(Vec4)
 	_, has_sky := packet.background.(TextureHandle)
@@ -161,9 +177,9 @@ record_main :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandB
 		},
 	)
 	defer backend.end_render_pass(encoder)
+	backend.cmd_bind_index_buffer(encoder, engine.model_system.index_buffer)
 	// Opaque, then the sky (if any) where nothing opaque wrote depth, then transparent on top.
-	view_list := view_draw_list(engine, packet)
-	draw_meshes_opaque(engine, encoder, view_list)
+	draw_meshes_opaque(engine, encoder, view_list, gpu_culled)
 	if has_sky do draw_skybox(engine, encoder)
 	draw_meshes_transparent(engine, encoder, view_list)
 	if engine.settings.particles do draw_particles(engine, encoder)
@@ -172,6 +188,10 @@ record_main :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandB
 
 @(private = "file")
 record_overlay :: proc(engine: ^Engine, _: ^FramePacket, cmd: backend.CommandBuffer) {
+	if engine.cluster_heatmap {
+		extent := render_extent(engine)
+		debug_view_draw(engine, {mode = .Cluster_Heatmap}, {{0, 0}, {extent.width, extent.height}})
+	}
 	debug_view_flush(engine, cmd)
 	encoder := backend.begin_render_pass(
 		cmd,

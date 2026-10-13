@@ -120,6 +120,7 @@ load_op_to_vk :: proc(op: LoadOp) -> vk.AttachmentLoadOp {
 Limits :: struct {
 	max_bindless_textures_per_stage: u32,
 	msaa_samples:                    u32, // highest count usable for color + depth
+	max_draw_indirect_count:         u32,
 }
 
 Context :: struct {
@@ -133,6 +134,7 @@ Context :: struct {
 	gfx_queue_fam_idx:               u32,
 	graphics_queue:                  vk.Queue,
 	msaa_samples:                    u32, // highest count usable for color + depth
+	max_draw_indirect_count:         u32,
 	upload_pool:                     vk.CommandPool,
 	max_bindless_textures_per_stage: u32,
 	timeline_semaphore:              vk.Semaphore,

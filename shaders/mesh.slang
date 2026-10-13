@@ -3,7 +3,9 @@ import types;
 
 struct VSInput {
     uint vertex_index : SV_VertexID;
+    uint start_vertex_location : SV_StartVertexLocation;
     uint instance_id : SV_InstanceID;
+    uint start_instance_location : SV_StartInstanceLocation;
 };
 
 struct VSOutput {
@@ -13,16 +15,22 @@ struct VSOutput {
     float3 frag_tangent;
     float3 frag_bitangent;
     float3 frag_pos;
+    nointerpolation uint material_index;
 };
 
 [shader("vertex")]
 VSOutput vertex_main(VSInput input) {
-    let v = pc.vertex_buffer[input.vertex_index];
-    let transform = pc.transform_buffer[pc.instance_ids[pc.instance_offset + input.instance_id]];
+    // Slang's SV_VertexID excludes the Vulkan base vertex; add SV_StartVertexLocation to restore it.
+    let v = pc.vertex_buffer[input.vertex_index + input.start_vertex_location];
+    // Slang lowers SV_InstanceID without the Vulkan base instance; add SV_StartInstanceLocation to restore it.
+    let instance_slot = input.instance_id + input.start_instance_location;
+    let packed_id = pc.instance_ids[instance_slot];
+    let transform = pc.transform_buffer[packed_id >> INSTANCE_DRAW_ID_SHIFT];
 
     VSOutput output;
     float4 world_pos = mul(transform.model, float4(v.pos_uv_x.xyz, 1.0));
     output.frag_pos = world_pos.xyz;
+    output.material_index = packed_id & INSTANCE_MATERIAL_MASK;
 
     output.pos = mul(pc.scene_data.proj, mul(pc.scene_data.view, world_pos));
 
@@ -184,15 +192,20 @@ float sample_cascade(float3 frag_pos, float3 normal, float3 to_light, uint light
     float cascade_bias = select_component(pc.scene_data.shadow_cascade_data[light_index].bias, cascade);
     float bias = max(cascade_bias * (1.0 - dot(normal, to_light)), cascade_bias * 0.1);
 
-    float texel_size = 1.0 / pc.scene_data.cam_pos_shadow_map_size.w;
-    float shadow = 0.0;
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            float2 offset = float2(x, y) * texel_size;
-            shadow += shadow_2d_maps.SampleCmp(float3(proj_coords.xy + offset, float(slot)), proj_coords.z - bias);
-        }
-    }
-    return shadow / 9.0;
+    float half_texel = 0.5 / pc.scene_data.cam_pos_shadow_map_size.w;
+    float depth = proj_coords.z - bias;
+    // Each compare tap is already bilinear, so four taps at half-texel offsets give a 2-texel box
+    // over a 3x3 texel footprint (penumbra ~30% narrower than the old 9-tap grid). Kept as explicit
+    // taps: a loop form of the same pattern measured slower.
+    float shadow = shadow_2d_maps.SampleCmp(
+        float3(proj_coords.xy + float2(-half_texel, -half_texel), float(slot)), depth);
+    shadow += shadow_2d_maps.SampleCmp(
+        float3(proj_coords.xy + float2(-half_texel, half_texel), float(slot)), depth);
+    shadow += shadow_2d_maps.SampleCmp(
+        float3(proj_coords.xy + float2(half_texel, -half_texel), float(slot)), depth);
+    shadow += shadow_2d_maps.SampleCmp(
+        float3(proj_coords.xy + float2(half_texel, half_texel), float(slot)), depth);
+    return shadow * 0.25;
 }
 
 float calc_dir_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, uint light_index, out uint cascade_out) {
@@ -236,9 +249,20 @@ float calc_spot_shadow_factor(SpotLight light, uint slot, float3 frag_pos, float
     return shadow_2d_maps.SampleCmp(float3(uv, float(slot)), current_depth - bias);
 }
 
-[shader("fragment")]
-float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET {
-    let mat = pc.material_buffer[pc.material_index];
+// Split so fragment_masked can discard between sampling and lighting while fragment_main has no
+// discard in its call graph. Any OpKill in the module can keep early depth off for the opaque
+// pipeline, and a bool flag does not fold away in the emitted SPIR-V.
+struct MeshSurface {
+    float4 tex_color;
+    float3 normal;
+    float ao;
+    float smoothness;
+    float shininess;
+};
+
+// Every texture sample. Implicit-LOD samples need quad derivatives, so they all run before any discard.
+MeshSurface sample_mesh_surface(VSOutput vert, bool is_front) {
+    let mat = pc.material_buffer[vert.material_index];
 
     // Double-sided back faces are lit as if they faced the viewer (only those pipelines skip culling).
     float3 geo_normal = (mat.double_sided != 0 && !is_front) ? -vert.frag_normal : vert.frag_normal;
@@ -261,9 +285,36 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
     float smoothness = 1.0 - roughness;
     float shininess = max(MAX_SHININESS * smoothness * smoothness, 1.0);
 
+    float ao = sample_occlusion(mat.occlusion_texture, vert.frag_uv).r;
+
+    return {tex_color, normal, ao, smoothness, shininess};
+}
+
+// Range attenuation clamp(1 - pow(d/r, 4), 0, 1) is exactly zero at d >= range.
+bool point_light_out_of_range(PointLight light, float3 frag_pos) {
+    return length(light.position_range.xyz - frag_pos) >= light.position_range.w;
+}
+
+// Cone intensity is exactly zero at theta <= outer; inner > outer preserves reversed or equal cutoffs.
+bool spot_light_out_of_range(SpotLight light, float3 frag_pos) {
+    if (length(light.position_range.xyz - frag_pos) >= light.position_range.w) return true;
+    float3 to_light = normalize(light.position_range.xyz - frag_pos);
+    float theta = dot(to_light, normalize(-light.direction_inner.xyz));
+    float inner = light.direction_inner.w;
+    float outer = light.color_outer.w;
+    return inner > outer && theta <= outer;
+}
+
+// Lighting only. Material textures are read in sample_mesh_surface; the shadow lookups here run after the masked discard.
+float4 light_mesh_surface(VSOutput vert, MeshSurface surf) {
+    let mat = pc.material_buffer[vert.material_index];
+    float4 tex_color = surf.tex_color;
+    float3 normal = surf.normal;
+    float smoothness = surf.smoothness;
+    float shininess = surf.shininess;
+    float ao = surf.ao;
     float3 view_dir = normalize(pc.scene_data.cam_pos_shadow_map_size.xyz - vert.frag_pos);
 
-    float ao = sample_occlusion(mat.occlusion_texture, vert.frag_uv).r;
     float3 total_light = pc.scene_data.ambient_light.color_brightness.rgb * pc.scene_data.ambient_light.color_brightness.w * ao;
 
     static const float3 CASCADE_DEBUG_COLORS[5] = {
@@ -287,21 +338,70 @@ float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET 
 
     if (pc.scene_data.debug_settings.show_cascades != 0) total_light *= cascade_tint;
 
-    for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_POINT)) != 0 ? pc.scene_data.point_light_count : 0); i++) {
-        float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[i], i, vert.frag_pos, normalize(vert.frag_normal));
-        total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+    bool use_cluster_list = pc.scene_data.debug_settings.clustered_lighting != 0;
+    if (use_cluster_list) {
+        float3 view_pos = mul(pc.scene_data.view, float4(vert.frag_pos, 1.0)).xyz;
+        float4x4 proj = pc.scene_data.proj;
+        bool ortho = abs(proj[3][2]) < 1e-6;
+        float sign_z = proj[3][2] < 0.0 || (ortho && proj[2][2] < 0.0) ? -1.0 : 1.0;
+        float view_depth = view_pos.z * sign_z;
+        uint x = min(uint(floor(vert.pos.x / pc.scene_data.cluster_extent.x * float(CLUSTER_X))), CLUSTER_X - 1);
+        uint y = min(uint(floor(vert.pos.y / pc.scene_data.cluster_extent.y * float(CLUSTER_Y))), CLUSTER_Y - 1);
+        float near_z = pc.scene_data.cluster_near_far.x;
+        float far_z = pc.scene_data.cluster_near_far.y;
+        uint z = uint(clamp(floor(log(view_depth / near_z) / log(far_z / near_z) * float(CLUSTER_Z)), 0.0, float(CLUSTER_Z - 1)));
+        uint cluster = x + y * CLUSTER_X + z * CLUSTER_X * CLUSTER_Y;
+        ClusterHeader header = pc.scene_data.cluster_headers[cluster];
+        use_cluster_list = (header.light_count & CLUSTER_OVERFLOW_BIT) == 0;
+        for (uint i = 0; use_cluster_list && i < header.light_count; ++i) {
+            uint light_index = pc.scene_data.cluster_indices[header.light_offset + i];
+            if (light_index < MAX_POINT_LIGHTS) {
+                if ((light_mask & (1u << LIGHT_TYPE_POINT)) == 0 || light_index >= pc.scene_data.point_light_count) continue;
+                if (point_light_out_of_range(pc.scene_data.point_lights[light_index], vert.frag_pos)) continue;
+                float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[light_index], light_index, vert.frag_pos, normalize(vert.frag_normal));
+                total_light += calc_point_light(pc.scene_data.point_lights[light_index], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+            } else {
+                uint spot_index = light_index - MAX_POINT_LIGHTS;
+                if ((light_mask & (1u << LIGHT_TYPE_SPOT)) == 0 || spot_index >= pc.scene_data.spot_light_count) continue;
+                if (spot_light_out_of_range(pc.scene_data.spot_lights[spot_index], vert.frag_pos)) continue;
+                float3 to_light = normalize(pc.scene_data.spot_lights[spot_index].position_range.xyz - vert.frag_pos);
+                float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[spot_index], spot_shadow_slot(spot_index), vert.frag_pos, normal, normalize(vert.frag_normal), to_light);
+                total_light += calc_spot_light(pc.scene_data.spot_lights[spot_index], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+            }
+        }
     }
+    if (!use_cluster_list) {
+        for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_POINT)) != 0 ? pc.scene_data.point_light_count : 0); i++) {
+            if (point_light_out_of_range(pc.scene_data.point_lights[i], vert.frag_pos)) continue;
+            float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[i], i, vert.frag_pos, normalize(vert.frag_normal));
+            total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+        }
 
-    for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_SPOT)) != 0 ? pc.scene_data.spot_light_count : 0); i++) {
-        float3 to_light = normalize(pc.scene_data.spot_lights[i].position_range.xyz - vert.frag_pos);
-        float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, normalize(vert.frag_normal), to_light);
-        total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+        for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_SPOT)) != 0 ? pc.scene_data.spot_light_count : 0); i++) {
+            if (spot_light_out_of_range(pc.scene_data.spot_lights[i], vert.frag_pos)) continue;
+            float3 to_light = normalize(pc.scene_data.spot_lights[i].position_range.xyz - vert.frag_pos);
+            float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, normalize(vert.frag_normal), to_light);
+            total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+        }
     }
 
     // 0 = opaque, 1 = mask, 2 = blend; matches AlphaMode in Odin.
-    if (mat.alpha_mode == ALPHA_MODE_MASK && tex_color.a < mat.alpha_cutoff) discard;
     float output_alpha = mat.alpha_mode == ALPHA_MODE_BLEND ? tex_color.a : 1.0;
     // Emission is light the surface gives off itself, so no lighting, shadow, AO or albedo scales it.
     float3 color = tex_color.rgb * total_light + mat.emissive.rgb;
     return float4(color, output_alpha);
+}
+
+[shader("fragment")]
+float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET {
+    return light_mesh_surface(vert, sample_mesh_surface(vert, is_front));
+}
+
+[shader("fragment")]
+float4 fragment_masked(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET {
+    MeshSurface surf = sample_mesh_surface(vert, is_front);
+    let mat = pc.material_buffer[vert.material_index];
+    // Masked texels skip lighting. Runs after every implicit-LOD sample in sample_mesh_surface.
+    if (mat.alpha_mode == ALPHA_MODE_MASK && surf.tex_color.a < mat.alpha_cutoff) discard;
+    return light_mesh_surface(vert, surf);
 }

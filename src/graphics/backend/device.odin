@@ -41,6 +41,8 @@ context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 	frame_sync_create(ctx)
 
 	ctx.msaa_samples = vk_get_max_usable_sample_count(ctx)
+	properties := vk_get_physical_device_properties(ctx)
+	ctx.max_draw_indirect_count = properties.limits.maxDrawIndirectCount
 	// MoltenVK supports far less than a desktop GPU, so bindless array sizes must be
 	// clamped to what the device actually supports instead of a hardcoded constant.
 	ctx.max_bindless_textures_per_stage = vk_get_max_bindless_textures_per_stage(ctx)
@@ -49,7 +51,11 @@ context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 }
 
 limits :: proc(ctx: ^Context) -> Limits {
-	return {max_bindless_textures_per_stage = ctx.max_bindless_textures_per_stage, msaa_samples = ctx.msaa_samples}
+	return {
+		max_bindless_textures_per_stage = ctx.max_bindless_textures_per_stage,
+		msaa_samples = ctx.msaa_samples,
+		max_draw_indirect_count = ctx.max_draw_indirect_count,
+	}
 }
 
 device_wait_idle :: proc(ctx: ^Context) {
@@ -275,7 +281,9 @@ logical_device_create :: proc(ctx: ^Context) -> bool {
 	   !extended_dynamic_state_features.extendedDynamicState ||
 	   !supported_features.features.samplerAnisotropy ||
 	   !supported_features.features.sampleRateShading ||
-	   !supported_features.features.depthClamp {
+	   !supported_features.features.depthClamp ||
+	   !supported_features.features.multiDrawIndirect ||
+	   !supported_features.features.drawIndirectFirstInstance {
 		log.errorf("Physical Device does not meet feature requirement")
 		return false
 	}
@@ -314,7 +322,14 @@ logical_device_create :: proc(ctx: ^Context) -> bool {
 	enabled_features := vk.PhysicalDeviceFeatures2 {
 		sType = .PHYSICAL_DEVICE_FEATURES_2,
 		pNext = &enabled_extended_dynamic_state_features,
-		features = {samplerAnisotropy = true, sampleRateShading = true, imageCubeArray = true, depthClamp = true},
+		features = {
+			samplerAnisotropy = true,
+			sampleRateShading = true,
+			imageCubeArray = true,
+			depthClamp = true,
+			multiDrawIndirect = true,
+			drawIndirectFirstInstance = true,
+		},
 	}
 
 	queue_priorities := []f32{1.0}

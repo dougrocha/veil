@@ -31,6 +31,7 @@ engine_create :: proc(
 	}
 	engine.config = config
 	engine.settings = RENDER_SETTINGS_DEFAULT
+	engine.clustered_lighting = true
 	frame_dump_init(engine)
 	debug_env_init(engine)
 
@@ -158,7 +159,9 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 	record_ms := tick_ms(record_start)
 	submit_start := time.tick_now()
 
+	frame_slot := backend.frame_slot(&engine.vk_ctx)
 	render_targets_end_frame(engine, cmd)
+	cluster_debug_report_overflow(engine, frame_slot)
 	// Once per recorded frame, shadow passes on or off. Skipped frames return early above, so their
 	// changes carry over.
 	shadow_cache_commit(&engine.shadows.cache, &engine.shadows.plan, packet.lights)
@@ -168,6 +171,7 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 
 	if engine.frame_dump.enabled {
 		backend.device_wait_idle(&engine.vk_ctx)
+		cluster_debug_validate(engine, frame_slot)
 		pick_test_run(engine, packet)
 		if frame_dump_capture(engine) {
 			quit := sdl.Event {
@@ -175,6 +179,11 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 			}
 			_ = sdl.PushEvent(&quit)
 		}
+	}
+	if engine.gpu_cull_validate && !engine.gpu_cull_validated {
+		backend.device_wait_idle(&engine.vk_ctx)
+		gpu_cull_validate_frame(engine, packet)
+		engine.gpu_cull_validated = true
 	}
 	return true
 }
@@ -210,6 +219,218 @@ dispatch_particles :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.C
 	backend.cmd_dispatch(encoder, PARTICLE_COUNT / PARTICLE_GROUP_SIZE, 1, 1)
 	backend.cmd_barrier_compute_write_to_vertex_read(encoder)
 	backend.end_compute_pass(encoder)
+}
+
+// Commands a run takes: one per GPU_CULL_BATCH_CANDIDATES ids. An empty run keeps one, so its draw stays counted.
+gpu_cull_batch_count :: proc(id_count: int) -> int {
+	return max(1, (id_count + GPU_CULL_BATCH_CANDIDATES - 1) / GPU_CULL_BATCH_CANDIDATES)
+}
+
+dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer, runs: []DrawRun) -> bool {
+	frame := current_frame_data(engine)
+	engine.gpu_cull_validate_slot = backend.frame_slot(&engine.vk_ctx)
+	frame.cull_batch_count = 0
+	frame.cull_candidate_count = 0
+	candidate_count, batch_count: int
+	candidates := make([dynamic]GpuCullCandidate, context.temp_allocator)
+	run_data := make([dynamic]GpuCullRun, context.temp_allocator)
+	// Batches stay in run order and candidate order, so each batch's output lands at its own first_candidate.
+	for run in runs {
+		run_ids := len(run.ids)
+		run_batches := gpu_cull_batch_count(run_ids)
+		if candidate_count + run_ids > MAX_INSTANCE_IDS || batch_count + run_batches > MAX_INDIRECT_COMMANDS_PER_FRAME do return false
+		mesh := run.mesh
+		for b in 0 ..< run_batches {
+			first := min(b * GPU_CULL_BATCH_CANDIDATES, run_ids)
+			last := min(first + GPU_CULL_BATCH_CANDIDATES, run_ids)
+			append(
+				&run_data,
+				GpuCullRun {
+					first_candidate = u32(candidate_count),
+					candidate_count = u32(last - first),
+					first_index = mesh.first_index,
+					vertex_offset = i32(mesh.first_vertex),
+					index_count = mesh.index_count,
+					bounds_center = Vec4{mesh.bounds.center.x, mesh.bounds.center.y, mesh.bounds.center.z, 0},
+					bounds_extents = Vec4{mesh.bounds.extents.x, mesh.bounds.extents.y, mesh.bounds.extents.z, 0},
+				},
+			)
+			for id in run.ids[first:last] {
+				packed := (u32(id) << u32(INSTANCE_DRAW_ID_SHIFT)) | u32(mesh.material.index)
+				append(&candidates, GpuCullCandidate{packed_id = packed, run_index = u32(batch_count)})
+			}
+			candidate_count += last - first
+			batch_count += 1
+		}
+	}
+	if batch_count == 0 do return true
+	frame.cull_batch_count = batch_count
+	frame.cull_candidate_count = candidate_count
+	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_candidates, candidates[:])
+	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_runs, run_data[:])
+	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
+	planes: [6]Vec4
+	for plane, i in frustum.planes do planes[i] = Vec4{plane.normal.x, plane.normal.y, plane.normal.z, plane.distance}
+	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_planes, planes[:])
+	pc := GpuCullPushConstants {
+		candidates      = backend.buffer_address(&engine.vk_ctx, frame.cull_candidates),
+		runs            = backend.buffer_address(&engine.vk_ctx, frame.cull_runs),
+		transforms      = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
+		planes          = backend.buffer_address(&engine.vk_ctx, frame.cull_planes),
+		output_ids      = backend.buffer_address(&engine.vk_ctx, frame.cull_output_ids),
+		commands        = backend.buffer_address(&engine.vk_ctx, frame.cull_commands),
+		candidate_count = u32(candidate_count),
+		run_count       = u32(batch_count),
+	}
+	encoder := backend.begin_compute_pass(cmd)
+	scope := gpu_scope_begin(engine, cmd, "culling")
+	backend.cmd_barrier_host_write_to_compute(encoder)
+	backend.pipeline_bind_compute(encoder, pipeline_get(engine, .Gpu_Cull))
+	pc.init_commands = 1
+	backend.pipeline_push_compute(encoder, &pc)
+	backend.cmd_dispatch(encoder, (u32(batch_count) + 255) / 256, 1, 1)
+	backend.cmd_barrier_compute_write_to_compute_read(encoder)
+	pc.init_commands = 0
+	backend.pipeline_push_compute(encoder, &pc)
+	backend.cmd_dispatch(encoder, (u32(candidate_count) + 255) / 256, 1, 1)
+	backend.cmd_barrier_compute_write_to_compute_read(encoder)
+	pc.init_commands = 2
+	backend.pipeline_push_compute(encoder, &pc)
+	backend.cmd_dispatch(encoder, (u32(batch_count) + 255) / 256, 1, 1)
+	if engine.gpu_cull_validate {
+		backend.cmd_barrier_compute_write_to_copy_read(encoder)
+		backend.cmd_copy_buffer(cmd, frame.cull_commands, frame.cull_readback_commands, batch_count)
+		backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_commands)
+		// A zero-size copy is invalid. Runs can all be empty, which leaves no candidates to read back.
+		if candidate_count > 0 {
+			backend.cmd_copy_buffer(cmd, frame.cull_output_ids, frame.cull_readback_ids, candidate_count)
+			backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_ids)
+		}
+	}
+	backend.cmd_barrier_compute_write_to_draw_read(encoder)
+	backend.end_compute_pass(encoder)
+	gpu_scope_end(engine, cmd, scope)
+	return true
+}
+
+gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
+	frame := &engine.frame_data[engine.gpu_cull_validate_slot]
+	if frame.cull_batch_count == 0 do return
+	commands := make([]DrawIndexedIndirectCommand, frame.cull_batch_count, context.temp_allocator)
+	ids := make([]u32, frame.cull_candidate_count, context.temp_allocator)
+	backend.buffer_read(&engine.vk_ctx, frame.cull_readback_commands, commands)
+	if frame.cull_candidate_count > 0 do backend.buffer_read(&engine.vk_ctx, frame.cull_readback_ids, ids)
+	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
+	candidate_runs := build_draw_list(draw_input(engine), frustum, packet.camera.position, true).opaque
+	cpu_runs := build_draw_list(draw_input(engine), frustum, packet.camera.position).opaque
+	false_negatives, extras, kept, structural: int
+	command_index, candidate_offset := 0, 0
+	for gpu_run, run_index in candidate_runs {
+		cpu_ids: []u32
+		for cpu_run in cpu_runs {
+			if cpu_run.mesh == gpu_run.mesh {
+				cpu_ids = make([]u32, len(cpu_run.ids), context.temp_allocator)
+				for id, i in cpu_run.ids {
+					cpu_ids[i] = (id << u32(INSTANCE_DRAW_ID_SHIFT)) | u32(cpu_run.mesh.material.index)
+				}
+				break
+			}
+		}
+		// The expected batch layout is rebuilt here, not taken from gpu_cull_batch_count, so the validator does not
+		// reuse the code it checks. An empty run still expects one batch. Each batch's output starts at its own
+		// first_candidate, and the batches concatenate in candidate order.
+		run_ids := len(gpu_run.ids)
+		mesh := gpu_run.mesh
+		gpu_ids := make([dynamic]u32, context.temp_allocator)
+		for first := 0; first < run_ids || first == 0; first += GPU_CULL_BATCH_CANDIDATES {
+			expected_count := max(0, min(GPU_CULL_BATCH_CANDIDATES, run_ids - first))
+			expected_first := candidate_offset + first
+			if command_index >= len(commands) {
+				structural += 1
+				log.errorf("GPU culling validation run %d: no GPU command for candidate %d", run_index, expected_first)
+				continue
+			}
+			command := commands[command_index]
+			command_index += 1
+			if command.first_instance != u32(expected_first) ||
+			   command.instance_count > u32(expected_count) ||
+			   command.index_count != mesh.index_count ||
+			   command.first_index != mesh.first_index ||
+			   command.vertex_offset != i32(mesh.first_vertex) {
+				structural += 1
+				log.errorf(
+					"GPU culling validation run %d: command %d does not match expected batch at candidate %d",
+					run_index,
+					command_index - 1,
+					expected_first,
+				)
+				continue
+			}
+			if int(command.first_instance) + int(command.instance_count) > len(ids) {
+				structural += 1
+				log.errorf(
+					"GPU culling validation run %d: batch at candidate %d overruns the readback",
+					run_index,
+					expected_first,
+				)
+				continue
+			}
+			append_elems(&gpu_ids, ..ids[command.first_instance:][:command.instance_count])
+		}
+		candidate_offset += run_ids
+		// Ordered match: each CPU id must appear in the GPU output in the same order. Unmatched GPU ids,
+		// including duplicates, count as extras.
+		run_fn, matched: int
+		p := 0
+		for cpu_id in cpu_ids {
+			q := p
+			for q < len(gpu_ids) && gpu_ids[q] != cpu_id do q += 1
+			if q == len(gpu_ids) {
+				run_fn += 1
+			} else {
+				p = q + 1
+				matched += 1
+			}
+		}
+		run_extras := len(gpu_ids) - matched
+		false_negatives += run_fn
+		extras += run_extras
+		kept += len(gpu_ids)
+		if run_fn != 0 || run_extras != 0 {
+			log.infof(
+				"GPU culling validation run %d: mismatches=%d false negatives=%d extras=%d",
+				run_index,
+				run_fn + run_extras,
+				run_fn,
+				run_extras,
+			)
+			if run_fn != 0 do log.errorf("GPU culling validation found false negatives in run %d", run_index)
+		}
+	}
+	if command_index != frame.cull_batch_count {
+		structural += 1
+		log.errorf("GPU culling validation: recorded %d batches, validated %d", frame.cull_batch_count, command_index)
+	}
+	if candidate_offset != frame.cull_candidate_count {
+		structural += 1
+		log.errorf(
+			"GPU culling validation: recorded %d candidates, expected %d",
+			frame.cull_candidate_count,
+			candidate_offset,
+		)
+	}
+	culled := frame.cull_candidate_count - kept
+	log.infof(
+		"GPU culling validation: batches=%d candidates=%d kept=%d culled=%d mismatches=%d false_negatives=%d extras=%d structural=%d (extras are conservative mesh-AABB visibility beyond CPU model bounds)",
+		frame.cull_batch_count,
+		frame.cull_candidate_count,
+		kept,
+		culled,
+		false_negatives + extras,
+		false_negatives,
+		extras,
+		structural,
+	)
 }
 
 draw_particles :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
@@ -282,37 +503,42 @@ draw_shadow :: proc(
 	shadow_pipeline := pipeline_get(engine, .Shadow_Directional if directional else .Shadow)
 
 	backend.pipeline_bind(cmd, shadow_pipeline)
+	backend.cmd_bind_index_buffer(cmd, engine.model_system.index_buffer)
 	backend.cmd_set_depth_bias(cmd, 1.25, 0, 1.75)
 
 	frame := current_frame_data(engine)
+	// Same for every batch in this view; shared geometry and frame addresses are pass constants.
+	view_pc := ShadowPushConstants {
+		view_proj        = view_proj,
+		scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
+		vertex_buffer    = backend.buffer_address(&engine.vk_ctx, engine.model_system.vertex_buffer),
+		material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
+		transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
+		instance_ids     = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
+		light_type       = light_type,
+		light_index      = light_i,
+	}
+	backend.pipeline_push(cmd, &view_pc)
 
-	for batch in draw_runs_upload(engine, runs) {
+	batches := draw_runs_upload(engine, runs)
+	available := indirect_commands_available(engine)
+	indirect_count := min(len(batches), available)
+	start := draw_batches_indirect_upload(engine, batches, indirect_count)
+	if indirect_count > 0 {
+		backend.cmd_draw_indexed_indirect(
+			cmd,
+			frame.indirect_buffer,
+			u64(start * size_of(DrawIndexedIndirectCommand)),
+			u32(indirect_count),
+			u32(size_of(DrawIndexedIndirectCommand)),
+		)
+		stats_count_indirect_call(engine)
+	}
+	for batch in batches[:indirect_count] {
 		mesh := batch.mesh
-		pc := ShadowPushConstants {
-			view_proj        = view_proj,
-			scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
-			vertex_buffer    = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer),
-			material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
-			transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
-			instance_ids     = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
-			instance_offset  = batch.first_id,
-			light_type       = light_type,
-			light_index      = light_i,
-			material_index   = u32(mesh.material.index),
-		}
-		backend.pipeline_push(cmd, &pc)
-		backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count, batch.count)
 		stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 	}
-}
-
-// The camera's draw list for this frame. Counts its culling stats.
-view_draw_list :: proc(engine: ^Engine, packet: ^FramePacket) -> DrawList {
-	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
-	list := build_draw_list(draw_input(engine), frustum, packet.camera.position)
-	engine.stats.counters.draws_visible += list.draws_visible
-	engine.stats.counters.meshes_culled += list.meshes_culled
-	return list
+	for batch in batches[indirect_count:] do mesh_draw_batch(engine, cmd, batch)
 }
 
 // A shadow view's draw runs: the cached casters inside its frustum. Directional cascades ignore the near
@@ -327,27 +553,90 @@ shadow_view_runs :: proc(engine: ^Engine, light_type: LightType, view_proj: Mat4
 	)
 }
 
-draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
-	bound: Maybe(PipelineKind)
-	for batch in draw_runs_upload(engine, list.opaque) {
-		kind: PipelineKind = .Mesh_Double_Sided if mesh_double_sided(engine, batch.mesh) else .Mesh
-		if bound != kind {
+draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList, gpu_culled := false) {
+	pass_pc := mesh_pass_push_constants(engine)
+	if gpu_culled {
+		frame := current_frame_data(engine)
+		pass_pc.instance_ids = backend.buffer_address(&engine.vk_ctx, frame.cull_output_ids)
+		// Each run owns gpu_cull_batch_count commands in run order, so a group's commands are contiguous too.
+		command_start := 0
+		group_start := 0
+		for group_start < len(list.opaque) {
+			kind := list.opaque[group_start].kind
+			assert(
+				kind == .Mesh ||
+				kind == .Mesh_Double_Sided ||
+				kind == .Mesh_Masked ||
+				kind == .Mesh_Masked_Double_Sided,
+				"opaque batch needs an opaque mesh pipeline kind",
+			)
+			group_end := group_start + 1
+			for group_end < len(list.opaque) && list.opaque[group_end].kind == kind do group_end += 1
+			group_commands := 0
+			for batch in list.opaque[group_start:group_end] do group_commands += gpu_cull_batch_count(len(batch.ids))
 			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
-			bound = kind
+			backend.pipeline_push(cmd, &pass_pc)
+			backend.cmd_draw_indexed_indirect(
+				cmd,
+				frame.cull_commands,
+				u64(command_start * size_of(DrawIndexedIndirectCommand)),
+				u32(group_commands),
+				u32(size_of(DrawIndexedIndirectCommand)),
+			)
+			stats_count_indirect_call(engine)
+			for batch in list.opaque[group_start:group_end] {
+				stats_count_draw(engine)
+				engine.stats.counters.candidate_instances += u32(len(batch.ids))
+				engine.stats.counters.candidate_triangles += u64(batch.mesh.index_count / 3) * u64(len(batch.ids))
+			}
+			command_start += group_commands
+			group_start = group_end
 		}
-		mesh_draw_batch(engine, cmd, batch)
+		return
+	}
+	batches := draw_runs_upload(engine, list.opaque)
+	available := indirect_commands_available(engine)
+	indirect_count := min(len(batches), available)
+	start := draw_batches_indirect_upload(engine, batches, indirect_count)
+	backend.pipeline_push(cmd, &pass_pc)
+	// Runs arrive kind-first, so each kind is one contiguous span.
+	group_start := 0
+	for group_start < len(batches) {
+		kind := batches[group_start].kind
+		group_end := group_start + 1
+		for group_end < len(batches) && batches[group_end].kind == kind do group_end += 1
+		backend.pipeline_bind(cmd, pipeline_get(engine, kind))
+		indirect_end := min(group_end, indirect_count)
+		if group_start < indirect_end {
+			backend.cmd_draw_indexed_indirect(
+				cmd,
+				current_frame_data(engine).indirect_buffer,
+				u64((start + group_start) * size_of(DrawIndexedIndirectCommand)),
+				u32(indirect_end - group_start),
+				u32(size_of(DrawIndexedIndirectCommand)),
+			)
+			stats_count_indirect_call(engine)
+			for batch in batches[group_start:indirect_end] {
+				stats_count_draw(engine, u64(batch.mesh.index_count / 3 * batch.count))
+			}
+		}
+		direct_start := min(max(group_start, indirect_count), group_end)
+		for batch in batches[direct_start:group_end] do mesh_draw_batch(engine, cmd, batch)
+		group_start = group_end
 	}
 }
 
 // Back to front, one draw per mesh so the order holds. Draw after everything opaque, skybox
 // included: these don't write depth, so anything drawn later would cover them.
 draw_meshes_transparent :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: DrawList) {
+	pass_pc := mesh_pass_push_constants(engine)
 	bound: Maybe(PipelineKind)
 	for item in list.transparent {
 		kind: PipelineKind =
 			.Mesh_Transparent_Double_Sided if mesh_double_sided(engine, item.mesh) else .Mesh_Transparent
 		if bound != kind {
 			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
+			backend.pipeline_push(cmd, &pass_pc)
 			bound = kind
 		}
 		batch := single_draw_batch(engine, item) or_break
@@ -360,21 +649,24 @@ mesh_double_sided :: proc(engine: ^Engine, mesh: ^Mesh) -> bool {
 	return pool_get(&engine.material_system.materials, mesh.material).double_sided
 }
 
+// The fields every mesh draw in a pass shares. Frame buffers and the material buffer keep their
+// addresses for the whole pass.
+@(private = "file")
+mesh_pass_push_constants :: proc(engine: ^Engine) -> MeshPushConstants {
+	frame := current_frame_data(engine)
+	return MeshPushConstants {
+		scene_data = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
+		vertex_buffer = backend.buffer_address(&engine.vk_ctx, engine.model_system.vertex_buffer),
+		material_buffer = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
+		transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
+		instance_ids = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
+	}
+}
+
 @(private = "file")
 mesh_draw_batch :: proc(engine: ^Engine, cmd: backend.RenderEncoder, batch: DrawBatch) {
-	frame := current_frame_data(engine)
 	mesh := batch.mesh
-	pc := MeshPushConstants {
-		scene_data       = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
-		vertex_buffer    = backend.buffer_address(&engine.vk_ctx, mesh.vertex_buffer),
-		material_buffer  = backend.buffer_address(&engine.vk_ctx, engine.material_system.buffer),
-		transform_buffer = backend.buffer_address(&engine.vk_ctx, frame.transforms_buffer),
-		instance_ids     = backend.buffer_address(&engine.vk_ctx, frame.instance_ids_buffer),
-		material_index   = u32(mesh.material.index),
-		instance_offset  = batch.first_id,
-	}
-	backend.pipeline_push(cmd, &pc)
-	backend.cmd_draw_indexed(cmd, mesh.index_buffer, mesh.index_count, batch.count)
+	backend.cmd_draw_indexed(cmd, mesh.index_count, batch.count, mesh.first_index, mesh.first_vertex, batch.first_id)
 	stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 }
 

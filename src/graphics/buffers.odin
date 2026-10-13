@@ -20,12 +20,26 @@ ParticlePushConstants :: struct #max_field_align(16) {
 }
 
 FrameData :: struct {
-	scene_data_buffer:   backend.Buffer(SceneData),
-	particle_buffer:     backend.Buffer(Particle),
-	transforms_buffer:   backend.Buffer(GpuTransform),
-	instance_ids_buffer: backend.Buffer(u32),
-	instance_id_count:   u32, // ids written this frame
-	transforms_dirty:    [MAX_DRAWS / 64]u64, // draw ids changed since transforms_buffer was written
+	scene_data_buffer:      backend.Buffer(SceneData),
+	point_lights_buffer:    backend.Buffer(GpuPointLight),
+	spot_lights_buffer:     backend.Buffer(GpuSpotLight),
+	clusters:               ClusterBuffers,
+	particle_buffer:        backend.Buffer(Particle),
+	transforms_buffer:      backend.Buffer(GpuTransform),
+	instance_ids_buffer:    backend.Buffer(u32),
+	instance_id_count:      u32, // ids written this frame
+	indirect_buffer:        backend.Buffer(DrawIndexedIndirectCommand),
+	indirect_command_count: u32,
+	cull_candidates:        backend.Buffer(GpuCullCandidate),
+	cull_runs:              backend.Buffer(GpuCullRun),
+	cull_output_ids:        backend.Buffer(u32),
+	cull_commands:          backend.Buffer(DrawIndexedIndirectCommand),
+	cull_planes:            backend.Buffer(Vec4),
+	cull_readback_ids:      backend.Buffer(u32),
+	cull_readback_commands: backend.Buffer(DrawIndexedIndirectCommand),
+	cull_batch_count:       int,
+	cull_candidate_count:   int,
+	transforms_dirty:       [MAX_DRAWS / 64]u64, // draw ids changed since transforms_buffer was written
 }
 
 #assert(MAX_DRAWS % 64 == 0)
@@ -37,6 +51,20 @@ frame_data_create :: proc(engine: ^Engine) {
 			&engine.vk_ctx,
 			1,
 			{.Uniform},
+			.Shared,
+		)
+		engine.frame_data[i].point_lights_buffer = backend.buffer_create(
+			GpuPointLight,
+			&engine.vk_ctx,
+			MAX_POINT_LIGHTS,
+			{.Storage},
+			.Shared,
+		)
+		engine.frame_data[i].spot_lights_buffer = backend.buffer_create(
+			GpuSpotLight,
+			&engine.vk_ctx,
+			MAX_SPOT_LIGHTS,
+			{.Storage},
 			.Shared,
 		)
 		engine.frame_data[i].transforms_buffer = backend.buffer_create(
@@ -53,17 +81,81 @@ frame_data_create :: proc(engine: ^Engine) {
 			{.Storage},
 			.Shared,
 		)
+		engine.frame_data[i].indirect_buffer = backend.buffer_create(
+			DrawIndexedIndirectCommand,
+			&engine.vk_ctx,
+			MAX_INDIRECT_COMMANDS_PER_FRAME,
+			{.Storage, .Indirect},
+			.Upload,
+		)
 		engine.frame_data[i].particle_buffer = create_particle_buffer(&engine.vk_ctx)
+		engine.frame_data[i].cull_candidates = backend.buffer_create(
+			GpuCullCandidate,
+			&engine.vk_ctx,
+			MAX_INSTANCE_IDS,
+			{.Storage},
+			.Shared,
+		)
+		engine.frame_data[i].cull_runs = backend.buffer_create(
+			GpuCullRun,
+			&engine.vk_ctx,
+			MAX_INDIRECT_COMMANDS_PER_FRAME,
+			{.Storage},
+			.Shared,
+		)
+		engine.frame_data[i].cull_output_ids = backend.buffer_create(
+			u32,
+			&engine.vk_ctx,
+			MAX_INSTANCE_IDS,
+			{.Storage, .Transfer_Src},
+			.Gpu,
+		)
+		engine.frame_data[i].cull_commands = backend.buffer_create(
+			DrawIndexedIndirectCommand,
+			&engine.vk_ctx,
+			MAX_INDIRECT_COMMANDS_PER_FRAME,
+			{.Storage, .Indirect, .Transfer_Src},
+			.Gpu,
+		)
+		if engine.gpu_cull_validate {
+			engine.frame_data[i].cull_readback_ids = backend.buffer_create(
+				u32,
+				&engine.vk_ctx,
+				MAX_INSTANCE_IDS,
+				{.Transfer_Dst},
+				.Readback,
+			)
+			engine.frame_data[i].cull_readback_commands = backend.buffer_create(
+				DrawIndexedIndirectCommand,
+				&engine.vk_ctx,
+				MAX_INDIRECT_COMMANDS_PER_FRAME,
+				{.Transfer_Dst},
+				.Readback,
+			)
+		}
+		engine.frame_data[i].cull_planes = backend.buffer_create(Vec4, &engine.vk_ctx, 6, {.Storage}, .Shared)
 	}
+	cluster_buffers_create(engine)
 }
 
 frame_data_destroy :: proc(engine: ^Engine) {
 	for &res in engine.frame_data {
 		backend.buffer_destroy(&engine.vk_ctx, res.scene_data_buffer)
+		backend.buffer_destroy(&engine.vk_ctx, res.point_lights_buffer)
+		backend.buffer_destroy(&engine.vk_ctx, res.spot_lights_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.particle_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.transforms_buffer)
 		backend.buffer_destroy(&engine.vk_ctx, res.instance_ids_buffer)
+		backend.buffer_destroy(&engine.vk_ctx, res.indirect_buffer)
+		backend.buffer_destroy(&engine.vk_ctx, res.cull_candidates)
+		backend.buffer_destroy(&engine.vk_ctx, res.cull_runs)
+		backend.buffer_destroy(&engine.vk_ctx, res.cull_output_ids)
+		backend.buffer_destroy(&engine.vk_ctx, res.cull_commands)
+		backend.buffer_destroy(&engine.vk_ctx, res.cull_planes)
+		if backend.buffer_is_valid(&engine.vk_ctx, res.cull_readback_ids) do backend.buffer_destroy(&engine.vk_ctx, res.cull_readback_ids)
+		if backend.buffer_is_valid(&engine.vk_ctx, res.cull_readback_commands) do backend.buffer_destroy(&engine.vk_ctx, res.cull_readback_commands)
 	}
+	cluster_buffers_destroy(engine)
 }
 
 // TODO: This code is half engine/game code, needs ot be looked at

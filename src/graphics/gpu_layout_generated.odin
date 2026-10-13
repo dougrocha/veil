@@ -6,12 +6,18 @@ package graphics
 GPU_SHARED_TYPES := [?]GpuSharedType {
 	{"Particle", Particle},
 	{"ParticlePushConstants", ParticlePushConstants},
+	{"ClusterHeader", ClusterHeader},
+	{"ClusterPushConstants", ClusterPushConstants},
 	{"DebugViewPushConstants", DebugViewPushConstants},
 	{"SkyboxPushConstants", SkyboxPushConstants},
 	{"TimeInfo", GpuTimeInfo},
 	{"DebugSettings", GpuDebugSettings},
 	{"Transform", GpuTransform},
 	{"SceneData", SceneData},
+	{"DrawIndexedIndirectCommand", DrawIndexedIndirectCommand},
+	{"CullCandidate", GpuCullCandidate},
+	{"CullRun", GpuCullRun},
+	{"CullPushConstants", GpuCullPushConstants},
 	{"AmbientLight", GpuAmbientLight},
 	{"PointLight", GpuPointLight},
 	{"DirectionalLight", GpuDirectionalLight},
@@ -40,10 +46,21 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(ParticlePushConstants, delta_time) == 24)
 #assert(size_of(ParticlePushConstants) == 32)
 
+#assert(offset_of(ClusterHeader, light_offset) == 0)
+#assert(offset_of(ClusterHeader, light_count) == 4)
+#assert(size_of(ClusterHeader) == 8)
+
+#assert(offset_of(ClusterPushConstants, scene_data) == 0)
+#assert(offset_of(ClusterPushConstants, clusters) == 8)
+#assert(offset_of(ClusterPushConstants, indices) == 16)
+#assert(offset_of(ClusterPushConstants, counter) == 24)
+#assert(size_of(ClusterPushConstants) == 32)
+
 #assert(offset_of(DebugViewPushConstants, mode) == 0)
 #assert(offset_of(DebugViewPushConstants, index) == 4)
 #assert(offset_of(DebugViewPushConstants, face) == 8)
-#assert(size_of(DebugViewPushConstants) == 12)
+#assert(offset_of(DebugViewPushConstants, scene_data) == 16)
+#assert(size_of(DebugViewPushConstants) == 24)
 
 #assert(offset_of(SkyboxPushConstants, scene_data) == 0)
 #assert(size_of(SkyboxPushConstants) == 8)
@@ -57,7 +74,7 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(GpuDebugSettings, show_cascades) == 0)
 #assert(offset_of(GpuDebugSettings, disable_shadows) == 4)
 #assert(offset_of(GpuDebugSettings, light_mask) == 8)
-#assert(offset_of(GpuDebugSettings, _reserved) == 12)
+#assert(offset_of(GpuDebugSettings, clustered_lighting) == 12)
 #assert(size_of(GpuDebugSettings) == 16)
 
 #assert(offset_of(GpuTransform, model) == 0)
@@ -72,15 +89,53 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(SceneData, cam_pos_shadow_map_size) == 5824)
 #assert(offset_of(SceneData, time_info) == 5840)
 #assert(offset_of(SceneData, point_lights) == 5856)
-#assert(offset_of(SceneData, point_light_count) == 38624)
-#assert(offset_of(SceneData, directional_light_count) == 38628)
-#assert(offset_of(SceneData, spot_light_count) == 38632)
-#assert(offset_of(SceneData, skybox_cube) == 38636)
-#assert(offset_of(SceneData, directional_lights) == 38640)
-#assert(offset_of(SceneData, spot_lights) == 38736)
-#assert(offset_of(SceneData, ambient_light) == 41296)
-#assert(offset_of(SceneData, debug_settings) == 41312)
-#assert(size_of(SceneData) == 41328)
+#assert(offset_of(SceneData, spot_lights) == 5864)
+#assert(offset_of(SceneData, cluster_headers) == 5872)
+#assert(offset_of(SceneData, cluster_indices) == 5880)
+#assert(offset_of(SceneData, cluster_extent) == 5888)
+#assert(offset_of(SceneData, cluster_near_far) == 5896)
+#assert(offset_of(SceneData, point_light_count) == 5904)
+#assert(offset_of(SceneData, directional_light_count) == 5908)
+#assert(offset_of(SceneData, spot_light_count) == 5912)
+#assert(offset_of(SceneData, skybox_cube) == 5916)
+#assert(offset_of(SceneData, directional_lights) == 5920)
+#assert(offset_of(SceneData, ambient_light) == 6016)
+#assert(offset_of(SceneData, debug_settings) == 6032)
+#assert(size_of(SceneData) == 6048)
+
+#assert(offset_of(DrawIndexedIndirectCommand, index_count) == 0)
+#assert(offset_of(DrawIndexedIndirectCommand, instance_count) == 4)
+#assert(offset_of(DrawIndexedIndirectCommand, first_index) == 8)
+#assert(offset_of(DrawIndexedIndirectCommand, vertex_offset) == 12)
+#assert(offset_of(DrawIndexedIndirectCommand, first_instance) == 16)
+#assert(size_of(DrawIndexedIndirectCommand) == 20)
+
+#assert(offset_of(GpuCullCandidate, packed_id) == 0)
+#assert(offset_of(GpuCullCandidate, run_index) == 4)
+#assert(size_of(GpuCullCandidate) == 8)
+
+#assert(offset_of(GpuCullRun, first_candidate) == 0)
+#assert(offset_of(GpuCullRun, candidate_count) == 4)
+#assert(offset_of(GpuCullRun, first_index) == 8)
+#assert(offset_of(GpuCullRun, vertex_offset) == 12)
+#assert(offset_of(GpuCullRun, index_count) == 16)
+#assert(offset_of(GpuCullRun, instance_count) == 20)
+#assert(offset_of(GpuCullRun, first_instance) == 24)
+#assert(offset_of(GpuCullRun, _reserved) == 28)
+#assert(offset_of(GpuCullRun, bounds_center) == 32)
+#assert(offset_of(GpuCullRun, bounds_extents) == 48)
+#assert(size_of(GpuCullRun) == 64)
+
+#assert(offset_of(GpuCullPushConstants, candidates) == 0)
+#assert(offset_of(GpuCullPushConstants, runs) == 8)
+#assert(offset_of(GpuCullPushConstants, transforms) == 16)
+#assert(offset_of(GpuCullPushConstants, planes) == 24)
+#assert(offset_of(GpuCullPushConstants, output_ids) == 32)
+#assert(offset_of(GpuCullPushConstants, commands) == 40)
+#assert(offset_of(GpuCullPushConstants, candidate_count) == 48)
+#assert(offset_of(GpuCullPushConstants, run_count) == 52)
+#assert(offset_of(GpuCullPushConstants, init_commands) == 56)
+#assert(size_of(GpuCullPushConstants) == 64)
 
 #assert(offset_of(GpuAmbientLight, color_brightness) == 0)
 #assert(size_of(GpuAmbientLight) == 16)
@@ -140,9 +195,7 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(MeshPushConstants, material_buffer) == 16)
 #assert(offset_of(MeshPushConstants, transform_buffer) == 24)
 #assert(offset_of(MeshPushConstants, instance_ids) == 32)
-#assert(offset_of(MeshPushConstants, material_index) == 40)
-#assert(offset_of(MeshPushConstants, instance_offset) == 44)
-#assert(size_of(MeshPushConstants) == 48)
+#assert(size_of(MeshPushConstants) == 40)
 
 #assert(offset_of(TonemapPushConstants, hdr_texture) == 0)
 #assert(offset_of(TonemapPushConstants, out_storage) == 4)
@@ -168,11 +221,9 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(ShadowPushConstants, material_buffer) == 80)
 #assert(offset_of(ShadowPushConstants, transform_buffer) == 88)
 #assert(offset_of(ShadowPushConstants, instance_ids) == 96)
-#assert(offset_of(ShadowPushConstants, instance_offset) == 104)
-#assert(offset_of(ShadowPushConstants, light_type) == 108)
-#assert(offset_of(ShadowPushConstants, light_index) == 112)
-#assert(offset_of(ShadowPushConstants, material_index) == 116)
-#assert(size_of(ShadowPushConstants) == 120)
+#assert(offset_of(ShadowPushConstants, light_type) == 104)
+#assert(offset_of(ShadowPushConstants, light_index) == 108)
+#assert(size_of(ShadowPushConstants) == 112)
 
 #assert(offset_of(UIVertex, position) == 0)
 #assert(offset_of(UIVertex, uv) == 8)
