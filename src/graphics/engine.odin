@@ -135,6 +135,7 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 
 	engine.frame_count += 1
 	gpu_profiler_collect(engine)
+	gpu_cull_collect(engine)
 	wait_ms := tick_ms(wait_start)
 	record_start := time.tick_now()
 
@@ -385,4 +386,23 @@ frame_commit :: proc(engine: ^Engine, f: ^PreparedFrame, packet: ^FramePacket) {
 	shadow_cache_commit(&engine.shadows.cache, &f.shadow_plan, packet.lights)
 	draw_history_commit(&engine.prev_draws, f.slot)
 	engine.stats.last = f.counters
+	cull, culled := f.uploads.cull.(CullUpload)
+	engine.frame_data[f.slot].cull_readback_batches = culled ? len(cull.runs) : 0
+}
+
+// Reads this slot's cull commands from its last submitted frame. Call after frame begin's fence wait.
+gpu_cull_collect :: proc(engine: ^Engine) {
+	frame := current_frame_data(engine)
+	batch_count := frame.cull_readback_batches
+	frame.cull_readback_batches = 0
+	engine.stats.gpu_visible = {}
+	if batch_count == 0 do return
+	commands := make([]DrawIndexedIndirectCommand, batch_count, context.temp_allocator)
+	backend.buffer_read(&engine.vk_ctx, frame.cull_readback_commands, commands)
+	visible := &engine.stats.gpu_visible
+	visible.valid = true
+	for command in commands {
+		visible.instances += u64(command.instance_count)
+		visible.triangles += u64(command.index_count / 3) * u64(command.instance_count)
+	}
 }

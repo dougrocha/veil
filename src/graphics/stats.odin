@@ -26,6 +26,13 @@ FrameCounters :: struct {
 	dropped_debug_views: u32,
 }
 
+// Post-cull totals read back from a frame slot's cull commands.
+GpuVisible :: struct {
+	valid:     bool,
+	instances: u64,
+	triangles: u64,
+}
+
 // CPU milliseconds per engine_render phase.
 CpuTimings :: struct {
 	frame:  f64, // frame-to-frame, includes the game loop outside engine_render
@@ -45,6 +52,7 @@ GpuScopeStat :: struct {
 Stats :: struct {
 	latest:       CpuTimings, // raw timings for the most recently submitted frame
 	last:         FrameCounters, // last fully recorded frame
+	gpu_visible:  GpuVisible, // from an earlier frame: the GPU cull result lands after its fence
 
 	// window accumulators
 	sum:          CpuTimings,
@@ -178,10 +186,19 @@ stats_draw :: proc(
 		c.shadow_views_cached,
 	)
 	if c.candidate_instances > 0 {
+		visibility := "GPU visibility unknown"
+		if s.gpu_visible.valid {
+			visibility = fmt.tprintf(
+				"visible %d (gpu, latent) / %.2fM tris",
+				s.gpu_visible.instances,
+				f64(s.gpu_visible.triangles) / 1e6,
+			)
+		}
 		draw_line = fmt.tprintf(
-			"draws %d  indirect calls %d  GPU visibility unknown  candidates %d / %.2fM tris  shadow views %d (%d cached)",
+			"draws %d  indirect calls %d  %s  candidates %d / %.2fM tris  shadow views %d (%d cached)",
 			c.draw_calls,
 			c.indirect_calls,
+			visibility,
 			c.candidate_instances,
 			f64(c.candidate_triangles) / 1e6,
 			c.shadow_views,
