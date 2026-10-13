@@ -14,11 +14,23 @@ for scene in load_cull_batch_boundary load_cull_32k_single_run; do
   for gpu in 0 1; do
     VEIL_GPU_CULL=$gpu VEIL_GPU_CULL_VALIDATE=$gpu "$dump" "$here" "$scene" "$out/${name}_gpu$gpu" "$frames"
   done
-  # The GPU-on run must have validated at least one frame, and no frame may report a mismatch or false negative.
+  # The GPU-on run must have validated at least one frame. No frame may report a mismatch, a false negative,
+  # or a structural error (wrong batch count, command fields, or candidate layout). Every summary line must read
+  # structural=0, and no structural error may be logged.
   log="$out/${name}_gpu1.log"
-  rg -q 'GPU culling validation: batches=' "$log" || { echo "$name: no GPU culling validation lines in $log" >&2; exit 1; }
-  if rg -q 'mismatches=[1-9]|false_negatives=[1-9]' "$log"; then
-    echo "$name: GPU culling validation reported mismatches, see $log" >&2
+  summaries=$(rg -c 'GPU culling validation: batches=' "$log" || true)
+  [[ ${summaries:-0} -gt 0 ]] || { echo "$name: no GPU culling validation lines in $log" >&2; exit 1; }
+  if rg -q 'mismatches=[1-9]|false_negatives=[1-9]|structural=[1-9]' "$log"; then
+    echo "$name: GPU culling validation reported mismatches or structural errors, see $log" >&2
+    exit 1
+  fi
+  clean=$(rg -c 'GPU culling validation: batches=.* structural=0 \(extras' "$log" || true)
+  if [[ $clean != "$summaries" ]]; then
+    echo "$name: $clean of $summaries validation summaries read structural=0, see $log" >&2
+    exit 1
+  fi
+  if rg -q '\[ERROR\].*GPU culling validation' "$log"; then
+    echo "$name: GPU culling validation logged an error, see $log" >&2
     exit 1
   fi
   for ((i = 0; i < frames; i++)); do
@@ -28,7 +40,9 @@ for scene in load_cull_batch_boundary load_cull_32k_single_run; do
       exit 1
     }
     echo "$name frame $i: $result"
-    if [[ ! $result =~ differing_pixels\(fuzz1%\)=0[[:space:]] ]]; then
+    # compare.sh prints "differing_pixels(fuzz1%)=0 (0) rmse=0 (0)" for identical images. Exact string match, so
+    # ImageMagick errors and any nonzero RMSE both fail.
+    if [[ $result != "differing_pixels(fuzz1%)=0 (0) rmse=0 (0)" ]]; then
       echo "$name frame $i: GPU-on frame differs from GPU-off frame" >&2
       exit 1
     fi

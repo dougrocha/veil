@@ -296,9 +296,12 @@ dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Co
 	if engine.gpu_cull_validate {
 		backend.cmd_barrier_compute_write_to_transfer_read(encoder)
 		backend.cmd_copy_buffer(cmd, frame.cull_commands, frame.cull_readback_commands, batch_count)
-		backend.cmd_copy_buffer(cmd, frame.cull_output_ids, frame.cull_readback_ids, candidate_count)
 		backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_commands)
-		backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_ids)
+		// A zero-size copy is invalid. Runs can all be empty, which leaves no candidates to read back.
+		if candidate_count > 0 {
+			backend.cmd_copy_buffer(cmd, frame.cull_output_ids, frame.cull_readback_ids, candidate_count)
+			backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_ids)
+		}
 	}
 	backend.cmd_barrier_compute_write_to_draw_read(encoder)
 	backend.end_compute_pass(encoder)
@@ -312,14 +315,13 @@ gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
 	commands := make([]DrawIndexedIndirectCommand, frame.cull_batch_count, context.temp_allocator)
 	ids := make([]u32, frame.cull_candidate_count, context.temp_allocator)
 	backend.buffer_read(&engine.vk_ctx, frame.cull_readback_commands, commands)
-	backend.buffer_read(&engine.vk_ctx, frame.cull_readback_ids, ids)
+	if frame.cull_candidate_count > 0 do backend.buffer_read(&engine.vk_ctx, frame.cull_readback_ids, ids)
 	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
 	candidate_runs := build_draw_list(draw_input(engine), frustum, packet.camera.position, true).opaque
 	cpu_runs := build_draw_list(draw_input(engine), frustum, packet.camera.position).opaque
-	false_negatives, extras, kept: int
-	command_index := 0
+	false_negatives, extras, kept, structural: int
+	command_index, candidate_offset := 0, 0
 	for gpu_run, run_index in candidate_runs {
-		batch_count := gpu_cull_batch_count(len(gpu_run.ids))
 		cpu_ids: []u32
 		for cpu_run in cpu_runs {
 			if cpu_run.mesh == gpu_run.mesh {
@@ -330,12 +332,48 @@ gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
 				break
 			}
 		}
-		// A run's batches are consecutive commands, and their outputs concatenate in candidate order.
+		// The expected batch layout is rebuilt here, not taken from gpu_cull_batch_count, so the validator does not
+		// reuse the code it checks. An empty run still expects one batch. Each batch's output starts at its own
+		// first_candidate, and the batches concatenate in candidate order.
+		run_ids := len(gpu_run.ids)
+		mesh := gpu_run.mesh
 		gpu_ids := make([dynamic]u32, context.temp_allocator)
-		for command in commands[command_index:][:batch_count] {
+		for first := 0; first < run_ids || first == 0; first += GPU_CULL_BATCH_CANDIDATES {
+			expected_count := max(0, min(GPU_CULL_BATCH_CANDIDATES, run_ids - first))
+			expected_first := candidate_offset + first
+			if command_index >= len(commands) {
+				structural += 1
+				log.errorf("GPU culling validation run %d: no GPU command for candidate %d", run_index, expected_first)
+				continue
+			}
+			command := commands[command_index]
+			command_index += 1
+			if command.first_instance != u32(expected_first) ||
+			   command.instance_count > u32(expected_count) ||
+			   command.index_count != mesh.index_count ||
+			   command.first_index != mesh.first_index ||
+			   command.vertex_offset != i32(mesh.first_vertex) {
+				structural += 1
+				log.errorf(
+					"GPU culling validation run %d: command %d does not match expected batch at candidate %d",
+					run_index,
+					command_index - 1,
+					expected_first,
+				)
+				continue
+			}
+			if int(command.first_instance) + int(command.instance_count) > len(ids) {
+				structural += 1
+				log.errorf(
+					"GPU culling validation run %d: batch at candidate %d overruns the readback",
+					run_index,
+					expected_first,
+				)
+				continue
+			}
 			append_elems(&gpu_ids, ..ids[command.first_instance:][:command.instance_count])
 		}
-		command_index += batch_count
+		candidate_offset += run_ids
 		// Ordered match: each CPU id must appear in the GPU output in the same order. Unmatched GPU ids,
 		// including duplicates, count as extras.
 		run_fn, matched: int
@@ -365,9 +403,21 @@ gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
 			if run_fn != 0 do log.errorf("GPU culling validation found false negatives in run %d", run_index)
 		}
 	}
+	if command_index != frame.cull_batch_count {
+		structural += 1
+		log.errorf("GPU culling validation: recorded %d batches, validated %d", frame.cull_batch_count, command_index)
+	}
+	if candidate_offset != frame.cull_candidate_count {
+		structural += 1
+		log.errorf(
+			"GPU culling validation: recorded %d candidates, expected %d",
+			frame.cull_candidate_count,
+			candidate_offset,
+		)
+	}
 	culled := frame.cull_candidate_count - kept
 	log.infof(
-		"GPU culling validation: batches=%d candidates=%d kept=%d culled=%d mismatches=%d false_negatives=%d extras=%d (extras are conservative mesh-AABB visibility beyond CPU model bounds)",
+		"GPU culling validation: batches=%d candidates=%d kept=%d culled=%d mismatches=%d false_negatives=%d extras=%d structural=%d (extras are conservative mesh-AABB visibility beyond CPU model bounds)",
 		frame.cull_batch_count,
 		frame.cull_candidate_count,
 		kept,
@@ -375,6 +425,7 @@ gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
 		false_negatives + extras,
 		false_negatives,
 		extras,
+		structural,
 	)
 }
 
@@ -484,15 +535,6 @@ draw_shadow :: proc(
 		stats_count_draw(engine, u64(mesh.index_count / 3 * batch.count))
 	}
 	for batch in batches[indirect_count:] do mesh_draw_batch(engine, cmd, batch)
-}
-
-// The camera's draw list for this frame. Counts its culling stats.
-view_draw_list :: proc(engine: ^Engine, packet: ^FramePacket) -> DrawList {
-	frustum := frustum_create_from_camera(&packet.camera, render_aspect(engine))
-	list := build_draw_list(draw_input(engine), frustum, packet.camera.position)
-	engine.stats.counters.draws_visible += list.draws_visible
-	engine.stats.counters.meshes_culled += list.meshes_culled
-	return list
 }
 
 // A shadow view's draw runs: the cached casters inside its frustum. Directional cascades ignore the near

@@ -508,11 +508,13 @@ load_cull_32k_single_run :: proc(engine: ^gfx.Engine, world: ^World) {
 	world.active_camera = entity_spawn_camera(world, gfx.camera_create({0, 0, 60}, yaw = -90, pitch = 0))
 }
 
-// Validation: 2048 red cubes in one run. The first 1024 candidates alternate culled (x = 500) and
-// visible, so both batches hold culled and kept ids. Visible cubes sit on distinct cells, so a
-// dropped or duplicated id shows as a hole or an extra cube in the image.
-// Green and blue cubes share one spot in front of the grid. Each is its own run, so their coplanar
-// winner comes from run order. Same-run coplanar pairs cannot be told apart: a run has one material.
+// Validation: 2048 red cubes in one run across two batches. Every third candidate is culled (x = 500), so
+// each batch holds kept and culled ids, and batch 2 starts on a kept id (1024 % 3 == 1). Visible cubes sit
+// on distinct cells, so a dropped or duplicated id shows as a hole or an extra cube in the image.
+// The double-sided green run follows red, so its pipeline group starts after red's commands.
+// Green and blue share one spot in front of the grid. Each is its own run, so their coplanar winner comes
+// from run order. This image does not observe order within a run. Same-run coplanar pairs can differ in
+// transform or texture, and the ordered match in gpu_cull_validate_frame covers that order.
 load_cull_batch_boundary :: proc(engine: ^gfx.Engine, world: ^World) {
 	red := gfx.model_with_material(
 		engine,
@@ -521,7 +523,7 @@ load_cull_batch_boundary :: proc(engine: ^gfx.Engine, world: ^World) {
 	)
 	for i in 0 ..< 2048 {
 		pos := gfx.Vec3{f32(i % 64) * 0.5 - 15.75, f32(i / 64) * 0.5 - 7.75, 0}
-		if i < 1024 && i % 2 == 0 do pos = {500, 0, 0}
+		if i % 3 == 0 do pos = {500, 0, 0}
 		entity_spawn_model(world, red, gfx.transform_create(translation = pos))
 	}
 	green := gfx.model_with_material(
@@ -532,6 +534,7 @@ load_cull_batch_boundary :: proc(engine: ^gfx.Engine, world: ^World) {
 			"cull_boundary_green",
 			base_color = {0.1, 0.9, 0.1, 1},
 			perceptual_roughness = 0.5,
+			double_sided = true,
 		),
 	)
 	blue := gfx.model_with_material(
