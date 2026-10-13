@@ -34,7 +34,7 @@ FrameData :: struct {
 	cull_planes:            backend.Buffer(Vec4),
 	cull_readback_ids:      backend.Buffer(u32),
 	cull_readback_commands: backend.Buffer(DrawIndexedIndirectCommand),
-	cull_run_count:         int,
+	cull_batch_count:       int,
 	cull_candidate_count:   int,
 	transforms_dirty:       [MAX_DRAWS / 64]u64, // draw ids changed since transforms_buffer was written
 }

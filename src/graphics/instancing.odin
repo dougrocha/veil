@@ -36,6 +36,8 @@ DrawIndexedIndirectCommand :: struct #max_field_align(16) {
 MAX_INSTANCE_IDS :: MAX_DRAWS * (1 + MAX_SHADOW_2D_SLOTS + MAX_POINT_SHADOW_LIGHTS * 6)
 // 64k commands covers several views of the maximum 32k draws while keeping each slot near 1.25 MiB.
 MAX_INDIRECT_COMMANDS_PER_FRAME :: 64 * 1024
+// GPU culling compacts each batch serially in one invocation, so a batch caps that scan's length.
+GPU_CULL_BATCH_CANDIDATES :: 1024
 
 // One draw: count instances of mesh, their ids at first_id in the frame's id list.
 DrawBatch :: struct {

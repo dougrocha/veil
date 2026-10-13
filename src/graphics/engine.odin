@@ -217,38 +217,50 @@ dispatch_particles :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.C
 	backend.end_compute_pass(encoder)
 }
 
+// Commands a run takes: one per GPU_CULL_BATCH_CANDIDATES ids. An empty run keeps one, so its draw stays counted.
+gpu_cull_batch_count :: proc(id_count: int) -> int {
+	return max(1, (id_count + GPU_CULL_BATCH_CANDIDATES - 1) / GPU_CULL_BATCH_CANDIDATES)
+}
+
 dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer, runs: []DrawRun) -> bool {
 	frame := current_frame_data(engine)
 	engine.gpu_cull_validate_slot = backend.frame_slot(&engine.vk_ctx)
-	frame.cull_run_count = 0
+	frame.cull_batch_count = 0
 	frame.cull_candidate_count = 0
-	candidate_count, run_count: int
+	candidate_count, batch_count: int
 	candidates := make([dynamic]GpuCullCandidate, context.temp_allocator)
 	run_data := make([dynamic]GpuCullRun, context.temp_allocator)
-	for run, run_index in runs {
-		if candidate_count + len(run.ids) > MAX_INSTANCE_IDS || run_count >= MAX_INDIRECT_COMMANDS_PER_FRAME do return false
+	// Batches stay in run order and candidate order, so each batch's output lands at its own first_candidate.
+	for run in runs {
+		run_ids := len(run.ids)
+		run_batches := gpu_cull_batch_count(run_ids)
+		if candidate_count + run_ids > MAX_INSTANCE_IDS || batch_count + run_batches > MAX_INDIRECT_COMMANDS_PER_FRAME do return false
 		mesh := run.mesh
-		append(
-			&run_data,
-			GpuCullRun {
-				first_candidate = u32(candidate_count),
-				candidate_count = u32(len(run.ids)),
-				first_index = mesh.first_index,
-				vertex_offset = i32(mesh.first_vertex),
-				index_count = mesh.index_count,
-				bounds_center = Vec4{mesh.bounds.center.x, mesh.bounds.center.y, mesh.bounds.center.z, 0},
-				bounds_extents = Vec4{mesh.bounds.extents.x, mesh.bounds.extents.y, mesh.bounds.extents.z, 0},
-			},
-		)
-		for id in run.ids {
-			packed := (u32(id) << u32(INSTANCE_DRAW_ID_SHIFT)) | u32(mesh.material.index)
-			append(&candidates, GpuCullCandidate{packed_id = packed, run_index = u32(run_index)})
+		for b in 0 ..< run_batches {
+			first := min(b * GPU_CULL_BATCH_CANDIDATES, run_ids)
+			last := min(first + GPU_CULL_BATCH_CANDIDATES, run_ids)
+			append(
+				&run_data,
+				GpuCullRun {
+					first_candidate = u32(candidate_count),
+					candidate_count = u32(last - first),
+					first_index = mesh.first_index,
+					vertex_offset = i32(mesh.first_vertex),
+					index_count = mesh.index_count,
+					bounds_center = Vec4{mesh.bounds.center.x, mesh.bounds.center.y, mesh.bounds.center.z, 0},
+					bounds_extents = Vec4{mesh.bounds.extents.x, mesh.bounds.extents.y, mesh.bounds.extents.z, 0},
+				},
+			)
+			for id in run.ids[first:last] {
+				packed := (u32(id) << u32(INSTANCE_DRAW_ID_SHIFT)) | u32(mesh.material.index)
+				append(&candidates, GpuCullCandidate{packed_id = packed, run_index = u32(batch_count)})
+			}
+			candidate_count += last - first
+			batch_count += 1
 		}
-		candidate_count += len(run.ids)
-		run_count += 1
 	}
-	if run_count == 0 do return true
-	frame.cull_run_count = run_count
+	if batch_count == 0 do return true
+	frame.cull_batch_count = batch_count
 	frame.cull_candidate_count = candidate_count
 	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_candidates, candidates[:])
 	backend.buffer_write_slice(&engine.vk_ctx, frame.cull_runs, run_data[:])
@@ -264,7 +276,7 @@ dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Co
 		output_ids      = backend.buffer_address(&engine.vk_ctx, frame.cull_output_ids),
 		commands        = backend.buffer_address(&engine.vk_ctx, frame.cull_commands),
 		candidate_count = u32(candidate_count),
-		run_count       = u32(run_count),
+		run_count       = u32(batch_count),
 	}
 	encoder := backend.begin_compute_pass(cmd)
 	scope := gpu_scope_begin(engine, cmd, "culling")
@@ -272,7 +284,7 @@ dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Co
 	backend.pipeline_bind_compute(encoder, pipeline_get(engine, .Gpu_Cull))
 	pc.init_commands = 1
 	backend.pipeline_push_compute(encoder, &pc)
-	backend.cmd_dispatch(encoder, (u32(run_count) + 255) / 256, 1, 1)
+	backend.cmd_dispatch(encoder, (u32(batch_count) + 255) / 256, 1, 1)
 	backend.cmd_barrier_compute_write_to_compute_read(encoder)
 	pc.init_commands = 0
 	backend.pipeline_push_compute(encoder, &pc)
@@ -280,10 +292,10 @@ dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Co
 	backend.cmd_barrier_compute_write_to_compute_read(encoder)
 	pc.init_commands = 2
 	backend.pipeline_push_compute(encoder, &pc)
-	backend.cmd_dispatch(encoder, (u32(run_count) + 255) / 256, 1, 1)
+	backend.cmd_dispatch(encoder, (u32(batch_count) + 255) / 256, 1, 1)
 	if engine.gpu_cull_validate {
 		backend.cmd_barrier_compute_write_to_transfer_read(encoder)
-		backend.cmd_copy_buffer(cmd, frame.cull_commands, frame.cull_readback_commands, run_count)
+		backend.cmd_copy_buffer(cmd, frame.cull_commands, frame.cull_readback_commands, batch_count)
 		backend.cmd_copy_buffer(cmd, frame.cull_output_ids, frame.cull_readback_ids, candidate_count)
 		backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_commands)
 		backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_ids)
@@ -296,8 +308,8 @@ dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Co
 
 gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
 	frame := &engine.frame_data[engine.gpu_cull_validate_slot]
-	if frame.cull_run_count == 0 do return
-	commands := make([]DrawIndexedIndirectCommand, frame.cull_run_count, context.temp_allocator)
+	if frame.cull_batch_count == 0 do return
+	commands := make([]DrawIndexedIndirectCommand, frame.cull_batch_count, context.temp_allocator)
 	ids := make([]u32, frame.cull_candidate_count, context.temp_allocator)
 	backend.buffer_read(&engine.vk_ctx, frame.cull_readback_commands, commands)
 	backend.buffer_read(&engine.vk_ctx, frame.cull_readback_ids, ids)
@@ -305,8 +317,9 @@ gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
 	candidate_runs := build_draw_list(draw_input(engine), frustum, packet.camera.position, true).opaque
 	cpu_runs := build_draw_list(draw_input(engine), frustum, packet.camera.position).opaque
 	false_negatives, extras, kept: int
-	for command, run_index in commands {
-		gpu_run := candidate_runs[run_index]
+	command_index := 0
+	for gpu_run, run_index in candidate_runs {
+		batch_count := gpu_cull_batch_count(len(gpu_run.ids))
 		cpu_ids: []u32
 		for cpu_run in cpu_runs {
 			if cpu_run.mesh == gpu_run.mesh {
@@ -317,21 +330,30 @@ gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
 				break
 			}
 		}
-		gpu_ids := ids[command.first_instance:][:command.instance_count]
-		run_fn, run_extras: int
+		// A run's batches are consecutive commands, and their outputs concatenate in candidate order.
+		gpu_ids := make([dynamic]u32, context.temp_allocator)
+		for command in commands[command_index:][:batch_count] {
+			append_elems(&gpu_ids, ..ids[command.first_instance:][:command.instance_count])
+		}
+		command_index += batch_count
+		// Ordered match: each CPU id must appear in the GPU output in the same order. Unmatched GPU ids,
+		// including duplicates, count as extras.
+		run_fn, matched: int
+		p := 0
 		for cpu_id in cpu_ids {
-			found := false
-			for gpu_id in gpu_ids do if cpu_id == gpu_id {found = true; break}
-			if !found do run_fn += 1
+			q := p
+			for q < len(gpu_ids) && gpu_ids[q] != cpu_id do q += 1
+			if q == len(gpu_ids) {
+				run_fn += 1
+			} else {
+				p = q + 1
+				matched += 1
+			}
 		}
-		for gpu_id in gpu_ids {
-			found := false
-			for cpu_id in cpu_ids do if gpu_id == cpu_id {found = true; break}
-			if !found do run_extras += 1
-		}
+		run_extras := len(gpu_ids) - matched
 		false_negatives += run_fn
 		extras += run_extras
-		kept += int(command.instance_count)
+		kept += len(gpu_ids)
 		if run_fn != 0 || run_extras != 0 {
 			log.infof(
 				"GPU culling validation run %d: mismatches=%d false negatives=%d extras=%d",
@@ -345,8 +367,8 @@ gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket) {
 	}
 	culled := frame.cull_candidate_count - kept
 	log.infof(
-		"GPU culling validation: runs=%d candidates=%d kept=%d culled=%d mismatches=%d false_negatives=%d extras=%d (extras are conservative mesh-AABB visibility beyond CPU model bounds)",
-		frame.cull_run_count,
+		"GPU culling validation: batches=%d candidates=%d kept=%d culled=%d mismatches=%d false_negatives=%d extras=%d (extras are conservative mesh-AABB visibility beyond CPU model bounds)",
+		frame.cull_batch_count,
 		frame.cull_candidate_count,
 		kept,
 		culled,
@@ -490,6 +512,8 @@ draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: Dr
 	if gpu_culled {
 		frame := current_frame_data(engine)
 		pass_pc.instance_ids = backend.buffer_address(&engine.vk_ctx, frame.cull_output_ids)
+		// Each run owns gpu_cull_batch_count commands in run order, so a group's commands are contiguous too.
+		command_start := 0
 		group_start := 0
 		for group_start < len(list.opaque) {
 			kind: PipelineKind =
@@ -501,13 +525,15 @@ draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: Dr
 				if next_kind != kind do break
 				group_end += 1
 			}
+			group_commands := 0
+			for batch in list.opaque[group_start:group_end] do group_commands += gpu_cull_batch_count(len(batch.ids))
 			backend.pipeline_bind(cmd, pipeline_get(engine, kind))
 			backend.pipeline_push(cmd, &pass_pc)
 			backend.cmd_draw_indexed_indirect(
 				cmd,
 				frame.cull_commands,
-				u64(group_start * size_of(DrawIndexedIndirectCommand)),
-				u32(group_end - group_start),
+				u64(command_start * size_of(DrawIndexedIndirectCommand)),
+				u32(group_commands),
 				u32(size_of(DrawIndexedIndirectCommand)),
 			)
 			stats_count_indirect_call(engine)
@@ -516,6 +542,7 @@ draw_meshes_opaque :: proc(engine: ^Engine, cmd: backend.RenderEncoder, list: Dr
 				engine.stats.counters.candidate_instances += u32(len(batch.ids))
 				engine.stats.counters.candidate_triangles += u64(batch.mesh.index_count / 3) * u64(len(batch.ids))
 			}
+			command_start += group_commands
 			group_start = group_end
 		}
 		return

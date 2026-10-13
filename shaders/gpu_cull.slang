@@ -25,8 +25,8 @@ void compute_main(uint3 dispatch_id : SV_DispatchThreadID) {
         if (index >= pc.run_count) return;
         CullRun run = pc.runs[index];
         uint visible_count = 0;
-        // A run contains at most 4096 candidates. One invocation scans it in O(n), avoiding
-        // atomics and preserving candidate order while keeping the scan simple at engine scale.
+        // A batch holds at most 1024 candidates (GPU_CULL_BATCH_CANDIDATES). One invocation scans it in O(n),
+        // avoiding atomics and preserving candidate order.
         for (uint offset = 0; offset < run.candidate_count; ++offset) {
             uint candidate_index = run.first_candidate + offset;
             if (pc.output_ids[candidate_index] == 0) continue;
