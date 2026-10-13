@@ -192,15 +192,20 @@ float sample_cascade(float3 frag_pos, float3 normal, float3 to_light, uint light
     float cascade_bias = select_component(pc.scene_data.shadow_cascade_data[light_index].bias, cascade);
     float bias = max(cascade_bias * (1.0 - dot(normal, to_light)), cascade_bias * 0.1);
 
-    float texel_size = 1.0 / pc.scene_data.cam_pos_shadow_map_size.w;
-    float shadow = 0.0;
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            float2 offset = float2(x, y) * texel_size;
-            shadow += shadow_2d_maps.SampleCmp(float3(proj_coords.xy + offset, float(slot)), proj_coords.z - bias);
-        }
-    }
-    return shadow / 9.0;
+    float half_texel = 0.5 / pc.scene_data.cam_pos_shadow_map_size.w;
+    float depth = proj_coords.z - bias;
+    // Each compare tap is already bilinear, so four taps at half-texel offsets give a 2-texel box
+    // over a 3x3 texel footprint (penumbra ~30% narrower than the old 9-tap grid). Kept as explicit
+    // taps: a loop form of the same pattern measured slower.
+    float shadow = shadow_2d_maps.SampleCmp(
+        float3(proj_coords.xy + float2(-half_texel, -half_texel), float(slot)), depth);
+    shadow += shadow_2d_maps.SampleCmp(
+        float3(proj_coords.xy + float2(-half_texel, half_texel), float(slot)), depth);
+    shadow += shadow_2d_maps.SampleCmp(
+        float3(proj_coords.xy + float2(half_texel, -half_texel), float(slot)), depth);
+    shadow += shadow_2d_maps.SampleCmp(
+        float3(proj_coords.xy + float2(half_texel, half_texel), float(slot)), depth);
+    return shadow * 0.25;
 }
 
 float calc_dir_shadow_factor(float3 frag_pos, float3 normal, float3 to_light, uint light_index, out uint cascade_out) {
