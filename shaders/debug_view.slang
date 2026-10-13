@@ -45,5 +45,18 @@ float4 fragment_main(VSOutput input) : SV_TARGET {
         return float4(depth, depth, depth, 1.0);
     }
 
+    if (pc.mode == DEBUG_VIEW_MODE_CLUSTER_HEATMAP) {
+        SceneData* scene = (SceneData*)pc.scene_data;
+        ClusterHeader* headers = (ClusterHeader*)scene->cluster_headers;
+        uint2 tile = min(uint2(input.uv * float2(CLUSTER_X, CLUSTER_Y)), uint2(CLUSTER_X - 1, CLUSTER_Y - 1));
+        uint count = 0;
+        for (uint z = 0; z < CLUSTER_Z; ++z) {
+            uint cluster = tile.x + tile.y * CLUSTER_X + z * CLUSTER_X * CLUSTER_Y;
+            count = max(count, headers[cluster].light_count & ~CLUSTER_OVERFLOW_BIT);
+        }
+        float t = saturate(float(count) / 24.0);
+        return float4(t, 1.0 - abs(t * 2.0 - 1.0), 1.0 - t, 0.72);
+    }
+
     return gpu_texture(pc.index).Sample(gpu_sampler(SAMPLER_LINEAR_REPEAT), input.uv);
 }

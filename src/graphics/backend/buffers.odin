@@ -240,6 +240,26 @@ buffer_write_value :: proc(ctx: ^Context, buf: Buffer($T), value: T, index := 0,
 	dst[0] = value
 }
 
+buffer_copy_readback :: proc(ctx: ^Context, src: Buffer($T), dst: Buffer(T), count: int) {
+	cmd := immediate_submit(ctx)
+	region := vk.BufferCopy {
+		size = vk.DeviceSize(size_of(T) * count),
+	}
+	vk.CmdCopyBuffer(cmd.handle, buffer_slot(ctx, src).buffer, buffer_slot(ctx, dst).buffer, 1, &region)
+	cmd_barrier_transfer_write_to_host_read(cmd, dst)
+}
+
+// Copies a compute-written buffer into mapped readback memory for debug validation.
+buffer_copy_compute_readback :: proc(ctx: ^Context, src: Buffer($T), dst: Buffer(T), count: int) {
+	cmd := immediate_submit(ctx)
+	cmd_barrier_compute_write_to_transfer_read(cmd, src)
+	region := vk.BufferCopy {
+		size = vk.DeviceSize(size_of(T) * count),
+	}
+	vk.CmdCopyBuffer(cmd.handle, buffer_slot(ctx, src).buffer, buffer_slot(ctx, dst).buffer, 1, &region)
+	cmd_barrier_transfer_write_to_host_read(cmd, dst)
+}
+
 // Copies elements [first, first+len(out)) out of mapped memory. Invalidates the range first, so
 // non-coherent readback memory is current. Call it after the GPU work that wrote the data has completed.
 buffer_read :: proc(ctx: ^Context, buf: Buffer($T), out: []T, first := 0, loc := #caller_location) {

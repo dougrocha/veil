@@ -1,5 +1,11 @@
 // Generated from the @(shader_shared) declarations in src/graphics. Do not edit.
 
+static const uint CLUSTER_X = 16;
+static const uint CLUSTER_Y = 9;
+static const uint CLUSTER_Z = 24;
+static const uint CLUSTER_COUNT = ((CLUSTER_X * CLUSTER_Y) * CLUSTER_Z);
+static const uint CLUSTER_INDEX_CAPACITY = 131072;
+static const uint CLUSTER_OVERFLOW_BIT = 0x80000000;
 static const uint SAMPLER_LINEAR_REPEAT = 0;
 static const uint SAMPLER_LINEAR_CLAMP = 1;
 static const uint SAMPLER_NEAREST_CLAMP = 2;
@@ -23,6 +29,7 @@ static const uint PARTICLE_GROUP_SIZE = 256;
 static const uint DEBUG_VIEW_MODE_TEXTURE_2D = 0;
 static const uint DEBUG_VIEW_MODE_SHADOW_CUBE_FACE = 1;
 static const uint DEBUG_VIEW_MODE_SHADOW_2D = 2;
+static const uint DEBUG_VIEW_MODE_CLUSTER_HEATMAP = 3;
 
 static const uint LIGHT_TYPE_DIRECTIONAL = 0;
 static const uint LIGHT_TYPE_SPOT = 1;
@@ -69,18 +76,23 @@ struct PointLight {
     float4 specular_reserved;
 };
 
-struct DirectionalLight {
-    float4 direction_diffuse;
-    float4 color_specular;
-    float4 shadow_maximum_reserved;
-};
-
 struct SpotLight {
     float4 position_range;
     float4 direction_inner;
     float4 color_outer;
     float4 attenuation;
     float4 intensity;
+};
+
+struct ClusterHeader {
+    uint light_offset;
+    uint light_count;
+};
+
+struct DirectionalLight {
+    float4 direction_diffuse;
+    float4 color_specular;
+    float4 shadow_maximum_reserved;
 };
 
 struct AmbientLight {
@@ -91,7 +103,7 @@ struct DebugSettings {
     uint show_cascades;
     uint disable_shadows;
     uint light_mask;
-    uint _reserved;
+    uint clustered_lighting;
 };
 
 struct SceneData {
@@ -102,13 +114,17 @@ struct SceneData {
     ShadowCascadeData shadow_cascade_data[MAX_DIRECTIONAL_LIGHTS];
     float4 cam_pos_shadow_map_size;
     TimeInfo time_info;
-    PointLight point_lights[MAX_POINT_LIGHTS];
+    PointLight* point_lights;
+    SpotLight* spot_lights;
+    ClusterHeader* cluster_headers;
+    uint* cluster_indices;
+    float2 cluster_extent;
+    float2 cluster_near_far;
     uint point_light_count;
     uint directional_light_count;
     uint spot_light_count;
     CubeIndex skybox_cube;
     DirectionalLight directional_lights[MAX_DIRECTIONAL_LIGHTS];
-    SpotLight spot_lights[MAX_SPOT_LIGHTS];
     AmbientLight ambient_light;
     DebugSettings debug_settings;
 };
@@ -120,10 +136,18 @@ struct ParticlePushConstants {
     float delta_time;
 };
 
+struct ClusterPushConstants {
+    SceneData* scene_data;
+    ClusterHeader* clusters;
+    uint* indices;
+    uint* counter;
+};
+
 struct DebugViewPushConstants {
     uint mode;
     uint index;
     uint face;
+    SceneData* scene_data;
 };
 
 struct SkyboxPushConstants {

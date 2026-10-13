@@ -43,6 +43,9 @@ Engine :: struct {
 	stats:                  Stats,
 	config:                 EngineConfig,
 	settings:               RenderSettings,
+	cluster_heatmap:        bool,
+	cluster_validate:       bool,
+	clustered_lighting:     bool,
 	// Scratch for engine_render, reset independently of the game loop.
 	frame_arena:            virtual.Arena,
 }

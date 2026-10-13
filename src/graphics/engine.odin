@@ -31,6 +31,7 @@ engine_create :: proc(
 	}
 	engine.config = config
 	engine.settings = RENDER_SETTINGS_DEFAULT
+	engine.clustered_lighting = true
 	frame_dump_init(engine)
 	debug_env_init(engine)
 
@@ -158,7 +159,9 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 	record_ms := tick_ms(record_start)
 	submit_start := time.tick_now()
 
+	frame_slot := backend.frame_slot(&engine.vk_ctx)
 	render_targets_end_frame(engine, cmd)
+	cluster_debug_report_overflow(engine, frame_slot)
 	// Once per recorded frame, shadow passes on or off. Skipped frames return early above, so their
 	// changes carry over.
 	shadow_cache_commit(&engine.shadows.cache, &engine.shadows.plan, packet.lights)
@@ -168,6 +171,7 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 
 	if engine.frame_dump.enabled {
 		backend.device_wait_idle(&engine.vk_ctx)
+		cluster_debug_validate(engine, frame_slot)
 		pick_test_run(engine, packet)
 		if frame_dump_capture(engine) {
 			quit := sdl.Event {
@@ -294,7 +298,7 @@ dispatch_gpu_cull :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Co
 	backend.pipeline_push_compute(encoder, &pc)
 	backend.cmd_dispatch(encoder, (u32(batch_count) + 255) / 256, 1, 1)
 	if engine.gpu_cull_validate {
-		backend.cmd_barrier_compute_write_to_transfer_read(encoder)
+		backend.cmd_barrier_compute_write_to_copy_read(encoder)
 		backend.cmd_copy_buffer(cmd, frame.cull_commands, frame.cull_readback_commands, batch_count)
 		backend.cmd_barrier_transfer_write_to_host_read(cmd, frame.cull_readback_commands)
 		// A zero-size copy is invalid. Runs can all be empty, which leaves no candidates to read back.

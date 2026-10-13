@@ -33,6 +33,23 @@ debug_env_init :: proc(engine: ^Engine) {
 		if engine.gpu_cull_validate do log.infof("GPU culling validation enabled")
 	}
 
+	if value, found := os.lookup_env("VEIL_CLUSTERED", context.allocator); found {
+		defer delete(value)
+		engine.clustered_lighting = value != "0"
+		log.infof("clustered lighting enabled via VEIL_CLUSTERED: %v", engine.clustered_lighting)
+	}
+	if value, found := os.lookup_env("VEIL_CLUSTER_HEATMAP", context.allocator); found {
+		defer delete(value)
+		engine.cluster_heatmap = value != "0"
+		log.infof("cluster heatmap enabled: %v", engine.cluster_heatmap)
+	}
+	when ODIN_DEBUG {
+		if value, found := os.lookup_env("VEIL_CLUSTER_VALIDATE", context.allocator); found {
+			defer delete(value)
+			engine.cluster_validate = value != "0"
+			log.infof("cluster validation enabled: %v", engine.cluster_validate)
+		}
+	}
 	if value, found := os.lookup_env("VEIL_PARTICLES", context.allocator); found {
 		defer delete(value)
 		engine.settings.particles = value != "0"

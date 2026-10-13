@@ -318,15 +318,47 @@ float4 light_mesh_surface(VSOutput vert, MeshSurface surf) {
 
     if (pc.scene_data.debug_settings.show_cascades != 0) total_light *= cascade_tint;
 
-    for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_POINT)) != 0 ? pc.scene_data.point_light_count : 0); i++) {
-        float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[i], i, vert.frag_pos, normalize(vert.frag_normal));
-        total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+    bool use_cluster_list = pc.scene_data.debug_settings.clustered_lighting != 0;
+    if (use_cluster_list) {
+        float3 view_pos = mul(pc.scene_data.view, float4(vert.frag_pos, 1.0)).xyz;
+        float4x4 proj = pc.scene_data.proj;
+        bool ortho = abs(proj[3][2]) < 1e-6;
+        float sign_z = proj[3][2] < 0.0 || (ortho && proj[2][2] < 0.0) ? -1.0 : 1.0;
+        float view_depth = view_pos.z * sign_z;
+        uint x = min(uint(floor(vert.pos.x / pc.scene_data.cluster_extent.x * float(CLUSTER_X))), CLUSTER_X - 1);
+        uint y = min(uint(floor(vert.pos.y / pc.scene_data.cluster_extent.y * float(CLUSTER_Y))), CLUSTER_Y - 1);
+        float near_z = pc.scene_data.cluster_near_far.x;
+        float far_z = pc.scene_data.cluster_near_far.y;
+        uint z = uint(clamp(floor(log(view_depth / near_z) / log(far_z / near_z) * float(CLUSTER_Z)), 0.0, float(CLUSTER_Z - 1)));
+        uint cluster = x + y * CLUSTER_X + z * CLUSTER_X * CLUSTER_Y;
+        ClusterHeader header = pc.scene_data.cluster_headers[cluster];
+        use_cluster_list = (header.light_count & CLUSTER_OVERFLOW_BIT) == 0;
+        for (uint i = 0; use_cluster_list && i < header.light_count; ++i) {
+            uint light_index = pc.scene_data.cluster_indices[header.light_offset + i];
+            if (light_index < MAX_POINT_LIGHTS) {
+                if ((light_mask & (1u << LIGHT_TYPE_POINT)) == 0 || light_index >= pc.scene_data.point_light_count) continue;
+                float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[light_index], light_index, vert.frag_pos, normalize(vert.frag_normal));
+                total_light += calc_point_light(pc.scene_data.point_lights[light_index], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+            } else {
+                uint spot_index = light_index - MAX_POINT_LIGHTS;
+                if ((light_mask & (1u << LIGHT_TYPE_SPOT)) == 0 || spot_index >= pc.scene_data.spot_light_count) continue;
+                float3 to_light = normalize(pc.scene_data.spot_lights[spot_index].position_range.xyz - vert.frag_pos);
+                float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[spot_index], spot_shadow_slot(spot_index), vert.frag_pos, normal, normalize(vert.frag_normal), to_light);
+                total_light += calc_spot_light(pc.scene_data.spot_lights[spot_index], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+            }
+        }
     }
+    if (!use_cluster_list) {
+        for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_POINT)) != 0 ? pc.scene_data.point_light_count : 0); i++) {
+            float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[i], i, vert.frag_pos, normalize(vert.frag_normal));
+            total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+        }
 
-    for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_SPOT)) != 0 ? pc.scene_data.spot_light_count : 0); i++) {
-        float3 to_light = normalize(pc.scene_data.spot_lights[i].position_range.xyz - vert.frag_pos);
-        float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, normalize(vert.frag_normal), to_light);
-        total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+        for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_SPOT)) != 0 ? pc.scene_data.spot_light_count : 0); i++) {
+            float3 to_light = normalize(pc.scene_data.spot_lights[i].position_range.xyz - vert.frag_pos);
+            float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, normalize(vert.frag_normal), to_light);
+            total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
+        }
     }
 
     // 0 = opaque, 1 = mask, 2 = blend; matches AlphaMode in Odin.

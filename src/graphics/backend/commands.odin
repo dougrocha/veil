@@ -112,6 +112,47 @@ cmd_dispatch :: proc(cmd: ComputeEncoder, x, y, z: u32) {
 	vk.CmdDispatch(cmd.handle, x, y, z)
 }
 
+cmd_fill_u32 :: proc(cmd: CommandBuffer, buf: Buffer(u32), value: u32) {
+	vk.CmdFillBuffer(cmd.handle, buffer_slot(cmd.ctx, buf).buffer, 0, vk.DeviceSize(vk.WHOLE_SIZE), value)
+	cmd_barrier_transfer_clear_write_to_compute_read_write(cmd, buf)
+}
+
+cmd_barrier_transfer_clear_write_to_compute_read_write :: proc(cmd: CommandBuffer, buf: Buffer($T)) {
+	barrier := vk.BufferMemoryBarrier2 {
+		sType         = .BUFFER_MEMORY_BARRIER_2,
+		srcStageMask  = {.CLEAR},
+		srcAccessMask = {.TRANSFER_WRITE},
+		dstStageMask  = {.COMPUTE_SHADER},
+		dstAccessMask = {.SHADER_READ, .SHADER_WRITE},
+		buffer        = buffer_slot(cmd.ctx, buf).buffer,
+		size          = vk.DeviceSize(vk.WHOLE_SIZE),
+	}
+	dep := vk.DependencyInfo {
+		sType                    = .DEPENDENCY_INFO,
+		bufferMemoryBarrierCount = 1,
+		pBufferMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep)
+}
+
+cmd_barrier_compute_write_to_transfer_read :: proc(cmd: CommandBuffer, buf: Buffer($T)) {
+	barrier := vk.BufferMemoryBarrier2 {
+		sType         = .BUFFER_MEMORY_BARRIER_2,
+		srcStageMask  = {.COMPUTE_SHADER},
+		srcAccessMask = {.SHADER_WRITE},
+		dstStageMask  = {.COPY},
+		dstAccessMask = {.TRANSFER_READ},
+		buffer        = buffer_slot(cmd.ctx, buf).buffer,
+		size          = vk.DeviceSize(vk.WHOLE_SIZE),
+	}
+	dep := vk.DependencyInfo {
+		sType                    = .DEPENDENCY_INFO,
+		bufferMemoryBarrierCount = 1,
+		pBufferMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep)
+}
+
 cmd_barrier_compute_write_to_vertex_read :: proc(cmd: ComputeEncoder) {
 	barrier := vk.MemoryBarrier2 {
 		sType         = .MEMORY_BARRIER_2,
@@ -135,6 +176,22 @@ cmd_barrier_compute_write_to_draw_read :: proc(cmd: ComputeEncoder) {
 		srcAccessMask = {.SHADER_WRITE},
 		dstStageMask  = {.VERTEX_SHADER, .DRAW_INDIRECT},
 		dstAccessMask = {.SHADER_READ, .INDIRECT_COMMAND_READ},
+	}
+	dep_info := vk.DependencyInfo {
+		sType              = .DEPENDENCY_INFO,
+		memoryBarrierCount = 1,
+		pMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
+}
+
+cmd_barrier_compute_write_to_fragment_read :: proc(cmd: ComputeEncoder) {
+	barrier := vk.MemoryBarrier2 {
+		sType         = .MEMORY_BARRIER_2,
+		srcStageMask  = {.COMPUTE_SHADER},
+		srcAccessMask = {.SHADER_WRITE},
+		dstStageMask  = {.FRAGMENT_SHADER},
+		dstAccessMask = {.SHADER_READ},
 	}
 	dep_info := vk.DependencyInfo {
 		sType              = .DEPENDENCY_INFO,
@@ -176,7 +233,7 @@ cmd_barrier_compute_write_to_compute_read :: proc(cmd: ComputeEncoder) {
 	vk.CmdPipelineBarrier2(cmd.handle, &dep_info)
 }
 
-cmd_barrier_compute_write_to_transfer_read :: proc(cmd: ComputeEncoder) {
+cmd_barrier_compute_write_to_copy_read :: proc(cmd: ComputeEncoder) {
 	barrier := vk.MemoryBarrier2 {
 		sType         = .MEMORY_BARRIER_2,
 		srcStageMask  = {.COMPUTE_SHADER},

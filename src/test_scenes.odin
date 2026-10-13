@@ -565,3 +565,66 @@ load_cull_validation_lighting :: proc(world: ^World) {
 		brightness = 0.05,
 	}
 }
+
+// Hundreds of deterministic, short-range lights over simple geometry for clustered-culling work.
+load_many_lights :: proc(engine: ^gfx.Engine, world: ^World) {
+	floor_mat := gfx.material_create(engine, "many_lights_floor", base_color = {0.55, 0.55, 0.55, 1})
+	floor := gfx.model_with_material(engine, gfx.primitive_plane(engine, half_size = {12, 12}), floor_mat)
+	entity_spawn_model(world, floor, gfx.transform_create())
+
+	shape_mat := gfx.material_create(engine, "many_lights_shapes", base_color = {0.65, 0.65, 0.65, 1})
+	shape := gfx.model_with_material(engine, gfx.primitive_cube(engine, half_size = {0.35, 0.5, 0.35}), shape_mat)
+	for x in 0 ..< 8 {
+		for z in 0 ..< 8 {
+			entity_spawn_model(
+				world,
+				shape,
+				gfx.transform_create(translation = {f32(x) * 2.8 - 9.8, 0.5, f32(z) * 2.8 - 9.8}),
+			)
+		}
+	}
+
+	colors := [?]gfx.Vec3{{1, 0.24, 0.12}, {0.16, 0.42, 1}, {0.2, 1, 0.32}, {1, 0.72, 0.12}}
+	for i in 0 ..< 256 {
+		x, z := i % 16, i / 16
+		light_spawn_point(
+			&world.lights,
+			gfx.PointLight {
+				pos = {f32(x) * 1.4 - 10.5, 1.5, f32(z) * 1.4 - 10.5},
+				range = 2.4,
+				shadow_near = 0.1,
+				color = colors[(x + z) % len(colors)],
+				constant = 1,
+				linear = 0.25,
+				quadratic = 0.15,
+				diffuse_intensity = 2,
+				specular_intensity = 0.2,
+			},
+		)
+	}
+	for i in 0 ..< 3 {
+		light_spawn_spot(
+			&world.lights,
+			gfx.SpotLight {
+				pos = {f32(i - 1) * 7, 5, 0},
+				direction = {0, -1, 0},
+				range = 9,
+				shadow_near = 0.1,
+				inner_cutoff = linalg.cos(linalg.to_radians(f32(25))),
+				outer_cutoff = linalg.cos(linalg.to_radians(f32(38))),
+				constant = 1,
+				linear = 0.12,
+				quadratic = 0.04,
+				color = colors[i],
+				diffuse_intensity = 2,
+				specular_intensity = 0.25,
+			},
+		)
+	}
+
+	world.active_camera = entity_spawn_camera(world, gfx.camera_create({0, 13, 23}, yaw = -90, pitch = -25))
+	world.lights.ambient_light = gfx.AmbientLight {
+		color      = {1, 1, 1, 1},
+		brightness = 0.08,
+	}
+}

@@ -1,5 +1,7 @@
 package graphics
 
+import "backend"
+
 // Scene-wide types shared with the shaders. Feature types live with their feature; anything
 // tagged @(shader_shared) is written to shaders/types.slang by `just gpu-types`, which also
 // asserts every struct's layout in gpu_layout_generated.odin.
@@ -27,10 +29,10 @@ GpuTimeInfo :: struct #max_field_align(16) {
 
 @(shader_shared)
 GpuDebugSettings :: struct #max_field_align(16) {
-	show_cascades:   u32,
-	disable_shadows: u32,
-	light_mask:      u32,
-	_reserved:       u32,
+	show_cascades:      u32,
+	disable_shadows:    u32,
+	light_mask:         u32,
+	clustered_lighting: u32,
 }
 
 @(shader_shared)
@@ -48,13 +50,18 @@ SceneData :: struct #max_field_align(16) {
 	shadow_cascade_data:     [MAX_DIRECTIONAL_LIGHTS]GpuShadowCascadeData,
 	cam_pos_shadow_map_size: Vec4,
 	time_info:               GpuTimeInfo,
-	point_lights:            [MAX_POINT_LIGHTS]GpuPointLight,
+	point_lights:            backend.GPUPtr(GpuPointLight),
+	spot_lights:             backend.GPUPtr(GpuSpotLight),
+	// Cluster lists: point indices are [0, point_light_count), spot indices start at MAX_POINT_LIGHTS.
+	cluster_headers:         backend.GPUPtr(ClusterHeader),
+	cluster_indices:         backend.GPUPtr(u32),
+	cluster_extent:          Vec2,
+	cluster_near_far:        Vec2,
 	point_light_count:       u32,
 	directional_light_count: u32,
 	spot_light_count:        u32,
 	skybox_cube:             CubeIndex, // bindless cube slot the skybox (and later IBL) samples
 	directional_lights:      [MAX_DIRECTIONAL_LIGHTS]GpuDirectionalLight,
-	spot_lights:             [MAX_SPOT_LIGHTS]GpuSpotLight,
 	ambient_light:           GpuAmbientLight,
 	debug_settings:          GpuDebugSettings,
 }

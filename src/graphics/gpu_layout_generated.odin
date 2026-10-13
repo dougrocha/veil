@@ -6,6 +6,8 @@ package graphics
 GPU_SHARED_TYPES := [?]GpuSharedType {
 	{"Particle", Particle},
 	{"ParticlePushConstants", ParticlePushConstants},
+	{"ClusterHeader", ClusterHeader},
+	{"ClusterPushConstants", ClusterPushConstants},
 	{"DebugViewPushConstants", DebugViewPushConstants},
 	{"SkyboxPushConstants", SkyboxPushConstants},
 	{"TimeInfo", GpuTimeInfo},
@@ -44,10 +46,21 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(ParticlePushConstants, delta_time) == 24)
 #assert(size_of(ParticlePushConstants) == 32)
 
+#assert(offset_of(ClusterHeader, light_offset) == 0)
+#assert(offset_of(ClusterHeader, light_count) == 4)
+#assert(size_of(ClusterHeader) == 8)
+
+#assert(offset_of(ClusterPushConstants, scene_data) == 0)
+#assert(offset_of(ClusterPushConstants, clusters) == 8)
+#assert(offset_of(ClusterPushConstants, indices) == 16)
+#assert(offset_of(ClusterPushConstants, counter) == 24)
+#assert(size_of(ClusterPushConstants) == 32)
+
 #assert(offset_of(DebugViewPushConstants, mode) == 0)
 #assert(offset_of(DebugViewPushConstants, index) == 4)
 #assert(offset_of(DebugViewPushConstants, face) == 8)
-#assert(size_of(DebugViewPushConstants) == 12)
+#assert(offset_of(DebugViewPushConstants, scene_data) == 16)
+#assert(size_of(DebugViewPushConstants) == 24)
 
 #assert(offset_of(SkyboxPushConstants, scene_data) == 0)
 #assert(size_of(SkyboxPushConstants) == 8)
@@ -61,7 +74,7 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(GpuDebugSettings, show_cascades) == 0)
 #assert(offset_of(GpuDebugSettings, disable_shadows) == 4)
 #assert(offset_of(GpuDebugSettings, light_mask) == 8)
-#assert(offset_of(GpuDebugSettings, _reserved) == 12)
+#assert(offset_of(GpuDebugSettings, clustered_lighting) == 12)
 #assert(size_of(GpuDebugSettings) == 16)
 
 #assert(offset_of(GpuTransform, model) == 0)
@@ -76,15 +89,19 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(SceneData, cam_pos_shadow_map_size) == 5824)
 #assert(offset_of(SceneData, time_info) == 5840)
 #assert(offset_of(SceneData, point_lights) == 5856)
-#assert(offset_of(SceneData, point_light_count) == 38624)
-#assert(offset_of(SceneData, directional_light_count) == 38628)
-#assert(offset_of(SceneData, spot_light_count) == 38632)
-#assert(offset_of(SceneData, skybox_cube) == 38636)
-#assert(offset_of(SceneData, directional_lights) == 38640)
-#assert(offset_of(SceneData, spot_lights) == 38736)
-#assert(offset_of(SceneData, ambient_light) == 41296)
-#assert(offset_of(SceneData, debug_settings) == 41312)
-#assert(size_of(SceneData) == 41328)
+#assert(offset_of(SceneData, spot_lights) == 5864)
+#assert(offset_of(SceneData, cluster_headers) == 5872)
+#assert(offset_of(SceneData, cluster_indices) == 5880)
+#assert(offset_of(SceneData, cluster_extent) == 5888)
+#assert(offset_of(SceneData, cluster_near_far) == 5896)
+#assert(offset_of(SceneData, point_light_count) == 5904)
+#assert(offset_of(SceneData, directional_light_count) == 5908)
+#assert(offset_of(SceneData, spot_light_count) == 5912)
+#assert(offset_of(SceneData, skybox_cube) == 5916)
+#assert(offset_of(SceneData, directional_lights) == 5920)
+#assert(offset_of(SceneData, ambient_light) == 6016)
+#assert(offset_of(SceneData, debug_settings) == 6032)
+#assert(size_of(SceneData) == 6048)
 
 #assert(offset_of(DrawIndexedIndirectCommand, index_count) == 0)
 #assert(offset_of(DrawIndexedIndirectCommand, instance_count) == 4)
