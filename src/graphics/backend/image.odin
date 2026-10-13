@@ -242,15 +242,21 @@ ImageState :: struct {
 	stage:  vk.PipelineStageFlags2,
 }
 
+// Attachment states include the READ access: a loadOp = LOAD reads the attachment at the start of
+// rendering, and sync validation reports a hazard if the transition does not make it visible.
 IMAGE_STATES := [ImageStateKind]ImageState {
 	.Undefined    = {.UNDEFINED, {}, {}},
 	.Depth_Write  = {
 		.DEPTH_ATTACHMENT_OPTIMAL,
-		{.DEPTH_STENCIL_ATTACHMENT_WRITE},
+		{.DEPTH_STENCIL_ATTACHMENT_READ, .DEPTH_STENCIL_ATTACHMENT_WRITE},
 		{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
 	},
 	.Depth_Read   = {.DEPTH_STENCIL_READ_ONLY_OPTIMAL, {.SHADER_READ}, {.FRAGMENT_SHADER}},
-	.Color_Write  = {.COLOR_ATTACHMENT_OPTIMAL, {.COLOR_ATTACHMENT_WRITE}, {.COLOR_ATTACHMENT_OUTPUT}},
+	.Color_Write  = {
+		.COLOR_ATTACHMENT_OPTIMAL,
+		{.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE},
+		{.COLOR_ATTACHMENT_OUTPUT},
+	},
 	.Transfer_Src = {.TRANSFER_SRC_OPTIMAL, {.TRANSFER_READ}, {.TRANSFER}},
 	.Transfer_Dst = {.TRANSFER_DST_OPTIMAL, {.TRANSFER_WRITE}, {.TRANSFER}},
 	.Present      = {.PRESENT_SRC_KHR, {}, {}},
