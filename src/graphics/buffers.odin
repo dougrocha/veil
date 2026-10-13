@@ -35,6 +35,8 @@ FrameData :: struct {
 	cull_planes:            backend.Buffer(Vec4),
 	cull_readback_ids:      backend.Buffer(u32),
 	cull_readback_commands: backend.Buffer(DrawIndexedIndirectCommand),
+	// Commands in cull_readback_commands from this slot's last submitted frame; 0 when it did not cull on the GPU.
+	cull_readback_batches:  int,
 }
 
 #assert(MAX_DRAWS % 64 == 0)
@@ -112,18 +114,19 @@ frame_data_create :: proc(engine: ^Engine) {
 			{.Storage, .Indirect, .Transfer_Src},
 			.Gpu,
 		)
+		engine.frame_data[i].cull_readback_commands = backend.buffer_create(
+			DrawIndexedIndirectCommand,
+			&engine.vk_ctx,
+			MAX_INDIRECT_COMMANDS_PER_FRAME,
+			{.Transfer_Dst},
+			.Readback,
+		)
+		// Only the validator reads ids back.
 		if engine.gpu_cull_validate {
 			engine.frame_data[i].cull_readback_ids = backend.buffer_create(
 				u32,
 				&engine.vk_ctx,
 				MAX_INSTANCE_IDS,
-				{.Transfer_Dst},
-				.Readback,
-			)
-			engine.frame_data[i].cull_readback_commands = backend.buffer_create(
-				DrawIndexedIndirectCommand,
-				&engine.vk_ctx,
-				MAX_INDIRECT_COMMANDS_PER_FRAME,
 				{.Transfer_Dst},
 				.Readback,
 			)

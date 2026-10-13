@@ -375,10 +375,11 @@ cull_record_dispatch :: proc(r: ^Recorder, upload: ^CullUpload, readback: bool) 
 	pc.init_commands = 2
 	backend.pipeline_push_compute(encoder, &pc)
 	backend.cmd_dispatch(encoder, (u32(batch_count) + 255) / 256, 1, 1)
+	// Every culled frame copies the commands for the latent visibility stats; the slot's fence covers the read.
+	backend.cmd_barrier_compute_write_to_copy_read(encoder)
+	backend.cmd_copy_buffer(r.cmd, r.frame.cull_commands, r.frame.cull_readback_commands, batch_count)
+	backend.cmd_barrier_transfer_write_to_host_read(r.cmd, r.frame.cull_readback_commands)
 	if readback {
-		backend.cmd_barrier_compute_write_to_copy_read(encoder)
-		backend.cmd_copy_buffer(r.cmd, r.frame.cull_commands, r.frame.cull_readback_commands, batch_count)
-		backend.cmd_barrier_transfer_write_to_host_read(r.cmd, r.frame.cull_readback_commands)
 		// A zero-size copy is invalid. Runs can all be empty, which leaves no candidates to read back.
 		if candidate_count > 0 {
 			backend.cmd_copy_buffer(r.cmd, r.frame.cull_output_ids, r.frame.cull_readback_ids, candidate_count)
