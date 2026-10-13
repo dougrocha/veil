@@ -158,7 +158,8 @@ float calc_point_shadow_factor(PointLight light, uint light_index, float3 frag_p
     float3 light_dir = normalize(light_to_frag);
     float bias = max(0.005 * (1.0 - dot(normal, -light_dir)), 0.0005);
 
-    return shadow_cubes.SampleCmp(float4(light_to_frag, float(light_index)), current_depth - bias);
+    // Level zero: these run in non-uniform control flow, so no implicit derivatives; shadow maps have one mip.
+    return shadow_cubes.SampleCmpLevelZero(float4(light_to_frag, float(light_index)), current_depth - bias);
 }
 
 // dynamic (runtime-index) subscript into a float4 isn't reliable here; select via compile-time swizzles instead
@@ -197,13 +198,13 @@ float sample_cascade(float3 frag_pos, float3 normal, float3 to_light, uint light
     // Each compare tap is already bilinear, so four taps at half-texel offsets give a 2-texel box
     // over a 3x3 texel footprint (penumbra ~30% narrower than the old 9-tap grid). Kept as explicit
     // taps: a loop form of the same pattern measured slower.
-    float shadow = shadow_2d_maps.SampleCmp(
+    float shadow = shadow_2d_maps.SampleCmpLevelZero(
         float3(proj_coords.xy + float2(-half_texel, -half_texel), float(slot)), depth);
-    shadow += shadow_2d_maps.SampleCmp(
+    shadow += shadow_2d_maps.SampleCmpLevelZero(
         float3(proj_coords.xy + float2(-half_texel, half_texel), float(slot)), depth);
-    shadow += shadow_2d_maps.SampleCmp(
+    shadow += shadow_2d_maps.SampleCmpLevelZero(
         float3(proj_coords.xy + float2(half_texel, -half_texel), float(slot)), depth);
-    shadow += shadow_2d_maps.SampleCmp(
+    shadow += shadow_2d_maps.SampleCmpLevelZero(
         float3(proj_coords.xy + float2(half_texel, half_texel), float(slot)), depth);
     return shadow * 0.25;
 }
@@ -246,7 +247,7 @@ float calc_spot_shadow_factor(SpotLight light, uint slot, float3 frag_pos, float
     if (light_space_pos.w <= 0.0 || outside_shadow_map(uv, current_depth)) return 1.0;
 
     float bias = max(0.005 * (1.0 - dot(normal, to_light)), 0.0005);
-    return shadow_2d_maps.SampleCmp(float3(uv, float(slot)), current_depth - bias);
+    return shadow_2d_maps.SampleCmpLevelZero(float3(uv, float(slot)), current_depth - bias);
 }
 
 // Split so fragment_masked can discard between sampling and lighting while fragment_main has no
