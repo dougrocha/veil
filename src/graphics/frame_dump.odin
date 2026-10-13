@@ -21,6 +21,18 @@ FrameDump :: struct {
 
 // Debug switches that a headless dump run needs but has no keyboard for.
 debug_env_init :: proc(engine: ^Engine) {
+	if value, found := os.lookup_env("VEIL_GPU_CULL", context.allocator); found {
+		defer delete(value)
+		engine.settings.gpu_cull = value != "0"
+		log.infof("GPU frustum culling: %v", engine.settings.gpu_cull)
+	}
+
+	if value, found := os.lookup_env("VEIL_GPU_CULL_VALIDATE", context.allocator); found {
+		defer delete(value)
+		engine.gpu_cull_validate = value == "1"
+		if engine.gpu_cull_validate do log.infof("GPU culling validation enabled")
+	}
+
 	if value, found := os.lookup_env("VEIL_PARTICLES", context.allocator); found {
 		defer delete(value)
 		engine.settings.particles = value != "0"

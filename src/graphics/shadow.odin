@@ -28,10 +28,8 @@ ShadowPushConstants :: struct #max_field_align(16) {
 	material_buffer:  backend.GPUPtr(GpuMaterial),
 	transform_buffer: backend.GPUPtr(GpuTransform),
 	instance_ids:     backend.GPUPtr(u32), // see instancing.odin
-	instance_offset:  u32,
 	light_type:       LightType,
 	light_index:      u32,
-	material_index:   u32,
 }
 
 Shadows :: struct {

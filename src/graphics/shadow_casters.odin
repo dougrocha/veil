@@ -4,7 +4,7 @@ import "core:slice"
 
 // Every shadow caster in the input, built once and filtered per shadow view, so a view doesn't walk
 // and sort every draw. One id per mesh of each live, shadow-casting draw, grouped into one run per
-// mesh (by vertex buffer, ids in order). Transforms are read from the draw history each frame,
+// mesh (by mesh range, ids in order). Transforms are read from the draw history each frame,
 // so the list only changes with the set of casters: spawns, despawns, model replacements and
 // casts_shadow toggles. Model meshes never change once added, so the mesh pointers stay valid.
 ShadowCasters :: struct {

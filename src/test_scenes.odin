@@ -493,3 +493,75 @@ load_max_instances :: proc(engine: ^gfx.Engine, world: ^World) {
 		brightness = 0.05,
 	}
 }
+
+// Validation: one mesh fills the id budget, so a single GPU cull run spans 32 batches of 1024.
+// The camera takes one entity slot, so the cubes fill the rest of MAX_ENTITIES.
+load_cull_32k_single_run :: proc(engine: ^gfx.Engine, world: ^World) {
+	COUNT :: MAX_ENTITIES - 1
+	mat := gfx.material_create(engine, "cull_single_run", base_color = {0.8, 0.6, 0.3, 1}, perceptual_roughness = 0.5)
+	cube := gfx.model_with_material(engine, gfx.primitive_cube(engine, half_size = {0.4, 0.4, 0.4}), mat)
+	for i in 0 ..< COUNT {
+		pos := gfx.Vec3{f32(i % 32) * 1.5 - 23.25, f32((i / 32) % 32) * 1.5 - 23.25, -f32(i / 1024) * 1.5}
+		entity_spawn_model(world, cube, gfx.transform_create(translation = pos))
+	}
+	load_cull_validation_lighting(world)
+	world.active_camera = entity_spawn_camera(world, gfx.camera_create({0, 0, 60}, yaw = -90, pitch = 0))
+}
+
+// Validation: 2048 red cubes in one run across two batches. Every third candidate is culled (x = 500), so
+// each batch holds kept and culled ids, and batch 2 starts on a kept id (1024 % 3 == 1). Visible cubes sit
+// on distinct cells, so a dropped or duplicated id shows as a hole or an extra cube in the image.
+// The double-sided green run follows red, so its pipeline group starts after red's commands.
+// Green and blue share one spot in front of the grid. Each is its own run, so their coplanar winner comes
+// from run order. This image does not observe order within a run. Same-run coplanar pairs can differ in
+// transform or texture, and the ordered match in gpu_cull_validate_frame covers that order.
+load_cull_batch_boundary :: proc(engine: ^gfx.Engine, world: ^World) {
+	red := gfx.model_with_material(
+		engine,
+		gfx.primitive_cube(engine, half_size = {0.2, 0.2, 0.2}),
+		gfx.material_create(engine, "cull_boundary_red", base_color = {0.9, 0.1, 0.1, 1}, perceptual_roughness = 0.5),
+	)
+	for i in 0 ..< 2048 {
+		pos := gfx.Vec3{f32(i % 64) * 0.5 - 15.75, f32(i / 64) * 0.5 - 7.75, 0}
+		if i % 3 == 0 do pos = {500, 0, 0}
+		entity_spawn_model(world, red, gfx.transform_create(translation = pos))
+	}
+	green := gfx.model_with_material(
+		engine,
+		gfx.primitive_cube(engine, half_size = {0.6, 0.6, 0.6}),
+		gfx.material_create(
+			engine,
+			"cull_boundary_green",
+			base_color = {0.1, 0.9, 0.1, 1},
+			perceptual_roughness = 0.5,
+			double_sided = true,
+		),
+	)
+	blue := gfx.model_with_material(
+		engine,
+		gfx.primitive_cube(engine, half_size = {0.6, 0.6, 0.6}),
+		gfx.material_create(engine, "cull_boundary_blue", base_color = {0.1, 0.1, 0.9, 1}, perceptual_roughness = 0.5),
+	)
+	entity_spawn_model(world, green, gfx.transform_create(translation = {0, 0, 1}))
+	entity_spawn_model(world, blue, gfx.transform_create(translation = {0, 0, 1}))
+	load_cull_validation_lighting(world)
+	world.active_camera = entity_spawn_camera(world, gfx.camera_create({0, 0, 25}, yaw = -90, pitch = 0))
+}
+
+@(private = "file")
+load_cull_validation_lighting :: proc(world: ^World) {
+	light_spawn_directional(
+		&world.lights,
+		gfx.DirectionalLight {
+			direction = linalg.normalize(gfx.Vec3{0.3, -1, 0.4}),
+			color = {1, 0.95, 0.85},
+			diffuse_intensity = 0.8,
+			specular_intensity = 0.3,
+			shadow_maximum_distance = 60,
+		},
+	)
+	world.lights.ambient_light = gfx.AmbientLight {
+		color      = {1, 1, 1, 1},
+		brightness = 0.05,
+	}
+}

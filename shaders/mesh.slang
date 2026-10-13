@@ -3,7 +3,9 @@ import types;
 
 struct VSInput {
     uint vertex_index : SV_VertexID;
+    uint start_vertex_location : SV_StartVertexLocation;
     uint instance_id : SV_InstanceID;
+    uint start_instance_location : SV_StartInstanceLocation;
 };
 
 struct VSOutput {
@@ -13,16 +15,22 @@ struct VSOutput {
     float3 frag_tangent;
     float3 frag_bitangent;
     float3 frag_pos;
+    nointerpolation uint material_index;
 };
 
 [shader("vertex")]
 VSOutput vertex_main(VSInput input) {
-    let v = pc.vertex_buffer[input.vertex_index];
-    let transform = pc.transform_buffer[pc.instance_ids[pc.instance_offset + input.instance_id]];
+    // Slang's SV_VertexID excludes the Vulkan base vertex; add SV_StartVertexLocation to restore it.
+    let v = pc.vertex_buffer[input.vertex_index + input.start_vertex_location];
+    // Slang lowers SV_InstanceID without the Vulkan base instance; add SV_StartInstanceLocation to restore it.
+    let instance_slot = input.instance_id + input.start_instance_location;
+    let packed_id = pc.instance_ids[instance_slot];
+    let transform = pc.transform_buffer[packed_id >> INSTANCE_DRAW_ID_SHIFT];
 
     VSOutput output;
     float4 world_pos = mul(transform.model, float4(v.pos_uv_x.xyz, 1.0));
     output.frag_pos = world_pos.xyz;
+    output.material_index = packed_id & INSTANCE_MATERIAL_MASK;
 
     output.pos = mul(pc.scene_data.proj, mul(pc.scene_data.view, world_pos));
 
@@ -238,7 +246,7 @@ float calc_spot_shadow_factor(SpotLight light, uint slot, float3 frag_pos, float
 
 [shader("fragment")]
 float4 fragment_main(VSOutput vert, bool is_front : SV_IsFrontFace) : SV_TARGET {
-    let mat = pc.material_buffer[pc.material_index];
+    let mat = pc.material_buffer[vert.material_index];
 
     // Double-sided back faces are lit as if they faced the viewer (only those pipelines skip culling).
     float3 geo_normal = (mat.double_sided != 0 && !is_front) ? -vert.frag_normal : vert.frag_normal;

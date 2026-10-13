@@ -6,6 +6,10 @@ static const uint SAMPLER_NEAREST_CLAMP = 2;
 static const uint BINDLESS_SAMPLER_COUNT = 3;
 static const uint BINDLESS_STORAGE_IMAGE_COUNT = 16;
 static const uint BINDLESS_CUBE_COUNT = 16;
+static const uint INSTANCE_MATERIAL_BITS = 14;
+static const uint INSTANCE_MATERIAL_MASK = (((1 << INSTANCE_MATERIAL_BITS)) - 1);
+static const uint INSTANCE_DRAW_ID_SHIFT = INSTANCE_MATERIAL_BITS;
+static const uint INSTANCE_DRAW_ID_BITS = 15;
 static const uint MAX_POINT_LIGHTS = 512;
 static const uint MAX_DIRECTIONAL_LIGHTS = 2;
 static const uint MAX_SPOT_LIGHTS = 32;
@@ -131,6 +135,44 @@ struct Transform {
     float4x4 normal_matrix;
 };
 
+struct DrawIndexedIndirectCommand {
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int vertex_offset;
+    uint first_instance;
+};
+
+struct CullCandidate {
+    uint packed_id;
+    uint run_index;
+};
+
+struct CullRun {
+    uint first_candidate;
+    uint candidate_count;
+    uint first_index;
+    int vertex_offset;
+    uint index_count;
+    uint instance_count;
+    uint first_instance;
+    uint _reserved;
+    float4 bounds_center;
+    float4 bounds_extents;
+};
+
+struct CullPushConstants {
+    CullCandidate* candidates;
+    CullRun* runs;
+    Transform* transforms;
+    float4* planes;
+    uint* output_ids;
+    DrawIndexedIndirectCommand* commands;
+    uint candidate_count;
+    uint run_count;
+    uint init_commands;
+};
+
 struct LineVertex {
     float4 position;
     float4 color;
@@ -172,8 +214,6 @@ struct MeshPushConstants {
     Material* material_buffer;
     Transform* transform_buffer;
     uint* instance_ids;
-    uint material_index;
-    uint instance_offset;
 };
 
 struct TonemapPushConstants {
@@ -199,10 +239,8 @@ struct ShadowPushConstants {
     Material* material_buffer;
     Transform* transform_buffer;
     uint* instance_ids;
-    uint instance_offset;
     uint light_type;
     uint light_index;
-    uint material_index;
 };
 
 struct UIVertex {
