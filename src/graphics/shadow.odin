@@ -209,7 +209,16 @@ shadow_prepare :: proc(
 			// Directional cascades ignore the near plane, since their depth is clamped rather than clipped.
 			runs := shadow_casters_filter(input.casters, frustums, view.light_type == .Directional)
 			pipeline := PipelineKind.Shadow_Directional if view.light_type == .Directional else PipelineKind.Shadow
-			draws, _ := layout_push_runs(layout, runs, pipeline)
+			draws, dropped := layout_push_runs(layout, runs, pipeline)
+			// A map missing casters must not be cached, so shadow_cache_commit leaves it invalid.
+			if dropped {
+				#partial switch view.light_type {
+				case .Point:
+					plan.dropped_point[view.light_index] = true
+				case .Spot:
+					plan.dropped_spot[view.light_index] = true
+				}
+			}
 			append(&views, ShadowPreparedView{view, draws})
 			draw_counters_add(&p.counters, draws.counters)
 		}
