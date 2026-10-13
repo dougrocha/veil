@@ -290,6 +290,21 @@ MeshSurface sample_mesh_surface(VSOutput vert, bool is_front) {
     return {tex_color, normal, ao, smoothness, shininess};
 }
 
+// Range attenuation clamp(1 - pow(d/r, 4), 0, 1) is exactly zero at d >= range.
+bool point_light_out_of_range(PointLight light, float3 frag_pos) {
+    return length(light.position_range.xyz - frag_pos) >= light.position_range.w;
+}
+
+// Cone intensity is exactly zero at theta <= outer; inner > outer preserves reversed or equal cutoffs.
+bool spot_light_out_of_range(SpotLight light, float3 frag_pos) {
+    if (length(light.position_range.xyz - frag_pos) >= light.position_range.w) return true;
+    float3 to_light = normalize(light.position_range.xyz - frag_pos);
+    float theta = dot(to_light, normalize(-light.direction_inner.xyz));
+    float inner = light.direction_inner.w;
+    float outer = light.color_outer.w;
+    return inner > outer && theta <= outer;
+}
+
 // Lighting only. Material textures are read in sample_mesh_surface; the shadow lookups here run after the masked discard.
 float4 light_mesh_surface(VSOutput vert, MeshSurface surf) {
     let mat = pc.material_buffer[vert.material_index];
@@ -342,11 +357,13 @@ float4 light_mesh_surface(VSOutput vert, MeshSurface surf) {
             uint light_index = pc.scene_data.cluster_indices[header.light_offset + i];
             if (light_index < MAX_POINT_LIGHTS) {
                 if ((light_mask & (1u << LIGHT_TYPE_POINT)) == 0 || light_index >= pc.scene_data.point_light_count) continue;
+                if (point_light_out_of_range(pc.scene_data.point_lights[light_index], vert.frag_pos)) continue;
                 float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[light_index], light_index, vert.frag_pos, normalize(vert.frag_normal));
                 total_light += calc_point_light(pc.scene_data.point_lights[light_index], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
             } else {
                 uint spot_index = light_index - MAX_POINT_LIGHTS;
                 if ((light_mask & (1u << LIGHT_TYPE_SPOT)) == 0 || spot_index >= pc.scene_data.spot_light_count) continue;
+                if (spot_light_out_of_range(pc.scene_data.spot_lights[spot_index], vert.frag_pos)) continue;
                 float3 to_light = normalize(pc.scene_data.spot_lights[spot_index].position_range.xyz - vert.frag_pos);
                 float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[spot_index], spot_shadow_slot(spot_index), vert.frag_pos, normal, normalize(vert.frag_normal), to_light);
                 total_light += calc_spot_light(pc.scene_data.spot_lights[spot_index], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
@@ -355,11 +372,13 @@ float4 light_mesh_surface(VSOutput vert, MeshSurface surf) {
     }
     if (!use_cluster_list) {
         for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_POINT)) != 0 ? pc.scene_data.point_light_count : 0); i++) {
+            if (point_light_out_of_range(pc.scene_data.point_lights[i], vert.frag_pos)) continue;
             float shadow = shadows_disabled ? 1.0 : calc_point_shadow_factor(pc.scene_data.point_lights[i], i, vert.frag_pos, normalize(vert.frag_normal));
             total_light += calc_point_light(pc.scene_data.point_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
         }
 
         for (uint i = 0; i < ((light_mask & (1u << LIGHT_TYPE_SPOT)) != 0 ? pc.scene_data.spot_light_count : 0); i++) {
+            if (spot_light_out_of_range(pc.scene_data.spot_lights[i], vert.frag_pos)) continue;
             float3 to_light = normalize(pc.scene_data.spot_lights[i].position_range.xyz - vert.frag_pos);
             float shadow = shadows_disabled ? 1.0 : calc_spot_shadow_factor(pc.scene_data.spot_lights[i], spot_shadow_slot(i), vert.frag_pos, normal, normalize(vert.frag_normal), to_light);
             total_light += calc_spot_light(pc.scene_data.spot_lights[i], normal, view_dir, vert.frag_pos, shininess, smoothness) * shadow;
