@@ -1,6 +1,7 @@
 package main
 
 import "core:fmt"
+import "core:math/linalg"
 import gfx "veil:graphics"
 
 main :: proc() {
@@ -11,8 +12,9 @@ main :: proc() {
 	check_overlay_views()
 	check_overlay_budgets()
 	check_packet_settings()
+	check_shadow_overflow_commit()
 	fmt.println(
-		"PASS: shared layout, ID overflow, GPU batches/fallback, dirty-slot commit, overlay clipping/budgets, packet settings/resize",
+		"PASS: shared layout, ID overflow, GPU batches/fallback, dirty-slot commit, overlay clipping/budgets, packet settings/resize, shadow overflow commit",
 	)
 }
 
@@ -343,4 +345,69 @@ check_packet_settings :: proc() {
 		changed.passes.bloom.mip_sizes[1] == [2]u32{80, 45},
 	)
 	assert(changed.passes.tonemap.size == [2]u32{320, 180})
+}
+
+// A point light whose shadow faces lost casters to the budget must stay uncached, so it renders again.
+check_shadow_overflow_commit :: proc() {
+	history: gfx.DrawHistory
+	gfx.draw_history_create(&history)
+	defer gfx.draw_history_destroy(&history)
+	models := gfx.pool_init(1, gfx.Model)
+	materials := gfx.pool_init(1, gfx.Material)
+	defer gfx.pool_destroy(&models)
+	defer gfx.pool_destroy(&materials)
+	model := gfx.Model {
+		meshes = make([dynamic]gfx.Mesh),
+	}
+	defer delete(model.meshes)
+	append(&model.meshes, gfx.Mesh{index_count = 6, bounds = {extents = {1, 1, 1}}})
+	handle := gfx.pool_alloc(&models, model)
+	draws := []gfx.DrawRecord {
+		{
+			model = handle,
+			bounds = {radius = 2},
+			world = gfx.Mat4x4(1) * linalg.matrix4_translate_f32({0, 0, -3}),
+			casts_shadow = true,
+		},
+	}
+	casters: gfx.ShadowCasters
+	defer gfx.shadow_casters_destroy(&casters)
+	gfx.shadow_casters_sync(&casters, {draws = draws, models = &models, materials = &materials}, nil)
+
+	lights := gfx.LightData {
+		point_light_count = 1,
+	}
+	lights.point_lights[0] = {
+		range       = 10,
+		shadow_near = 0.1,
+		color       = {1, 1, 1},
+	}
+	cache: gfx.ShadowCache
+	packet := gfx.FramePacket {
+		camera   = gfx.camera_create(),
+		lights   = &lights,
+		settings = gfx.RENDER_SETTINGS_DEFAULT,
+	}
+	input := gfx.PrepareInput {
+		packet = &packet,
+		history = &history,
+		casters = &casters,
+		cache = &cache,
+		models = &models,
+		materials = &materials,
+		targets = {extent = {1280, 720}, bloom_extent = {640, 360}, bloom_mips = 6},
+		budget = {instance_ids = 32, indirect_commands = 32},
+	}
+	fitting := gfx.frame_prepare(input)
+	assert(!fitting.shadow_plan.dropped_point[0])
+	gfx.shadow_cache_commit(&cache, &fitting.shadow_plan, &lights)
+	assert(cache.point[0].valid)
+
+	cache = {}
+	input.budget = {}
+	starved := gfx.frame_prepare(input)
+	assert(starved.shadow_plan.dropped_point[0] && starved.uploads.layout.dropped_runs > 0)
+	gfx.shadow_cache_commit(&cache, &starved.shadow_plan, &lights)
+	assert(!cache.point[0].valid)
+	assert(len(gfx.frame_prepare(input).shadow_plan.views) == 6)
 }

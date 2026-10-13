@@ -45,7 +45,8 @@ shadow_cache_invalidate :: proc(cache: ^ShadowCache) {
 }
 
 // Applies a recorded plan: clears the entries it invalidated, then marks the lights it rendered
-// valid with their current keys. Runs every frame, even when the shadow passes are disabled.
+// valid with their current keys, except lights whose views dropped casters. Runs every frame, even
+// when the shadow passes are disabled.
 shadow_cache_commit :: proc(cache: ^ShadowCache, plan: ^ShadowPlan, lights: ^LightData) {
 	shadow_entries_clear(cache.point[:], plan.invalidated_point[:])
 	shadow_entries_clear(cache.spot[:], plan.invalidated_spot[:])
@@ -53,11 +54,13 @@ shadow_cache_commit :: proc(cache: ^ShadowCache, plan: ^ShadowPlan, lights: ^Lig
 		switch view.light_type {
 		case .Directional:
 		case .Point:
+			if plan.dropped_point[view.light_index] do continue
 			shadow_entry_rendered(
 				&cache.point[view.light_index],
 				point_shadow_key(lights.point_lights[view.light_index]),
 			)
 		case .Spot:
+			if plan.dropped_spot[view.light_index] do continue
 			shadow_entry_rendered(&cache.spot[view.light_index], spot_shadow_key(lights.spot_lights[view.light_index]))
 		}
 	}
