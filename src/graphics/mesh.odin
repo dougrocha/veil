@@ -390,3 +390,11 @@ model_with_material :: proc(engine: ^Engine, source: ModelHandle, material: Mate
 	ms.variant_map[key] = handle
 	return handle
 }
+
+model_name :: proc(engine: ^Engine, model: ModelHandle) -> string {
+	return pool_get(&engine.model_system.models, model).name
+}
+
+model_bounds :: proc(engine: ^Engine, model: ModelHandle) -> BoundingSphere {
+	return pool_get(&engine.model_system.models, model).bounds
+}

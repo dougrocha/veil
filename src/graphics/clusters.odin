@@ -129,7 +129,7 @@ cluster_buffers_destroy :: proc(engine: ^Engine) {
 
 cluster_debug_report_overflow :: proc(engine: ^Engine, slot: int) {
 	when ODIN_DEBUG {
-		if engine.frame_count % 120 != 0 || !clusters_enabled(engine) do return
+		if engine.frame_count % 120 != 0 do return
 		frame := &engine.frame_data[slot]
 		backend.buffer_copy_compute_readback(&engine.vk_ctx, frame.clusters.counter, frame.clusters.debug_counter, 1)
 		count := make([]u32, 1, context.temp_allocator)
@@ -140,20 +140,31 @@ cluster_debug_report_overflow :: proc(engine: ^Engine, slot: int) {
 	}
 }
 
-dispatch_clusters :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
-	assert(packet.camera.near > 0, "cluster depth slices require a positive near plane")
-	frame := &engine.frame_data[backend.frame_slot(&engine.vk_ctx)]
+// Dispatch size for the cluster build, one invocation per cluster.
+ClustersPrep :: struct {
+	groups: u32,
+}
+
+// Runs when clustered lighting, the heatmap, or validation needs it.
+clusters_prepare :: proc(camera: Camera, enabled: bool) -> Maybe(ClustersPrep) {
+	if !enabled do return nil
+	assert(camera.near > 0, "cluster depth slices require a positive near plane")
+	return ClustersPrep{groups = (CLUSTER_COUNT + 63) / 64}
+}
+
+record_clusters :: proc(r: ^Recorder, f: ^PreparedFrame) {
+	frame := r.frame
 	pc := ClusterPushConstants {
-		scene_data = backend.buffer_address(&engine.vk_ctx, frame.scene_data_buffer),
-		clusters   = backend.buffer_address(&engine.vk_ctx, frame.clusters.headers),
-		indices    = backend.buffer_address(&engine.vk_ctx, frame.clusters.indices),
-		counter    = backend.buffer_address(&engine.vk_ctx, frame.clusters.counter),
+		scene_data = backend.buffer_address(r.ctx, frame.scene_data_buffer),
+		clusters   = backend.buffer_address(r.ctx, frame.clusters.headers),
+		indices    = backend.buffer_address(r.ctx, frame.clusters.indices),
+		counter    = backend.buffer_address(r.ctx, frame.clusters.counter),
 	}
-	backend.cmd_fill_u32(cmd, frame.clusters.counter, 0)
-	encoder := backend.begin_compute_pass(cmd)
-	backend.pipeline_bind_compute(encoder, pipeline_get(engine, .Clusters))
+	backend.cmd_fill_u32(r.cmd, frame.clusters.counter, 0)
+	encoder := backend.begin_compute_pass(r.cmd)
+	backend.pipeline_bind_compute(encoder, rec_pipeline(r, .Clusters))
 	backend.pipeline_push_compute(encoder, &pc)
-	backend.cmd_dispatch(encoder, (CLUSTER_COUNT + 63) / 64, 1, 1)
+	backend.cmd_dispatch(encoder, f.passes.clusters.?.groups, 1, 1)
 	backend.cmd_barrier_compute_write_to_fragment_read(encoder)
 	backend.end_compute_pass(encoder)
 }

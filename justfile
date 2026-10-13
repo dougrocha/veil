@@ -70,3 +70,8 @@ vma:
     premake5 --vk-version=4 gmake
     cd build/make/linux
     make config=release_x86_64 CXXFLAGS="-Wno-unused-parameter -Wno-missing-field-initializers -Wno-unused-variable"
+
+# Exercise CPU frame preparation without creating a window or GPU device.
+frame-checks: prepare
+    odin build tools/frame_checks {{build_flags}} -out:build/frame-checks
+    ./build/frame-checks

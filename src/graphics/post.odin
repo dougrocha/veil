@@ -46,19 +46,43 @@ POST_SETTINGS_DEFAULT :: PostSettings {
 	bloom_max_levels = BLOOM_DEFAULT_LEVELS,
 }
 
-// Active bloom levels: as many as fit before a mip's short side drops below BLOOM_MIN_MIP_SIZE,
-// capped by max_levels and by what the bloom target was allocated with.
-bloom_levels :: proc(engine: ^Engine, max_levels: u32) -> u32 {
-	bloom := backend.image_desc(&engine.vk_ctx, engine.render_targets.bloom)
-	short_side := min(bloom.extent.width, bloom.extent.height)
-	for_screen: u32 = 1
-	for (short_side >> for_screen) >= BLOOM_MIN_MIP_SIZE do for_screen += 1
-	return max(min(for_screen, max_levels, bloom.mip_levels), 1)
+// Mip sizes are computed once here, so recording needs no image queries.
+BloomPrep :: struct {
+	levels:    u32,
+	hdr_size:  [2]u32,
+	mip_sizes: [BLOOM_MAX_MIPS][2]u32,
 }
 
-@(private = "file")
-mip_extent :: proc(desc: backend.ImageDesc, mip: u32) -> [2]u32 {
-	return {max(desc.extent.width >> mip, 1), max(desc.extent.height >> mip, 1)}
+// The tonemap dispatch size and its exposure and bloom inputs.
+TonemapPrep :: struct {
+	size:                     [2]u32,
+	exposure, bloom_strength: f32,
+}
+
+// Sizes the bloom chain from the screen and the bloom target.
+bloom_prepare :: proc(targets: TargetInfo, post: PostSettings) -> BloomPrep {
+	// Active bloom levels: as many as fit before a mip's short side drops below BLOOM_MIN_MIP_SIZE,
+	// capped by max_levels and by what the bloom target was allocated with.
+	short_side := min(targets.bloom_extent.width, targets.bloom_extent.height)
+	for_screen: u32 = 1
+	for (short_side >> for_screen) >= BLOOM_MIN_MIP_SIZE do for_screen += 1
+	p := BloomPrep {
+		levels   = max(min(for_screen, post.bloom_max_levels, targets.bloom_mips), 1),
+		hdr_size = {targets.extent.width, targets.extent.height},
+	}
+	for i in 0 ..< BLOOM_MAX_MIPS {
+		p.mip_sizes[i] = {max(targets.bloom_extent.width >> u32(i), 1), max(targets.bloom_extent.height >> u32(i), 1)}
+	}
+	return p
+}
+
+// bloom_strength is pre-divided by the active level count, matching the push constant.
+tonemap_prepare :: proc(targets: TargetInfo, post: PostSettings, bloom: BloomPrep) -> TonemapPrep {
+	return {
+		size = {targets.extent.width, targets.extent.height},
+		exposure = post.exposure,
+		bloom_strength = post.bloom_strength / f32(bloom.levels),
+	}
 }
 
 @(private = "file")
@@ -74,18 +98,17 @@ dispatch_post :: proc(encoder: backend.ComputeEncoder, size: [2]u32) {
 // CoD:AW-style chain. Downsamples hdr -> mip 0 -> ... -> mip L-1 (each overwrites its target),
 // then upsamples back up, each step adding the smaller mip into the next larger one. Mip 0 ends
 // up holding every blur radius and is what the tonemap composites.
-dispatch_bloom :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
-	targets := &engine.render_targets
+record_bloom :: proc(r: ^Recorder, f: ^PreparedFrame) {
+	targets := r.targets
 	bloom := targets.bloom
-	bloom_desc := backend.image_desc(&engine.vk_ctx, bloom)
-	hdr_extent := backend.image_desc(&engine.vk_ctx, targets.hdr).extent
+	p := f.passes.bloom
 	color := backend.ImageAspectFlags{.Color}
-	levels := bloom_levels(engine, packet.camera.post.bloom_max_levels)
+	levels := p.levels
 
-	encoder := backend.begin_compute_pass(cmd)
+	encoder := backend.begin_compute_pass(r.cmd)
 	defer backend.end_compute_pass(encoder)
 
-	down := pipeline_get(engine, .Bloom_Down)
+	down := rec_pipeline(r, .Bloom_Down)
 	backend.pipeline_bind_compute(encoder, down)
 	for i in 0 ..< levels {
 		src_size: [2]u32
@@ -93,26 +116,26 @@ dispatch_bloom :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Comma
 			dst_storage = StorageImageIndex(STORAGE_SLOT_BLOOM + i),
 		}
 		if i == 0 {
-			src_size = {hdr_extent.width, hdr_extent.height}
+			src_size = p.hdr_size
 			pc.src_texture = texture_index(targets.hdr_texture)
 			pc.karis = 1
 		} else {
 			backend.image_barrier(encoder, bloom, .Shader_Read, color, base_mip_level = i - 1)
-			src_size = mip_extent(bloom_desc, i - 1)
+			src_size = p.mip_sizes[i - 1]
 			pc.src_texture = texture_index(targets.bloom_textures[i - 1])
 		}
 		pc.src_texel_size = {1 / f32(src_size.x), 1 / f32(src_size.y)}
 		backend.image_barrier(encoder, bloom, .General, color, base_mip_level = i)
 		backend.pipeline_push_compute(encoder, &pc)
-		dispatch_post(encoder, mip_extent(bloom_desc, i))
+		dispatch_post(encoder, p.mip_sizes[i])
 	}
 
-	up := pipeline_get(engine, .Bloom_Up)
+	up := rec_pipeline(r, .Bloom_Up)
 	backend.pipeline_bind_compute(encoder, up)
 	for i := int(levels) - 2; i >= 0; i -= 1 {
 		dst := u32(i)
 		src := dst + 1
-		src_size := mip_extent(bloom_desc, src)
+		src_size := p.mip_sizes[src]
 		backend.image_barrier(encoder, bloom, .Shader_Read, color, base_mip_level = src)
 		// dst was last read by the downsample into src; the upsample reads and writes it in place.
 		backend.image_barrier(encoder, bloom, .General, color, base_mip_level = dst)
@@ -123,7 +146,7 @@ dispatch_bloom :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Comma
 			radius         = BLOOM_UPSAMPLE_RADIUS,
 		}
 		backend.pipeline_push_compute(encoder, &pc)
-		dispatch_post(encoder, mip_extent(bloom_desc, dst))
+		dispatch_post(encoder, p.mip_sizes[dst])
 	}
 
 	// The tonemap samples mip 0.
@@ -132,23 +155,33 @@ dispatch_bloom :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.Comma
 
 // Tonemaps the HDR target (plus bloom) into the LDR draw target. Everything drawn into draw
 // afterwards (debug view, UI) skips the tonemap, and present_blit only has to sRGB-encode.
-dispatch_tonemap :: proc(engine: ^Engine, packet: ^FramePacket, cmd: backend.CommandBuffer) {
-	targets := &engine.render_targets
-	post := packet.camera.post
+record_tonemap :: proc(r: ^Recorder, f: ^PreparedFrame) {
+	targets := r.targets
+	post := f.passes.tonemap
 
-	pipeline := pipeline_get(engine, .Tonemap)
+	pipeline := rec_pipeline(r, .Tonemap)
 	pc := TonemapPushConstants {
 		hdr_texture    = texture_index(targets.hdr_texture),
 		out_storage    = STORAGE_SLOT_DRAW,
 		exposure       = post.exposure,
 		bloom_texture  = texture_index(targets.bloom_textures[0]),
-		bloom_strength = post.bloom_strength / f32(bloom_levels(engine, post.bloom_max_levels)),
+		bloom_strength = post.bloom_strength,
 	}
 
-	encoder := backend.begin_compute_pass(cmd)
+	encoder := backend.begin_compute_pass(r.cmd)
 	backend.pipeline_bind_compute(encoder, pipeline)
 	backend.pipeline_push_compute(encoder, &pc)
-	extent := render_extent(engine)
-	dispatch_post(encoder, {extent.width, extent.height})
+	dispatch_post(encoder, post.size)
 	backend.end_compute_pass(encoder)
+}
+
+// A game-side display query; preparation uses the same sizing rule without device access.
+bloom_levels :: proc(engine: ^Engine, max_levels: u32) -> u32 {
+	desc := backend.image_desc(&engine.vk_ctx, engine.render_targets.bloom)
+	targets := TargetInfo {
+		extent       = engine.render_targets.extent,
+		bloom_extent = {desc.extent.width, desc.extent.height},
+		bloom_mips   = desc.mip_levels,
+	}
+	return bloom_prepare(targets, PostSettings{bloom_max_levels = max_levels}).levels
 }

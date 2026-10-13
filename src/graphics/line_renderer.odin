@@ -22,90 +22,22 @@ MAX_LINE_VERTICES :: 65536
 
 LINE_THICKNESS_PX :: 3.0
 
+// Per-slot vertex buffers per LineBatch.
 LineRenderer :: struct {
-	tested:  TransientBatch(LineVertex),
-	sector:  TransientBatch(LineVertex),
-	overlay: TransientBatch(LineVertex),
+	buffers: [LineBatch][backend.MAX_FRAMES_IN_FLIGHT]backend.Buffer(LineVertex),
 }
 
-line_renderer_create :: proc(engine: ^Engine) -> (ok: bool) {
-	lr := &engine.line_renderer
-
-	transient_batch_create(&engine.vk_ctx, &lr.tested, MAX_LINE_VERTICES)
-	transient_batch_create(&engine.vk_ctx, &lr.sector, MAX_LINE_VERTICES)
-	transient_batch_create(&engine.vk_ctx, &lr.overlay, MAX_LINE_VERTICES)
-
+line_renderer_create :: proc(engine: ^Engine) -> bool {
+	for &batch in engine.line_renderer.buffers {
+		for &buffer in batch {
+			buffer = backend.buffer_create(LineVertex, &engine.vk_ctx, MAX_LINE_VERTICES, {.Storage}, .Shared)
+		}
+	}
 	return true
 }
 
 line_renderer_destroy :: proc(engine: ^Engine) {
-	lr := &engine.line_renderer
-	transient_batch_destroy(&engine.vk_ctx, &lr.tested)
-	transient_batch_destroy(&engine.vk_ctx, &lr.sector)
-	transient_batch_destroy(&engine.vk_ctx, &lr.overlay)
-}
-
-line_renderer_push :: proc(lr: ^LineRenderer, from, to: Vec3, color: Vec4, overlay := false) {
-	batch := &lr.overlay if overlay else &lr.tested
-
-	from := LineVertex {
-		position = from,
-		color    = color,
+	for batch in engine.line_renderer.buffers {
+		for buffer in batch do backend.buffer_destroy(&engine.vk_ctx, buffer)
 	}
-
-	to := LineVertex {
-		position = to,
-		color    = color,
-	}
-
-	append(&batch.items, from)
-	append(&batch.items, to)
-}
-
-line_renderer_push_sector_triangle :: proc(lr: ^LineRenderer, a, b, c: Vec3, color: Vec4) {
-	append(
-		&lr.sector.items,
-		LineVertex{position = a, color = color},
-		LineVertex{position = b, color = color},
-		LineVertex{position = c, color = color},
-	)
-}
-
-line_renderer_clear :: proc(engine: ^Engine) {
-	lr := &engine.line_renderer
-	transient_batch_clear(&lr.tested)
-	transient_batch_clear(&lr.sector)
-	transient_batch_clear(&lr.overlay)
-}
-
-line_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	lr := &engine.line_renderer
-	flush_batch(engine, cmd, &lr.tested, .Debug_Line)
-	flush_batch(engine, cmd, &lr.sector, .Debug_Sector, 1)
-	flush_batch(engine, cmd, &lr.overlay, .Debug_Line_Overlay)
-}
-
-@(private = "file")
-flush_batch :: proc(
-	engine: ^Engine,
-	cmd: backend.RenderEncoder,
-	batch: ^TransientBatch(LineVertex),
-	kind: PipelineKind,
-	vertex_multiplier: u32 = 3,
-) {
-	vertices, count := transient_batch_upload(&engine.vk_ctx, batch)
-	if count == 0 do return
-
-	pipeline := pipeline_get(engine, kind)
-	pc := LinePushConstants {
-		scene_data    = backend.buffer_address(&engine.vk_ctx, current_frame_data(engine).scene_data_buffer),
-		vertex_buffer = vertices,
-		screen_size   = render_viewport(engine),
-		thickness     = LINE_THICKNESS_PX,
-	}
-	backend.pipeline_bind(cmd, pipeline)
-	backend.pipeline_push(cmd, &pc)
-	// Line segments expand to six vertices; sector triangles use their three stored vertices.
-	backend.cmd_draw(cmd, count * vertex_multiplier)
-	stats_count_draw(engine)
 }

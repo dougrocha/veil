@@ -238,7 +238,7 @@ gizmo_rotation_radial :: proc(
 }
 
 gizmo_draw_rotation_sweep :: proc(
-	engine: ^gfx.Engine,
+	overlay: ^gfx.Overlay,
 	center, axis, start_radial: gfx.Vec3,
 	radius, angle: f32,
 	color: gfx.Vec4,
@@ -255,15 +255,15 @@ gizmo_draw_rotation_sweep :: proc(
 	for step in 1 ..= steps {
 		fraction := f32(step) / f32(steps)
 		current := point_at(center, start_radial, side, radius, angle * fraction)
-		gfx.line_renderer_push_sector_triangle(&engine.line_renderer, center, previous, current, fill)
+		gfx.overlay_sector_triangle(overlay, center, previous, current, fill)
 		previous = current
 	}
-	gfx.line_renderer_push(&engine.line_renderer, center, center + start_radial * radius, color, overlay = true)
-	gfx.line_renderer_push(&engine.line_renderer, center, previous, color, overlay = true)
+	gfx.overlay_line(overlay, center, center + start_radial * radius, color, on_top = true)
+	gfx.overlay_line(overlay, center, previous, color, on_top = true)
 }
 
 gizmo_draw_rotation :: proc(
-	engine: ^gfx.Engine,
+	overlay: ^gfx.Overlay,
 	cam: gfx.Camera,
 	transform: gfx.Transform,
 	bounds: gfx.BoundingSphere,
@@ -276,7 +276,7 @@ gizmo_draw_rotation :: proc(
 	radius := gizmo_rotation_radius(cam, transform, bounds)
 	if dragging && active != .None {
 		gizmo_draw_rotation_sweep(
-			engine,
+			overlay,
 			transform.translation,
 			gizmo_axis_direction(transform, active),
 			start_radial,
@@ -298,7 +298,7 @@ gizmo_draw_rotation :: proc(
 				point0, point1, visible = gizmo_visible_ring_segment(cam, transform, axis, point0, point1)
 				if !visible do continue
 			}
-			gfx.line_renderer_push(&engine.line_renderer, point0, point1, color, overlay = true)
+			gfx.overlay_line(overlay, point0, point1, color, on_top = true)
 		}
 	}
 }
@@ -332,7 +332,7 @@ gizmo_pick_translation :: proc(
 }
 
 gizmo_draw_translation :: proc(
-	engine: ^gfx.Engine,
+	overlay: ^gfx.Overlay,
 	cam: gfx.Camera,
 	transform: gfx.Transform,
 	active: GizmoAxis = .None,
@@ -347,13 +347,7 @@ gizmo_draw_translation :: proc(
 		color := gizmo_axis_color(active, false)
 		guide_color := gfx.Vec4{color.x * 0.35, color.y * 0.35, color.z * 0.35, 1}
 		extent := max(cam.far, length * 20)
-		gfx.line_renderer_push(
-			&engine.line_renderer,
-			origin - direction * extent,
-			origin + direction * extent,
-			guide_color,
-			overlay = true,
-		)
+		gfx.overlay_line(overlay, origin - direction * extent, origin + direction * extent, guide_color, on_top = true)
 	}
 
 	for axis in GIZMO_AXES {
@@ -361,7 +355,7 @@ gizmo_draw_translation :: proc(
 		direction := gizmo_translation_axis_direction(transform, axis, space)
 		color := gizmo_axis_color(axis, false)
 		tip := origin + direction * length
-		gfx.line_renderer_push(&engine.line_renderer, origin, tip, color, overlay = true)
+		gfx.overlay_line(overlay, origin, tip, color, on_top = true)
 
 		view_dir := linalg.normalize(cam.position - tip)
 		side := linalg.cross(direction, view_dir)
@@ -372,15 +366,15 @@ gizmo_draw_translation :: proc(
 			radius := length * f32(GIZMO_HEAD_WIDTH)
 			right := cam.right * radius
 			up := cam.up * radius
-			gfx.line_renderer_push(&engine.line_renderer, tip + right, tip + up, color, overlay = true)
-			gfx.line_renderer_push(&engine.line_renderer, tip + up, tip - right, color, overlay = true)
-			gfx.line_renderer_push(&engine.line_renderer, tip - right, tip - up, color, overlay = true)
-			gfx.line_renderer_push(&engine.line_renderer, tip - up, tip + right, color, overlay = true)
+			gfx.overlay_line(overlay, tip + right, tip + up, color, on_top = true)
+			gfx.overlay_line(overlay, tip + up, tip - right, color, on_top = true)
+			gfx.overlay_line(overlay, tip - right, tip - up, color, on_top = true)
+			gfx.overlay_line(overlay, tip - up, tip + right, color, on_top = true)
 		} else {
 			base := tip - direction * length * f32(GIZMO_HEAD_LENGTH)
 			wing := side * length * f32(GIZMO_HEAD_WIDTH)
-			gfx.line_renderer_push(&engine.line_renderer, tip, base + wing, color, overlay = true)
-			gfx.line_renderer_push(&engine.line_renderer, tip, base - wing, color, overlay = true)
+			gfx.overlay_line(overlay, tip, base + wing, color, on_top = true)
+			gfx.overlay_line(overlay, tip, base - wing, color, on_top = true)
 		}
 	}
 }
@@ -521,14 +515,14 @@ gizmo_mouse_up :: proc(gc: ^GizmoController) {
 }
 
 // Queues the gizmo for the selected entity into this frame's debug lines. No-op without a selection.
-gizmo_draw :: proc(gc: ^GizmoController, engine: ^gfx.Engine, world: ^World, cam: gfx.Camera) {
+gizmo_draw :: proc(gc: ^GizmoController, engine: ^gfx.Engine, overlay: ^gfx.Overlay, world: ^World, cam: gfx.Camera) {
 	if !entity_alive(world, world.selected) do return
 	transform := entity_world_transform(world, world.selected)
 	if gc.mode == .Translate {
-		gizmo_draw_translation(engine, cam, transform, gc.active_axis, gc.dragging, gc.space)
+		gizmo_draw_translation(overlay, cam, transform, gc.active_axis, gc.dragging, gc.space)
 	} else {
 		gizmo_draw_rotation(
-			engine,
+			overlay,
 			cam,
 			transform,
 			gizmo_bounds(engine, world, world.selected),
@@ -545,5 +539,5 @@ gizmo_draw :: proc(gc: ^GizmoController, engine: ^gfx.Engine, world: ^World, cam
 gizmo_bounds :: proc(engine: ^gfx.Engine, world: ^World, h: EntityHandle) -> gfx.BoundingSphere {
 	e := entity_get(world, h)
 	if .Renderable not_in e.flags do return {radius = 1}
-	return gfx.pool_get(&engine.model_system.models, e.model).bounds
+	return gfx.model_bounds(engine, e.model)
 }

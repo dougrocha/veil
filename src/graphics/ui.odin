@@ -19,59 +19,19 @@ UIPushConstants :: struct #max_field_align(16) {
 
 MAX_UI_VERTICES :: 65536
 
-// One batch per font atlas in use this frame, keyed by the atlas's
-// bindless texture index — lets ui_draw_text mix multiple fonts/sizes
-// per frame without one clobbering another's vertices.
+// One set of per-slot vertex buffers per font atlas, keyed by the atlas's bindless texture index,
+// created on first use.
 UIRenderer :: struct {
-	batches: map[u32]TransientBatch(UIVertex),
+	buffers: map[u32][backend.MAX_FRAMES_IN_FLIGHT]backend.Buffer(UIVertex),
 }
 
 ui_renderer_create :: proc(engine: ^Engine) {
-	engine.ui_renderer.batches = make(map[u32]TransientBatch(UIVertex))
+	engine.ui_renderer.buffers = make(map[u32][backend.MAX_FRAMES_IN_FLIGHT]backend.Buffer(UIVertex))
 }
 
 ui_renderer_destroy :: proc(engine: ^Engine) {
-	ur := &engine.ui_renderer
-	for _, &batch in ur.batches {
-		transient_batch_destroy(&engine.vk_ctx, &batch)
+	for _, buffers in engine.ui_renderer.buffers {
+		for buffer in buffers do backend.buffer_destroy(&engine.vk_ctx, buffer)
 	}
-	delete(ur.batches)
-}
-
-ui_renderer_clear :: proc(engine: ^Engine) {
-	for _, &batch in engine.ui_renderer.batches {
-		transient_batch_clear(&batch)
-	}
-}
-
-// Returns the batch for `atlas_texture`, lazily creating its GPU buffers on
-// first use. Called by ui_draw_text, not meant to be called directly.
-ui_renderer_batch_for :: proc(engine: ^Engine, atlas_texture: u32) -> ^TransientBatch(UIVertex) {
-	ur := &engine.ui_renderer
-	if atlas_texture not_in ur.batches {
-		batch: TransientBatch(UIVertex)
-		transient_batch_create(&engine.vk_ctx, &batch, MAX_UI_VERTICES)
-		ur.batches[atlas_texture] = batch
-	}
-	return &ur.batches[atlas_texture]
-}
-
-ui_renderer_flush :: proc(engine: ^Engine, cmd: backend.RenderEncoder) {
-	ur := &engine.ui_renderer
-	pipeline := pipeline_get(engine, .UI)
-
-	for atlas_texture, &batch in ur.batches {
-		vertices, count := transient_batch_upload(&engine.vk_ctx, &batch)
-		if count == 0 do continue
-
-		pc := UIPushConstants {
-			vertex_buffer = vertices,
-			screen_size   = render_viewport(engine),
-			atlas_texture = TextureIndex(atlas_texture),
-		}
-		backend.pipeline_bind(cmd, pipeline)
-		backend.pipeline_push(cmd, &pc)
-		backend.cmd_draw(cmd, count)
-		stats_count_draw(engine)
-	}
+	delete(engine.ui_renderer.buffers)
 }

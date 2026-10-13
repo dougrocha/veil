@@ -10,7 +10,7 @@ import "backend"
 // Timings are averaged over this window so the overlay is readable.
 STATS_WINDOW_SECONDS :: 0.5
 
-// Per-frame counts, filled while the command buffer is recorded.
+// Per-frame counts planned before recording and published after submission.
 FrameCounters :: struct {
 	draw_calls:          u32,
 	indirect_calls:      u32,
@@ -21,6 +21,16 @@ FrameCounters :: struct {
 	meshes_culled:       u32, // main pass, meshes of visible draws rejected by their AABB
 	shadow_views:        u32, // cascades + spot maps + cube faces rendered
 	shadow_views_cached: u32, // spot maps + cube faces reused from an earlier frame
+	dropped_lines:       u32,
+	dropped_ui:          u32,
+	dropped_debug_views: u32,
+}
+
+// Post-cull totals read back from a frame slot's cull commands.
+GpuVisible :: struct {
+	valid:     bool,
+	instances: u64,
+	triangles: u64,
 }
 
 // CPU milliseconds per engine_render phase.
@@ -41,8 +51,8 @@ GpuScopeStat :: struct {
 
 Stats :: struct {
 	latest:       CpuTimings, // raw timings for the most recently submitted frame
-	counters:     FrameCounters, // accumulating for the frame being recorded
 	last:         FrameCounters, // last fully recorded frame
+	gpu_visible:  GpuVisible, // from an earlier frame: the GPU cull result lands after its fence
 
 	// window accumulators
 	sum:          CpuTimings,
@@ -97,23 +107,6 @@ stats_memory_sample :: proc(engine: ^Engine) {
 	m.arena_used = engine.frame_arena.total_used
 	m.arena_peak = max(m.arena_peak, m.arena_used)
 	m.vram_used, m.vram_budget = backend.memory_budget(&engine.vk_ctx)
-}
-
-stats_record_begin :: proc(engine: ^Engine) {
-	engine.stats.counters = {}
-}
-
-stats_record_end :: proc(engine: ^Engine) {
-	engine.stats.last = engine.stats.counters
-}
-
-stats_count_draw :: proc(engine: ^Engine, triangles: u64 = 0) {
-	engine.stats.counters.draw_calls += 1
-	engine.stats.counters.triangles += triangles
-}
-
-stats_count_indirect_call :: proc(engine: ^Engine) {
-	engine.stats.counters.indirect_calls += 1
 }
 
 stats_add_timings :: proc(engine: ^Engine, t: CpuTimings) {
@@ -173,7 +166,13 @@ tick_ms :: proc(start: time.Tick) -> f64 {
 
 // Queues the stats panel as UI text at (x, y), one line per `line_height` pixels, followed by the
 // caller's extra lines.
-stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32, extra: []string = nil) {
+stats_draw :: proc(
+	engine: ^Engine,
+	overlay: ^Overlay,
+	font: ^Baked_Font,
+	x, y, line_height: f32,
+	extra: []string = nil,
+) {
 	s := &engine.stats
 	c := &s.last
 	draw_line := fmt.tprintf(
@@ -187,10 +186,19 @@ stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32, e
 		c.shadow_views_cached,
 	)
 	if c.candidate_instances > 0 {
+		visibility := "GPU visibility unknown"
+		if s.gpu_visible.valid {
+			visibility = fmt.tprintf(
+				"visible %d (gpu, latent) / %.2fM tris",
+				s.gpu_visible.instances,
+				f64(s.gpu_visible.triangles) / 1e6,
+			)
+		}
 		draw_line = fmt.tprintf(
-			"draws %d  indirect calls %d  GPU visibility unknown  candidates %d / %.2fM tris  shadow views %d (%d cached)",
+			"draws %d  indirect calls %d  %s  candidates %d / %.2fM tris  shadow views %d (%d cached)",
 			c.draw_calls,
 			c.indirect_calls,
+			visibility,
 			c.candidate_instances,
 			f64(c.candidate_triangles) / 1e6,
 			c.shadow_views,
@@ -237,12 +245,23 @@ stats_draw :: proc(engine: ^Engine, font: ^Baked_Font, x, y, line_height: f32, e
 
 	all_lines := make([dynamic]string, context.temp_allocator)
 	append(&all_lines, lines[0], lines[1], gpu_line, lines[2], mem_line)
+	if c.dropped_lines > 0 || c.dropped_ui > 0 || c.dropped_debug_views > 0 {
+		append(
+			&all_lines,
+			fmt.tprintf(
+				"overlay dropped %d lines  %d glyphs  %d views",
+				c.dropped_lines,
+				c.dropped_ui,
+				c.dropped_debug_views,
+			),
+		)
+	}
 	append(&all_lines, ..extra)
 	for line, i in all_lines {
 		ly := y + f32(i) * line_height
 		// drop shadow keeps it readable over bright and dark scenes
-		ui_draw_text(engine, font, line, x + 1, ly + 1, {0, 0, 0, 255})
-		ui_draw_text(engine, font, line, x, ly, {255, 255, 255, 255})
+		overlay_text(overlay, font, line, x + 1, ly + 1, {0, 0, 0, 255})
+		overlay_text(overlay, font, line, x, ly, {255, 255, 255, 255})
 	}
 }
 

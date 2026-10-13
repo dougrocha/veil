@@ -21,28 +21,12 @@ FrameDump :: struct {
 
 // Debug switches that a headless dump run needs but has no keyboard for.
 debug_env_init :: proc(engine: ^Engine) {
-	if value, found := os.lookup_env("VEIL_GPU_CULL", context.allocator); found {
-		defer delete(value)
-		engine.settings.gpu_cull = value != "0"
-		log.infof("GPU frustum culling: %v", engine.settings.gpu_cull)
-	}
-
 	if value, found := os.lookup_env("VEIL_GPU_CULL_VALIDATE", context.allocator); found {
 		defer delete(value)
 		engine.gpu_cull_validate = value == "1"
 		if engine.gpu_cull_validate do log.infof("GPU culling validation enabled")
 	}
 
-	if value, found := os.lookup_env("VEIL_CLUSTERED", context.allocator); found {
-		defer delete(value)
-		engine.clustered_lighting = value != "0"
-		log.infof("clustered lighting enabled via VEIL_CLUSTERED: %v", engine.clustered_lighting)
-	}
-	if value, found := os.lookup_env("VEIL_CLUSTER_HEATMAP", context.allocator); found {
-		defer delete(value)
-		engine.cluster_heatmap = value != "0"
-		log.infof("cluster heatmap enabled: %v", engine.cluster_heatmap)
-	}
 	when ODIN_DEBUG {
 		if value, found := os.lookup_env("VEIL_CLUSTER_VALIDATE", context.allocator); found {
 			defer delete(value)
@@ -50,16 +34,54 @@ debug_env_init :: proc(engine: ^Engine) {
 			log.infof("cluster validation enabled: %v", engine.cluster_validate)
 		}
 	}
+
+	// For profiling: Fifo caps fps at the refresh rate and puts the vsync wait into frame times.
+	if value, found := os.lookup_env("VEIL_PRESENT_MODE", context.allocator); found {
+		defer delete(value)
+		switch strings.to_lower(strings.trim_space(value), context.temp_allocator) {
+		case "fifo":
+			engine.config.present_mode = .Fifo
+		case "mailbox":
+			engine.config.present_mode = .Mailbox
+		case "immediate":
+			engine.config.present_mode = .Immediate
+		case:
+			log.warnf("VEIL_PRESENT_MODE: unknown mode %q (fifo, mailbox, immediate), using fifo", value)
+		}
+		log.infof("present mode requested via VEIL_PRESENT_MODE: %v", engine.config.present_mode)
+	}
+}
+
+// Applies the VEIL_* render switches to the game's settings, for headless runs with no keyboard.
+render_settings_from_env :: proc(settings: ^RenderSettings) {
+	if value, found := os.lookup_env("VEIL_GPU_CULL", context.allocator); found {
+		defer delete(value)
+		settings.gpu_cull = value != "0"
+		log.infof("GPU frustum culling: %v", settings.gpu_cull)
+	}
+
+	if value, found := os.lookup_env("VEIL_CLUSTERED", context.allocator); found {
+		defer delete(value)
+		settings.clustered_lighting = value != "0"
+		log.infof("clustered lighting enabled via VEIL_CLUSTERED: %v", settings.clustered_lighting)
+	}
+
+	if value, found := os.lookup_env("VEIL_CLUSTER_HEATMAP", context.allocator); found {
+		defer delete(value)
+		settings.cluster_heatmap = value != "0"
+		log.infof("cluster heatmap enabled: %v", settings.cluster_heatmap)
+	}
+
 	if value, found := os.lookup_env("VEIL_PARTICLES", context.allocator); found {
 		defer delete(value)
-		engine.settings.particles = value != "0"
-		log.infof("particles enabled via VEIL_PARTICLES: %v", engine.settings.particles)
+		settings.particles = value != "0"
+		log.infof("particles enabled via VEIL_PARTICLES: %v", settings.particles)
 	}
 
 	if value, found := os.lookup_env("VEIL_NO_SHADOWS", context.allocator); found {
 		defer delete(value)
 		if value != "0" {
-			engine.settings.shadows = false
+			settings.shadows = false
 			log.infof("shadows disabled via VEIL_NO_SHADOWS")
 		}
 	}
@@ -82,30 +104,14 @@ debug_env_init :: proc(engine: ^Engine) {
 				log.warnf("VEIL_LIGHTS: unknown light type %q", name)
 			}
 		}
-		engine.settings.lights = lights
+		settings.lights = lights
 		log.infof("lights set via VEIL_LIGHTS=%s -> %v", value, lights)
-	}
-
-	// For profiling: Fifo caps fps at the refresh rate and puts the vsync wait into frame times.
-	if value, found := os.lookup_env("VEIL_PRESENT_MODE", context.allocator); found {
-		defer delete(value)
-		switch strings.to_lower(strings.trim_space(value), context.temp_allocator) {
-		case "fifo":
-			engine.config.present_mode = .Fifo
-		case "mailbox":
-			engine.config.present_mode = .Mailbox
-		case "immediate":
-			engine.config.present_mode = .Immediate
-		case:
-			log.warnf("VEIL_PRESENT_MODE: unknown mode %q (fifo, mailbox, immediate), using fifo", value)
-		}
-		log.infof("present mode requested via VEIL_PRESENT_MODE: %v", engine.config.present_mode)
 	}
 
 	if value, found := os.lookup_env("VEIL_CASCADES", context.allocator); found {
 		defer delete(value)
 		if value != "0" {
-			engine.settings.cascade_colors = true
+			settings.cascade_colors = true
 			log.infof("cascade debug colors enabled via VEIL_CASCADES")
 		}
 	}
