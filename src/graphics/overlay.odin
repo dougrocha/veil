@@ -15,6 +15,8 @@ LineBatch :: enum {
 Overlay :: struct {
 	lines:       [LineBatch][dynamic]LineVertex,
 	ui:          map[u32][dynamic]UIVertex,
+	// Atlases in first-use order. Map iteration order is unspecified, and draw order decides which text is on top.
+	ui_order:    [dynamic]u32,
 	debug_views: [dynamic]DebugViewRequest,
 	allocator:   mem.Allocator,
 }
@@ -66,6 +68,7 @@ overlay_make :: proc(allocator := context.temp_allocator) -> Overlay {
 	}
 	for &batch in o.lines do batch = make([dynamic]LineVertex, allocator)
 	o.ui = make(map[u32][dynamic]UIVertex, allocator)
+	o.ui_order = make([dynamic]u32, allocator)
 	o.debug_views = make([dynamic]DebugViewRequest, allocator)
 	return o
 }
@@ -89,7 +92,10 @@ overlay_sector_triangle :: proc(o: ^Overlay, a, b, c: Vec3, color: Vec4) {
 // One batch per font atlas, keyed by the atlas's bindless texture index, so multiple
 // fonts/sizes in one frame don't clobber each other's vertices.
 overlay_ui_batch :: proc(o: ^Overlay, atlas: u32) -> ^[dynamic]UIVertex {
-	if atlas not_in o.ui do o.ui[atlas] = make([dynamic]UIVertex, o.allocator)
+	if atlas not_in o.ui {
+		o.ui[atlas] = make([dynamic]UIVertex, o.allocator)
+		append(&o.ui_order, atlas)
+	}
 	return &o.ui[atlas]
 }
 
@@ -121,7 +127,8 @@ overlay_prepare :: proc(o: ^Overlay, settings: RenderSettings, extent: Extent2D)
 			if count > 0 do prepared.draw_calls += 1
 		}
 		ui := make([dynamic]PreparedUIBatch, context.temp_allocator)
-		for atlas, vertices in o.ui {
+		for atlas in o.ui_order {
+			vertices := o.ui[atlas]
 			count := min(len(vertices), MAX_UI_VERTICES)
 			count -= count % 6
 			prepared.dropped_ui += u32((len(vertices) - count) / 6)

@@ -10,6 +10,7 @@ main :: proc() {
 	check_dirty_commit()
 	check_overlay_views()
 	check_overlay_budgets()
+	check_overlay_ui_order()
 	check_packet_settings()
 	fmt.println(
 		"PASS: shared layout, ID overflow, GPU batches/fallback, dirty-slot commit, overlay clipping/budgets, packet settings/resize",
@@ -195,6 +196,18 @@ check_overlay_budgets :: proc() {
 		len(o.lines[.Tested]) == 65540 && len(o.lines[.Sector]) == 65541 && len(ui^) == 65544,
 		"preparation must not drain game-owned geometry",
 	)
+}
+
+check_overlay_ui_order :: proc() {
+	o := gfx.overlay_make()
+	for atlas in ([?]u32{9, 3, 6, 3, 9}) {
+		batch := gfx.overlay_ui_batch(&o, atlas)
+		resize(batch, len(batch^) + 6)
+	}
+	p := gfx.overlay_prepare(&o, {}, {100, 80})
+	assert(p.draw_calls == 3 && len(p.ui) == 3, "each atlas must prepare one batch")
+	assert(p.ui[0].atlas_texture == 9 && p.ui[1].atlas_texture == 3 && p.ui[2].atlas_texture == 6)
+	assert(len(p.ui[0].vertices) == 12 && len(p.ui[1].vertices) == 12 && len(p.ui[2].vertices) == 6)
 }
 
 check_packet_settings :: proc() {
