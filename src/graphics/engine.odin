@@ -387,7 +387,7 @@ frame_commit :: proc(engine: ^Engine, f: ^PreparedFrame, packet: ^FramePacket) {
 	draw_history_commit(&engine.prev_draws, f.slot)
 	engine.stats.last = f.counters
 	cull, culled := f.uploads.cull.(CullUpload)
-	engine.frame_data[f.slot].cull_readback_batches = culled ? len(cull.runs) : 0
+	engine.frame_data[f.slot].cull_readback_batches = len(cull.runs) if culled else 0
 }
 
 // Reads this slot's cull commands from its last submitted frame. Call after frame begin's fence wait.
