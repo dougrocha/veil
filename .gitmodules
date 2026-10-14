@@ -1,0 +1,3 @@
+[submodule "shared/odin-slang"]
+	path = shared/odin-slang
+	url = https://github.com/DragosPopse/odin-slang
