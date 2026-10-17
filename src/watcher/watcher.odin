@@ -31,6 +31,9 @@ when ODIN_OS == .Linux {
 		// events pushed by the FSEvents callback, drained by poll()
 		pending:  [dynamic]Event_Data,
 	}
+} else {
+	// no file watching on other platforms yet
+	Platform_Data :: struct {}
 }
 
 Watcher :: struct {
@@ -110,6 +113,9 @@ init :: proc(w: ^Watcher, root_path: string) -> bool {
 		}
 
 		return true
+	} else {
+		log.warnf("file watch is not supported on %v, shader hot-reload disabled", ODIN_OS)
+		return false
 	}
 }
 
@@ -207,6 +213,8 @@ poll :: proc(w: ^Watcher, allocator := context.temp_allocator) -> []Event_Data {
 		clear(&w.pending)
 
 		return out
+	} else {
+		return nil
 	}
 }
 

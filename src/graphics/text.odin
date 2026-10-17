@@ -30,6 +30,8 @@ when ODIN_OS == .Linux {
 		"/System/Library/Fonts/Supplemental/Arial.ttf",
 		"/System/Library/Fonts/Helvetica.ttc",
 	}
+} else when ODIN_OS == .Windows {
+	DEFAULT_SYSTEM_FONT_CANDIDATES :: []string{"C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/segoeui.ttf"}
 } else {
 	DEFAULT_SYSTEM_FONT_CANDIDATES :: []string{}
 }
