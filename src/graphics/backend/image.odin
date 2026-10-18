@@ -1,6 +1,7 @@
 package backend
 
 import "core:log"
+import "core:mem"
 
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
@@ -70,13 +71,12 @@ image_desc_default :: proc(extent: Extent3D, format: Format, usage: ImageUsageFl
 	return ImageDesc{extent = extent, format = format, usage = usage, mip_levels = 1, array_layers = 1, samples = 1}
 }
 
-images_init :: proc(ctx: ^Context) {
-	ctx.images = handles.pool_init(MAX_IMAGES, ImageSlot)
+images_init :: proc(ctx: ^Context, allocator: mem.Allocator) {
+	ctx.images = handles.pool_init(MAX_IMAGES, ImageSlot, allocator)
 }
 
 images_destroy :: proc(ctx: ^Context) {
 	assert(handles.pool_live_count(&ctx.images) == 0, "images_destroy: images still alive")
-	handles.pool_destroy(&ctx.images)
 }
 
 // True while the image is alive: false for the zero handle and after image_destroy.
@@ -85,8 +85,8 @@ image_is_valid :: proc(ctx: ^Context, img: Image) -> bool {
 }
 
 @(private)
-image_slot :: proc(ctx: ^Context, img: Image) -> ^ImageSlot {
-	return handles.pool_get(&ctx.images, img)
+image_slot :: proc(ctx: ^Context, img: Image, loc := #caller_location) -> ^ImageSlot {
+	return handles.pool_get_live(&ctx.images, img, loc)
 }
 
 // The description the image was created with.

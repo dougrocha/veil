@@ -1,6 +1,7 @@
 package graphics
 
 import "core:log"
+import "core:mem/virtual"
 import "core:strings"
 
 import "backend"
@@ -32,7 +33,7 @@ GpuMaterial :: struct #max_field_align(16) {
 
 DEFAULT_MATERIAL_NAME :: "default"
 
-MAX_MATERIALS :: 16384
+MAX_MATERIALS :: (1 << INSTANCE_MATERIAL_BITS) - 1 // indices run 1..MAX_MATERIALS; 0 is the nil slot
 
 Material :: struct {
 	name:                       string,
@@ -57,6 +58,8 @@ MaterialSystemConfig :: struct {
 }
 
 MaterialSystem :: struct {
+	// Pool, map and the owned key and name strings. Materials have no unload, so all of it lives to destroy.
+	arena:        virtual.Arena,
 	materials:    Pool(Material),
 	material_map: map[string]MaterialHandle,
 	buffer:       backend.Buffer(GpuMaterial),
@@ -64,14 +67,17 @@ MaterialSystem :: struct {
 }
 
 material_system_create :: proc(engine: ^Engine, config: MaterialSystemConfig) {
-	engine.material_system.config = config
-	engine.material_system.materials = pool_init(config.max_material_count, Material)
-	engine.material_system.material_map = make(map[string]MaterialHandle)
+	ms := &engine.material_system
+	ms.config = config
+	ensure(virtual.arena_init_growing(&ms.arena) == nil, "material system: could not create arena")
+	allocator := virtual.arena_allocator(&ms.arena)
+	ms.materials = pool_init(config.max_material_count, Material, allocator)
+	ms.material_map = make(map[string]MaterialHandle, allocator)
 
 	engine.material_system.buffer = backend.buffer_create(
 		GpuMaterial,
 		&engine.vk_ctx,
-		int(config.max_material_count),
+		int(config.max_material_count) + 1, // slot 0 mirrors the nil material
 		{.Storage},
 		.Shared,
 	)
@@ -100,15 +106,16 @@ material_create :: proc(
 		return handle
 	}
 
-	if engine.material_system.materials.count >= engine.material_system.config.max_material_count {
+	if pool_is_full(&engine.material_system.materials) {
 		log.errorf("Material system is full (max: %d)", engine.material_system.config.max_material_count)
 		return INVALID_MATERIAL
 	}
 
 	log.debugf("Creating material: %s", key)
 	// Owned copies: the map key lives until material_system_destroy; callers pass temp strings.
-	map_key := strings.clone(key)
-	name := strings.clone(display_name if display_name != "" else key)
+	allocator := virtual.arena_allocator(&engine.material_system.arena)
+	map_key := strings.clone(key, allocator)
+	name := strings.clone(display_name if display_name != "" else key, allocator)
 	resolve :: proc(engine: ^Engine, key: string, h: TextureHandle, default: DefaultTexture) -> TextureHandle {
 		if h == INVALID_TEXTURE do return texture_load(engine, default)
 		if pool_is_valid(&engine.texture_system.textures, h) do return h
@@ -143,20 +150,7 @@ material_create :: proc(
 	handle := pool_alloc(&engine.material_system.materials, material)
 	engine.material_system.material_map[map_key] = handle
 
-	gpu_mat := GpuMaterial {
-		base_color                 = base_color,
-		perceptual_roughness       = perceptual_roughness,
-		metallic                   = metallic,
-		base_color_texture         = texture_index(resolved_base_color),
-		metallic_roughness_texture = texture_index(resolved_metallic_roughness),
-		normal_map_texture         = texture_index(resolved_normal),
-		occlusion_texture          = texture_index(resolved_occlusion),
-		alpha_mode                 = alpha_mode,
-		alpha_cutoff               = alpha_cutoff,
-		double_sided               = u32(double_sided),
-		emissive                   = {emissive.x, emissive.y, emissive.z, 0},
-	}
-	backend.buffer_write(&engine.vk_ctx, engine.material_system.buffer, gpu_mat, int(handle.index))
+	material_write_gpu(engine, handle.index, material)
 
 	return handle
 }
@@ -164,20 +158,11 @@ material_create :: proc(
 material_system_destroy :: proc(engine: ^Engine) {
 	ms := &engine.material_system
 	backend.buffer_destroy(&engine.vk_ctx, ms.buffer)
-	for &material, i in ms.materials.values {
-		if pool_is_alive(&ms.materials, Index(i)) do delete(material.name)
-	}
-	for key in ms.material_map do delete(key)
-	pool_destroy(&ms.materials)
-	delete(ms.material_map)
-}
-
-material_get_default :: proc(engine: ^Engine) -> MaterialHandle {
-	return engine.material_system.material_map[DEFAULT_MATERIAL_NAME]
+	virtual.arena_destroy(&ms.arena)
 }
 
 material_create_default :: proc(engine: ^Engine) {
-	material_create(
+	handle := material_create(
 		engine,
 		DEFAULT_MATERIAL_NAME,
 		perceptual_roughness = 0.5,
@@ -186,4 +171,26 @@ material_create_default :: proc(engine: ^Engine) {
 		normal_map_texture = texture_load(engine, DefaultTexture.Flat_Normal),
 		occlusion_texture = texture_load(engine, DefaultTexture.Occlusion),
 	)
+	// The zero handle reads as the default material, so a mesh without one needs no branch.
+	default := pool_get(&engine.material_system.materials, handle)^
+	pool_set_nil(&engine.material_system.materials, default)
+	material_write_gpu(engine, 0, default)
+}
+
+@(private = "file")
+material_write_gpu :: proc(engine: ^Engine, slot: Index, m: Material) {
+	gpu_mat := GpuMaterial {
+		base_color                 = m.base_color,
+		perceptual_roughness       = m.perceptual_roughness,
+		metallic                   = m.metallic,
+		base_color_texture         = texture_index(m.base_color_texture),
+		metallic_roughness_texture = texture_index(m.metallic_roughness_texture),
+		normal_map_texture         = texture_index(m.normal_map_texture),
+		occlusion_texture          = texture_index(m.occlusion_texture),
+		alpha_mode                 = m.alpha_mode,
+		alpha_cutoff               = m.alpha_cutoff,
+		double_sided               = u32(m.double_sided),
+		emissive                   = {m.emissive.x, m.emissive.y, m.emissive.z, 0},
+	}
+	backend.buffer_write(&engine.vk_ctx, engine.material_system.buffer, gpu_mat, int(slot))
 }

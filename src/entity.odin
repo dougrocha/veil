@@ -32,13 +32,9 @@ EntityDesc :: struct {
 	camera:    gfx.Camera,
 }
 
-// What entity_get returns for a stale handle. Reset on every return, so writes through it are lost.
-@(private = "file")
-nil_entity: Entity
-
 // Returns INVALID_ENTITY when the world is full or parent is stale. global_transform is valid at once.
 entity_spawn :: proc(w: ^World, desc: EntityDesc, parent := INVALID_ENTITY) -> EntityHandle {
-	if handles.pool_live_count(&w.entities) >= MAX_ENTITIES {
+	if handles.pool_is_full(&w.entities) {
 		log.errorf("entity_spawn: world full (%d)", MAX_ENTITIES)
 		return INVALID_ENTITY
 	}
@@ -98,13 +94,9 @@ entity_spawn_parts :: proc(
 	return root
 }
 
-// Never nil: a stale handle gets a zeroed stand-in.
-entity_get :: proc(w: ^World, h: EntityHandle) -> ^Entity {
-	if !handles.pool_is_valid(&w.entities, h) {
-		nil_entity = {}
-		return &nil_entity
-	}
-	return handles.pool_get(&w.entities, h)
+// Never nil: the zero handle reads as a zeroed entity, and writes through it are lost. A stale handle asserts.
+entity_get :: proc(w: ^World, h: EntityHandle, loc := #caller_location) -> ^Entity {
+	return handles.pool_get(&w.entities, h, loc)
 }
 
 // Live and not marked for destruction.

@@ -17,7 +17,7 @@ PassConfig :: struct {
 	store_depth: bool,
 }
 
-// Attachments must already be in their attachment states; the pass executor owns frame-resource layouts.
+// Attachments must already be in their attachment states; passes_record owns frame-resource layouts.
 begin_render_pass :: proc(cmd: CommandBuffer, config: PassConfig) -> RenderEncoder {
 	color_attach_info: vk.RenderingAttachmentInfo
 	if config.color.image != {} {

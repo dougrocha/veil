@@ -1,7 +1,7 @@
 package graphics
 
-// Owns the slot's linear instance id and indirect buffers end to end. Prepare builds the spans,
-// upload copies them, and record encodes them. The packing order is fixed by frame_prepare's call order.
+// Owns the slot's linear instance id and indirect buffers end to end. The pass builders allocate the
+// spans, upload copies them, and record encodes them. The packing order is fixed by frame_build's call order.
 
 import "backend"
 

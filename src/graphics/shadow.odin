@@ -184,34 +184,32 @@ compute_spot_light_view_proj :: proc(light: SpotLight) -> Mat4x4 {
 	return spot_proj * spot_view
 }
 
-// One shadow view and the casters it draws, filtered during preparation.
-ShadowPreparedView :: struct {
+// One shadow view and the casters it draws, filtered while building.
+ShadowPassView :: struct {
 	view:  ShadowView,
 	draws: DrawGroups,
 }
 
-// The views for one atlas this frame. Absent when the atlas has nothing to draw.
-ShadowPassPrep :: struct {
-	views:    []ShadowPreparedView,
+// The views for one atlas this frame. Only built when the atlas has something to draw.
+ShadowPass :: struct {
+	atlas:    ShadowAtlasKind,
+	views:    []ShadowPassView,
 	counters: DrawCounters,
 }
 
-// Plans this frame's shadow work. Lights of a type turned off, or every light when shadows are off,
-// render nothing but still have their cache entries invalidated.
-shadow_prepare :: proc(
-	input: PrepareInput,
-	layout: ^LayoutBuilder,
-) -> (
-	plan: ShadowPlan,
-	atlas_2d, cube: Maybe(ShadowPassPrep),
-) {
+// Plans this frame's shadow work and appends a ShadowPass per atlas that has views, 2D first. Lights
+// of a type turned off, or every light when shadows are off, render nothing but still have their
+// cache entries invalidated.
+shadow_passes_build :: proc(input: FrameInput, layout: ^LayoutBuilder, passes: ^[dynamic]Pass) -> (plan: ShadowPlan) {
 	packet := input.packet
 	shadow_lights := packet.settings.lights if packet.settings.shadows else LightTypes{}
 	aspect := extent_aspect(input.targets.extent)
 	plan = shadow_plan(packet.lights, input.history.changes[:], packet.camera, aspect, input.cache, shadow_lights)
 	for kind in ShadowAtlasKind {
-		views := make([dynamic]ShadowPreparedView, context.temp_allocator)
-		p: ShadowPassPrep
+		views := make([dynamic]ShadowPassView, context.temp_allocator)
+		p := ShadowPass {
+			atlas = kind,
+		}
 		for view in plan.views {
 			if view.atlas != kind do continue
 			frustums := []Frustum{frustum_from_view_proj(view.view_proj)}
@@ -228,33 +226,21 @@ shadow_prepare :: proc(
 					plan.dropped_spot[view.light_index] = true
 				}
 			}
-			append(&views, ShadowPreparedView{view, draws})
+			append(&views, ShadowPassView{view, draws})
 			draw_counters_add(&p.counters, draws.counters)
 		}
 		if len(views) == 0 do continue
 		p.views = views[:]
-		if kind == .Atlas_2D {
-			atlas_2d = p
-		} else {
-			cube = p
-		}
+		append(passes, p)
 	}
 	return
 }
 
-record_shadow_2d :: proc(r: ^Recorder, f: ^PreparedFrame) {
-	record_shadow_views(r, f.passes.shadow_2d.?, r.atlas_2d)
-}
-
-record_shadow_point :: proc(r: ^Recorder, f: ^PreparedFrame) {
-	record_shadow_views(r, f.passes.shadow_point.?, r.atlas_cube)
-}
-
-@(private = "file")
-record_shadow_views :: proc(r: ^Recorder, pass: ShadowPassPrep, atlas: backend.Image) {
-	for prepared in pass.views {
-		view := prepared.view
-		// The executor has already put the atlas in .Depth_Write.
+record_shadow :: proc(r: ^Recorder, p: ^ShadowPass) {
+	atlas := r.atlas_2d if p.atlas == .Atlas_2D else r.atlas_cube
+	for planned in p.views {
+		view := planned.view
+		// passes_record has already put the atlas in .Depth_Write.
 		encoder := backend.begin_render_pass(
 			r.cmd,
 			backend.PassConfig{depth = {image = atlas, layer = view.layer}, load_op = .Clear, store_depth = true},
@@ -271,7 +257,7 @@ record_shadow_views :: proc(r: ^Recorder, pass: ShadowPassPrep, atlas: backend.I
 			light_type       = view.light_type,
 			light_index      = view.light_index,
 		}
-		layout_record_groups(r, encoder, prepared.draws, &pc)
+		layout_record_groups(r, encoder, planned.draws, &pc)
 		backend.end_render_pass(encoder)
 	}
 }

@@ -21,23 +21,20 @@ FrameDump :: struct {
 
 // Debug switches that a headless dump run needs but has no keyboard for.
 debug_env_init :: proc(engine: ^Engine) {
-	if value, found := os.lookup_env("VEIL_GPU_CULL_VALIDATE", context.allocator); found {
-		defer delete(value)
+	if value, found := os.lookup_env("VEIL_GPU_CULL_VALIDATE", context.temp_allocator); found {
 		engine.gpu_cull_validate = value == "1"
 		if engine.gpu_cull_validate do log.infof("GPU culling validation enabled")
 	}
 
 	when ODIN_DEBUG {
-		if value, found := os.lookup_env("VEIL_CLUSTER_VALIDATE", context.allocator); found {
-			defer delete(value)
+		if value, found := os.lookup_env("VEIL_CLUSTER_VALIDATE", context.temp_allocator); found {
 			engine.cluster_validate = value != "0"
 			log.infof("cluster validation enabled: %v", engine.cluster_validate)
 		}
 	}
 
 	// For profiling: Fifo caps fps at the refresh rate and puts the vsync wait into frame times.
-	if value, found := os.lookup_env("VEIL_PRESENT_MODE", context.allocator); found {
-		defer delete(value)
+	if value, found := os.lookup_env("VEIL_PRESENT_MODE", context.temp_allocator); found {
 		switch strings.to_lower(strings.trim_space(value), context.temp_allocator) {
 		case "fifo":
 			engine.config.present_mode = .Fifo
@@ -54,40 +51,34 @@ debug_env_init :: proc(engine: ^Engine) {
 
 // Applies the VEIL_* render switches to the game's settings, for headless runs with no keyboard.
 render_settings_from_env :: proc(settings: ^RenderSettings) {
-	if value, found := os.lookup_env("VEIL_GPU_CULL", context.allocator); found {
-		defer delete(value)
+	if value, found := os.lookup_env("VEIL_GPU_CULL", context.temp_allocator); found {
 		settings.gpu_cull = value != "0"
 		log.infof("GPU frustum culling: %v", settings.gpu_cull)
 	}
 
-	if value, found := os.lookup_env("VEIL_CLUSTERED", context.allocator); found {
-		defer delete(value)
+	if value, found := os.lookup_env("VEIL_CLUSTERED", context.temp_allocator); found {
 		settings.clustered_lighting = value != "0"
 		log.infof("clustered lighting enabled via VEIL_CLUSTERED: %v", settings.clustered_lighting)
 	}
 
-	if value, found := os.lookup_env("VEIL_CLUSTER_HEATMAP", context.allocator); found {
-		defer delete(value)
+	if value, found := os.lookup_env("VEIL_CLUSTER_HEATMAP", context.temp_allocator); found {
 		settings.cluster_heatmap = value != "0"
 		log.infof("cluster heatmap enabled: %v", settings.cluster_heatmap)
 	}
 
-	if value, found := os.lookup_env("VEIL_PARTICLES", context.allocator); found {
-		defer delete(value)
+	if value, found := os.lookup_env("VEIL_PARTICLES", context.temp_allocator); found {
 		settings.particles = value != "0"
 		log.infof("particles enabled via VEIL_PARTICLES: %v", settings.particles)
 	}
 
-	if value, found := os.lookup_env("VEIL_NO_SHADOWS", context.allocator); found {
-		defer delete(value)
+	if value, found := os.lookup_env("VEIL_NO_SHADOWS", context.temp_allocator); found {
 		if value != "0" {
 			settings.shadows = false
 			log.infof("shadows disabled via VEIL_NO_SHADOWS")
 		}
 	}
 
-	if value, found := os.lookup_env("VEIL_LIGHTS", context.allocator); found {
-		defer delete(value)
+	if value, found := os.lookup_env("VEIL_LIGHTS", context.temp_allocator); found {
 		lights: LightTypes
 		for name in strings.split(value, ",", context.temp_allocator) {
 			switch strings.to_lower(strings.trim_space(name), context.temp_allocator) {
@@ -108,8 +99,7 @@ render_settings_from_env :: proc(settings: ^RenderSettings) {
 		log.infof("lights set via VEIL_LIGHTS=%s -> %v", value, lights)
 	}
 
-	if value, found := os.lookup_env("VEIL_CASCADES", context.allocator); found {
-		defer delete(value)
+	if value, found := os.lookup_env("VEIL_CASCADES", context.temp_allocator); found {
 		if value != "0" {
 			settings.cascade_colors = true
 			log.infof("cascade debug colors enabled via VEIL_CASCADES")
@@ -120,9 +110,8 @@ render_settings_from_env :: proc(settings: ^RenderSettings) {
 // VEIL_PICK_TEST="x,y" runs pick() once at that pixel and logs the hit, so the
 // unprojection can be checked headlessly instead of by clicking.
 pick_test_run :: proc(engine: ^Engine, packet: ^FramePacket) {
-	value, found := os.lookup_env("VEIL_PICK_TEST", context.allocator)
+	value, found := os.lookup_env("VEIL_PICK_TEST", context.temp_allocator)
 	if !found do return
-	defer delete(value)
 
 	parts := strings.split(value, ",", context.temp_allocator)
 	if len(parts) != 2 {
@@ -147,9 +136,8 @@ pick_test_run :: proc(engine: ^Engine, packet: ^FramePacket) {
 }
 
 frame_dump_init :: proc(engine: ^Engine) {
-	value, found := os.lookup_env("VEIL_DUMP_FRAME", context.allocator)
+	value, found := os.lookup_env("VEIL_DUMP_FRAME", context.temp_allocator)
 	if !found do return
-	defer delete(value)
 
 	fd := &engine.frame_dump
 	fd.prefix = "frame"

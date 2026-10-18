@@ -3,6 +3,7 @@ package backend
 import "base:runtime"
 
 import "core:log"
+import "core:mem/virtual"
 
 import vma "shared:odin-vma"
 import sdl "vendor:sdl3"
@@ -12,6 +13,12 @@ VALIDATION_LAYER_NAME :: "VK_LAYER_KHRONOS_validation"
 
 context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 	ctx.logger = context.logger
+
+	if err := virtual.arena_init_growing(&ctx.arena); err != nil {
+		log.errorf("Failed to create backend arena: %v", err)
+		return false
+	}
+	allocator := virtual.arena_allocator(&ctx.arena)
 
 	instance_create(ctx)
 
@@ -34,9 +41,12 @@ context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 		return false
 	}
 	vma_init(ctx)
-	images_init(ctx)
-	buffers_init(ctx)
-	shaders_init(ctx)
+	images_init(ctx, allocator)
+	buffers_init(ctx, allocator)
+	shaders_init(ctx, allocator)
+	// Bounded by the peak number of pending releases (e.g. a full shader reload or a resize), not by
+	// frames in flight. Growth inside the arena leaves the old blocks behind, which is bounded too.
+	ctx.pending_releases = make([dynamic]PendingRelease, allocator)
 	upload_pool_create(ctx)
 	frame_sync_create(ctx)
 
@@ -62,11 +72,11 @@ device_wait_idle :: proc(ctx: ^Context) {
 	vk.DeviceWaitIdle(ctx.device)
 }
 
-// Every image, buffer and shader must be destroyed before this; leftovers assert.
+// Every image, buffer and shader must be destroyed before this; leftovers assert. The pools and the
+// release queue live in ctx.arena, which goes in one call.
 context_destroy :: proc(ctx: ^Context) {
 	device_wait_idle(ctx)
 	release_all(ctx)
-	delete(ctx.pending_releases)
 
 	frame_sync_destroy(ctx)
 	vk.DestroyCommandPool(ctx.device, ctx.upload_pool, nil)
@@ -79,6 +89,7 @@ context_destroy :: proc(ctx: ^Context) {
 	vk.DestroySurfaceKHR(ctx.instance, ctx.surface, nil)
 	vk.DestroyDebugUtilsMessengerEXT(ctx.instance, ctx.debug_messenger, nil)
 	vk.DestroyInstance(ctx.instance, nil)
+	virtual.arena_destroy(&ctx.arena)
 }
 
 validation_layer_available :: proc() -> bool {

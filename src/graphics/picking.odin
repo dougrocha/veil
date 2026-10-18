@@ -34,8 +34,6 @@ pick :: proc(engine: ^Engine, camera: Camera, mouse_pos: Vec2) -> (id: u32, hit:
 	closest_dist: f32 = math.F32_MAX
 
 	for record, i in draw_history_live(&engine.prev_draws) {
-		if record.model == INVALID_MODEL do continue
-
 		model := pool_get(&engine.model_system.models, record.model)
 		sphere := draw_world_sphere(record)
 

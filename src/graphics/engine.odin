@@ -71,7 +71,8 @@ assets_create :: proc(engine: ^Engine) -> bool {
 	max_bindless_textures := min(MAX_TEXTURES, limits.max_bindless_textures_per_stage - BINDLESS_CUBE_COUNT - 2)
 
 	shader_system_create(engine, max_bindless_textures) or_return
-	texture_system_create(engine, {max_textures_count = max_bindless_textures})
+	// The nil texture takes bindless slot 0, so one fewer is usable.
+	texture_system_create(engine, {max_textures_count = max_bindless_textures - 1})
 	material_system_create(engine, {max_material_count = MAX_MATERIALS})
 	model_system_create(engine)
 	return true
@@ -142,28 +143,32 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 	// Reload first: a shadow shader reload invalidates the cache, and the plan must see it.
 	shader_poll_hotreload(engine)
 	shadow_casters_sync(&engine.shadows.casters, draw_input(engine), engine.prev_draws.changes[:])
-	prepared := frame_prepare(prepare_input(engine, packet))
-	if prepared.uploads.layout.dropped_runs > 0 {
+	// The frame as data first: the pass list, the host uploads and the shadow plan. Nothing records yet.
+	passes, uploads, shadow_plan := frame_build(frame_input(engine, packet))
+	counters := passes_counters(passes, &shadow_plan)
+	if uploads.layout.dropped_runs > 0 {
 		if !engine.instance_overflow_warned do log.errorf("instance id list full (%d); dropping draws", MAX_INSTANCE_IDS)
 		engine.instance_overflow_warned = true
 	}
 	recorder := recorder_make(engine, cmd)
-	frame_upload(&recorder, &prepared, &engine.line_renderer, &engine.ui_renderer)
-	frame_record(&recorder, &prepared)
+	frame_upload(&recorder, &uploads, passes, &engine.line_renderer, &engine.ui_renderer)
+	frame_record(&recorder, passes, counters, engine.frame_count)
 	record_ms := tick_ms(record_start)
 	submit_start := time.tick_now()
 
 	frame_slot := backend.frame_slot(&engine.vk_ctx)
 	render_targets_end_frame(engine, cmd)
-	if prepared.debug.cluster_overflow_report do cluster_debug_report_overflow(engine, frame_slot)
+	if _, has_clusters := pass_find(passes, ClustersPass); has_clusters {
+		cluster_debug_report_overflow(engine, frame_slot)
+	}
 	// Once per recorded frame, shadow passes on or off. Skipped frames return early above, so their
 	// changes carry over.
-	frame_commit(engine, &prepared, packet)
+	frame_commit(engine, packet, recorder.slot, passes, &shadow_plan, counters)
 	stats_add_timings(engine, {frame = frame_ms, wait = wait_ms, record = record_ms, submit = tick_ms(submit_start)})
 
 	if engine.frame_dump.enabled {
 		backend.device_wait_idle(&engine.vk_ctx)
-		if prepared.passes.clusters != nil do cluster_debug_validate(engine, frame_slot)
+		if _, has_clusters := pass_find(passes, ClustersPass); has_clusters do cluster_debug_validate(engine, frame_slot)
 		pick_test_run(engine, packet)
 		if frame_dump_capture(engine) {
 			quit := sdl.Event {
@@ -172,9 +177,9 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 			_ = sdl.PushEvent(&quit)
 		}
 	}
-	if prepared.debug.cull_readback && !engine.gpu_cull_validated {
+	if main, ok := pass_find(passes, MainPass); ok && main.cull_readback && !engine.gpu_cull_validated {
 		backend.device_wait_idle(&engine.vk_ctx)
-		gpu_cull_validate_frame(engine, packet, &prepared)
+		gpu_cull_validate_frame(engine, packet, recorder.slot, main)
 		engine.gpu_cull_validated = true
 	}
 	return true
@@ -192,10 +197,10 @@ current_frame_data :: #force_inline proc(engine: ^Engine) -> ^FrameData {
 	return &engine.frame_data[backend.frame_slot(&engine.vk_ctx)]
 }
 
-gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket, prepared: ^PreparedFrame) {
-	cull, ok := prepared.uploads.cull.(CullUpload)
+gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket, slot: int, main: ^MainPass) {
+	cull, ok := main.cull.(CullUpload)
 	if !ok || len(cull.runs) == 0 do return
-	frame := &engine.frame_data[prepared.slot]
+	frame := &engine.frame_data[slot]
 	batch_count := len(cull.runs)
 	candidate_count := len(cull.candidates)
 	commands := make([]DrawIndexedIndirectCommand, batch_count, context.temp_allocator)
@@ -311,9 +316,9 @@ gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket, prepared:
 	)
 }
 
-// Snapshots the retained CPU state frame_prepare reads: history, shadow casters and cache, pools,
+// Snapshots the retained CPU state frame_build reads: history, shadow casters and cache, pools,
 // target sizes and this slot's buffer addresses. Nothing is written back.
-prepare_input :: proc(engine: ^Engine, packet: ^FramePacket) -> PrepareInput {
+frame_input :: proc(engine: ^Engine, packet: ^FramePacket) -> FrameInput {
 	slot := backend.frame_slot(&engine.vk_ctx)
 	buffers := &engine.frame_data[slot]
 	bloom := backend.image_desc(&engine.vk_ctx, engine.render_targets.bloom)
@@ -370,24 +375,35 @@ recorder_make :: proc(engine: ^Engine, cmd: backend.CommandBuffer) -> Recorder {
 	}
 }
 
-frame_record :: proc(r: ^Recorder, f: ^PreparedFrame) {
-	gpu_profiler_reset(r, f.frame_count)
+// Records the pass list inside the "frame" timing scope. Debug builds assert that what record emitted
+// matches the counters summed from the list.
+frame_record :: proc(r: ^Recorder, passes: []Pass, counters: FrameCounters, frame_count: u32) {
+	gpu_profiler_reset(r, frame_count)
 	scope := gpu_scope_begin(r, "frame")
-	run_passes(r, f)
+	passes_record(r, passes)
 	gpu_scope_end(r, scope)
 	when ODIN_DEBUG {
-		assert(r.tally.draw_calls == f.counters.draw_calls, "prepared and recorded draw counts differ")
-		assert(r.tally.indirect_calls == f.counters.indirect_calls, "prepared and recorded indirect counts differ")
+		assert(r.tally.draw_calls == counters.draw_calls, "planned and recorded draw counts differ")
+		assert(r.tally.indirect_calls == counters.indirect_calls, "planned and recorded indirect counts differ")
 	}
 }
 
 // Runs once per submitted frame; a skipped frame keeps its changes and dirty bits for the next one.
-frame_commit :: proc(engine: ^Engine, f: ^PreparedFrame, packet: ^FramePacket) {
-	shadow_cache_commit(&engine.shadows.cache, &f.shadow_plan, packet.lights)
-	draw_history_commit(&engine.prev_draws, f.slot)
-	engine.stats.last = f.counters
-	cull, culled := f.uploads.cull.(CullUpload)
-	engine.frame_data[f.slot].cull_readback_batches = len(cull.runs) if culled else 0
+frame_commit :: proc(
+	engine: ^Engine,
+	packet: ^FramePacket,
+	slot: int,
+	passes: []Pass,
+	plan: ^ShadowPlan,
+	counters: FrameCounters,
+) {
+	shadow_cache_commit(&engine.shadows.cache, plan, packet.lights)
+	draw_history_commit(&engine.prev_draws, slot)
+	engine.stats.last = counters
+	engine.frame_data[slot].cull_readback_batches = 0
+	if main, ok := pass_find(passes, MainPass); ok {
+		if cull, culled := main.cull.(CullUpload); culled do engine.frame_data[slot].cull_readback_batches = len(cull.runs)
+	}
 }
 
 // Reads this slot's cull commands from its last submitted frame. Call after frame begin's fence wait.

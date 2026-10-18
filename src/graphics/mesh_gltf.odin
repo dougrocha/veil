@@ -3,7 +3,9 @@ package graphics
 import "core:fmt"
 import "core:log"
 import "core:math/linalg"
+import "core:mem/virtual"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 
 import "backend"
@@ -66,24 +68,27 @@ model_load_gltf :: proc(engine: ^Engine, path: string) -> ModelHandle {
 	if !ok do return INVALID_MODEL
 	defer cgltf.free(gltf_data)
 
-	model := Model {
-		name = strings.clone(path),
-	}
+	meshes := make([dynamic]Mesh, context.temp_allocator)
 	for node in gltf_mesh_nodes(gltf_data) {
 		world := gltf_node_world(node)
 		for &prim in node.mesh.primitives {
 			if mesh, _, prim_ok := gltf_load_primitive(engine, path, gltf_data, &prim, world); prim_ok {
-				append(&model.meshes, mesh)
+				append(&meshes, mesh)
 			}
 		}
 	}
 
-	if len(model.meshes) == 0 {
+	if len(meshes) == 0 {
 		log.warnf("cgltf: no meshes found in {}", path)
-		delete(model.meshes)
-		delete(model.name)
 		return INVALID_MODEL
 	}
+
+	allocator := virtual.arena_allocator(&engine.model_system.arena)
+	model := Model {
+		name   = strings.clone(path, allocator),
+		meshes = make([dynamic]Mesh, 0, len(meshes), allocator),
+	}
+	append(&model.meshes, ..meshes[:])
 	return model_add(engine, model)
 }
 
@@ -98,7 +103,7 @@ model_load_gltf_parts :: proc(engine: ^Engine, path: string, split_primitives: b
 	mesh_pieces := make([][]ModelPart, len(gltf_data.meshes), context.temp_allocator)
 	mesh_loaded := make([]bool, len(gltf_data.meshes), context.temp_allocator)
 
-	parts := make([dynamic]ModelPart)
+	parts := make([dynamic]ModelPart, context.temp_allocator)
 	for node in gltf_mesh_nodes(gltf_data) {
 		mesh_index := cgltf.mesh_index(gltf_data, node.mesh)
 		if !mesh_loaded[mesh_index] {
@@ -119,7 +124,7 @@ model_load_gltf_parts :: proc(engine: ^Engine, path: string, split_primitives: b
 	}
 
 	if len(parts) == 0 do log.warnf("cgltf: no meshes found in {}", path)
-	return parts[:]
+	return slice.clone(parts[:], virtual.arena_allocator(&engine.model_system.arena))
 }
 
 // Registers one Model for the whole glTF mesh, or one per primitive recentered on its own bounds
@@ -132,6 +137,7 @@ gltf_load_mesh_pieces :: proc(
 	mesh_index: int,
 	split_primitives: bool,
 ) -> []ModelPart {
+	allocator := virtual.arena_allocator(&engine.model_system.arena)
 	gltf_mesh := &data.meshes[mesh_index]
 	pieces := make([dynamic]ModelPart, context.temp_allocator)
 
@@ -140,7 +146,8 @@ gltf_load_mesh_pieces :: proc(
 			mesh, center, ok := gltf_load_primitive(engine, path, data, &prim, recenter = true)
 			if !ok do continue
 			model := Model {
-				name = fmt.aprintf("{}#mesh{}.prim{}", path, mesh_index, prim_index),
+				name   = fmt.aprintf("{}#mesh{}.prim{}", path, mesh_index, prim_index, allocator = allocator),
+				meshes = make([dynamic]Mesh, 0, 1, allocator),
 			}
 			append(&model.meshes, mesh)
 			append(&pieces, ModelPart{model_add(engine, model), transform_create(translation = center)})
@@ -148,19 +155,18 @@ gltf_load_mesh_pieces :: proc(
 		return pieces[:]
 	}
 
-	model := Model {
-		name = fmt.aprintf("{}#mesh{}", path, mesh_index),
-	}
+	meshes := make([dynamic]Mesh, context.temp_allocator)
 	for &prim in gltf_mesh.primitives {
 		if mesh, _, ok := gltf_load_primitive(engine, path, data, &prim); ok {
-			append(&model.meshes, mesh)
+			append(&meshes, mesh)
 		}
 	}
-	if len(model.meshes) == 0 {
-		delete(model.meshes)
-		delete(model.name)
-		return nil
+	if len(meshes) == 0 do return nil
+	model := Model {
+		name   = fmt.aprintf("{}#mesh{}", path, mesh_index, allocator = allocator),
+		meshes = make([dynamic]Mesh, 0, len(meshes), allocator),
 	}
+	append(&model.meshes, ..meshes[:])
 	append(&pieces, ModelPart{model_add(engine, model), transform_create()})
 	return pieces[:]
 }
@@ -206,9 +212,10 @@ gltf_load_primitive :: proc(
 	// A mirroring transform flips triangle winding and tangent-space handedness.
 	mirrored := linalg.determinant(linear) < 0
 
+	allocator := virtual.arena_allocator(&engine.model_system.arena)
 	vertex_count := uint(pos_acc.count)
 	vertices := make([]MeshVertex, vertex_count, context.temp_allocator)
-	positions := make([]Vec3, vertex_count)
+	positions := make([]Vec3, vertex_count, allocator)
 
 	for i in 0 ..< vertex_count {
 		pos: [3]f32
@@ -246,22 +253,18 @@ gltf_load_primitive :: proc(
 	// Non-indexed primitives draw their vertices in order.
 	indices: []u32
 	if prim.indices != nil {
-		indices = make([]u32, prim.indices.count)
+		indices = make([]u32, prim.indices.count, allocator)
 		for i in 0 ..< prim.indices.count do indices[i] = u32(cgltf.accessor_read_index(prim.indices, i))
 	} else {
-		indices = make([]u32, vertex_count)
+		indices = make([]u32, vertex_count, allocator)
 		for i in 0 ..< vertex_count do indices[i] = u32(i)
 	}
 	if mirrored {
 		for i := 0; i + 2 < len(indices); i += 3 do indices[i + 1], indices[i + 2] = indices[i + 2], indices[i + 1]
 	}
 
-	prim_mat: MaterialHandle
-	if prim.material != nil {
-		prim_mat = gltf_extract_material(engine, path, data, prim.material)
-	} else {
-		prim_mat = material_get_default(engine)
-	}
+	prim_mat: MaterialHandle // nil reads as the default material
+	if prim.material != nil do prim_mat = gltf_extract_material(engine, path, data, prim.material)
 
 	first_vertex, first_index := mesh_geometry_upload(engine, vertices, indices)
 	mesh = Mesh {

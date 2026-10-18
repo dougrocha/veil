@@ -32,7 +32,7 @@ gpu_spot_light :: proc(light: SpotLight) -> GpuSpotLight {
 // Pure: builds SceneData and the active light arrays without touching a buffer. Light array entries past
 // the counts are not written, and the shaders loop only to the counts, so the stale tail is never read.
 scene_data_build :: proc(
-	input: PrepareInput,
+	input: FrameInput,
 	plan: ^ShadowPlan,
 ) -> (
 	scene: SceneData,
@@ -108,26 +108,33 @@ scene_data_build :: proc(
 	return
 }
 
-// The only host writes into this slot's buffers. Copies prepared data; makes no decisions.
-frame_upload :: proc(r: ^Recorder, f: ^PreparedFrame, lines: ^LineRenderer, ui: ^UIRenderer) {
+// The only host writes into this slot's buffers. Copies built data; makes no decisions. The cull and
+// overlay data live in their passes, so this looks them up in the list.
+frame_upload :: proc(r: ^Recorder, uploads: ^FrameUploads, passes: []Pass, lines: ^LineRenderer, ui: ^UIRenderer) {
 	scene := backend.buffer_map_write(r.ctx, r.frame.scene_data_buffer, 0, 1)
-	scene[0] = f.uploads.scene
-	if len(f.uploads.point_lights) > 0 {
-		lights := backend.buffer_map_write(r.ctx, r.frame.point_lights_buffer, 0, len(f.uploads.point_lights))
-		copy(lights, f.uploads.point_lights)
+	scene[0] = uploads.scene
+	if len(uploads.point_lights) > 0 {
+		lights := backend.buffer_map_write(r.ctx, r.frame.point_lights_buffer, 0, len(uploads.point_lights))
+		copy(lights, uploads.point_lights)
 	}
-	if len(f.uploads.spot_lights) > 0 {
-		lights := backend.buffer_map_write(r.ctx, r.frame.spot_lights_buffer, 0, len(f.uploads.spot_lights))
-		copy(lights, f.uploads.spot_lights)
+	if len(uploads.spot_lights) > 0 {
+		lights := backend.buffer_map_write(r.ctx, r.frame.spot_lights_buffer, 0, len(uploads.spot_lights))
+		copy(lights, uploads.spot_lights)
 	}
-	writes := f.uploads.transforms
+	writes := uploads.transforms
 	if len(writes) > 0 {
 		first := writes[0].id
 		last := writes[len(writes) - 1].id
 		dst := backend.buffer_map_write(r.ctx, r.frame.transforms_buffer, int(first), int(last - first + 1))
 		for write in writes do dst[write.id - first] = write.value
 	}
-	layout_upload(r, &f.uploads.layout)
-	if cull, ok := f.uploads.cull.(CullUpload); ok do cull_upload(r, &cull)
-	r.overlay = overlay_upload(r.ctx, lines, ui, &f.passes.overlay)
+	layout_upload(r, &uploads.layout)
+	for &pass in passes {
+		#partial switch &p in pass {
+		case MainPass:
+			if cull, ok := p.cull.(CullUpload); ok do cull_upload(r, &cull)
+		case OverlayPass:
+			r.overlay = overlay_upload(r.ctx, lines, ui, &p)
+		}
+	}
 }

@@ -20,7 +20,7 @@ DebugViewPushConstants :: struct #max_field_align(16) {
 
 MAX_DEBUG_VIEWS :: 64
 
-// A game request for a debug view; overlay_prepare clips it, and record_overlay fills in scene_data.
+// A game request for a debug view; overlay_pass_build clips it, and record_overlay fills in scene_data.
 DebugViewRequest :: struct {
 	mode:  DebugViewMode,
 	index: u32,

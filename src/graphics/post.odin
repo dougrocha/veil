@@ -46,43 +46,49 @@ POST_SETTINGS_DEFAULT :: PostSettings {
 	bloom_max_levels = BLOOM_DEFAULT_LEVELS,
 }
 
-// Mip sizes are computed once here, so recording needs no image queries.
-BloomPrep :: struct {
+// Mip sizes are computed once while building, so recording needs no image queries.
+BloomPass :: struct {
 	levels:    u32,
 	hdr_size:  [2]u32,
 	mip_sizes: [BLOOM_MAX_MIPS][2]u32,
 }
 
 // The tonemap dispatch size and its exposure and bloom inputs.
-TonemapPrep :: struct {
+TonemapPass :: struct {
 	size:                     [2]u32,
 	exposure, bloom_strength: f32,
 }
 
-// Sizes the bloom chain from the screen and the bloom target.
-bloom_prepare :: proc(targets: TargetInfo, post: PostSettings) -> BloomPrep {
-	// Active bloom levels: as many as fit before a mip's short side drops below BLOOM_MIN_MIP_SIZE,
-	// capped by max_levels and by what the bloom target was allocated with.
+// Active bloom levels: as many as fit before a mip's short side drops below BLOOM_MIN_MIP_SIZE,
+// capped by max_levels and by what the bloom target was allocated with.
+bloom_level_count :: proc(targets: TargetInfo, max_levels: u32) -> u32 {
 	short_side := min(targets.bloom_extent.width, targets.bloom_extent.height)
 	for_screen: u32 = 1
 	for (short_side >> for_screen) >= BLOOM_MIN_MIP_SIZE do for_screen += 1
-	p := BloomPrep {
-		levels   = max(min(for_screen, post.bloom_max_levels, targets.bloom_mips), 1),
+	return max(min(for_screen, max_levels, targets.bloom_mips), 1)
+}
+
+// Sizes the bloom chain from the screen and the bloom target, and the tonemap that composites it.
+// The level count is computed once and feeds both: bloom_strength is pre-divided by it, matching the
+// push constant.
+post_passes_build :: proc(targets: TargetInfo, post: PostSettings) -> (BloomPass, TonemapPass) {
+	levels := bloom_level_count(targets, post.bloom_max_levels)
+	bloom := BloomPass {
+		levels   = levels,
 		hdr_size = {targets.extent.width, targets.extent.height},
 	}
 	for i in 0 ..< BLOOM_MAX_MIPS {
-		p.mip_sizes[i] = {max(targets.bloom_extent.width >> u32(i), 1), max(targets.bloom_extent.height >> u32(i), 1)}
+		bloom.mip_sizes[i] = {
+			max(targets.bloom_extent.width >> u32(i), 1),
+			max(targets.bloom_extent.height >> u32(i), 1),
+		}
 	}
-	return p
-}
-
-// bloom_strength is pre-divided by the active level count, matching the push constant.
-tonemap_prepare :: proc(targets: TargetInfo, post: PostSettings, bloom: BloomPrep) -> TonemapPrep {
-	return {
-		size = {targets.extent.width, targets.extent.height},
-		exposure = post.exposure,
-		bloom_strength = post.bloom_strength / f32(bloom.levels),
+	tonemap := TonemapPass {
+		size           = {targets.extent.width, targets.extent.height},
+		exposure       = post.exposure,
+		bloom_strength = post.bloom_strength / f32(levels),
 	}
+	return bloom, tonemap
 }
 
 @(private = "file")
@@ -98,10 +104,9 @@ dispatch_post :: proc(encoder: backend.ComputeEncoder, size: [2]u32) {
 // CoD:AW-style chain. Downsamples hdr -> mip 0 -> ... -> mip L-1 (each overwrites its target),
 // then upsamples back up, each step adding the smaller mip into the next larger one. Mip 0 ends
 // up holding every blur radius and is what the tonemap composites.
-record_bloom :: proc(r: ^Recorder, f: ^PreparedFrame) {
+record_bloom :: proc(r: ^Recorder, p: ^BloomPass) {
 	targets := r.targets
 	bloom := targets.bloom
-	p := f.passes.bloom
 	color := backend.ImageAspectFlags{.Color}
 	levels := p.levels
 
@@ -155,9 +160,8 @@ record_bloom :: proc(r: ^Recorder, f: ^PreparedFrame) {
 
 // Tonemaps the HDR target (plus bloom) into the LDR draw target. Everything drawn into draw
 // afterwards (debug view, UI) skips the tonemap, and present_blit only has to sRGB-encode.
-record_tonemap :: proc(r: ^Recorder, f: ^PreparedFrame) {
+record_tonemap :: proc(r: ^Recorder, post: ^TonemapPass) {
 	targets := r.targets
-	post := f.passes.tonemap
 
 	pipeline := rec_pipeline(r, .Tonemap)
 	pc := TonemapPushConstants {
@@ -175,7 +179,7 @@ record_tonemap :: proc(r: ^Recorder, f: ^PreparedFrame) {
 	backend.end_compute_pass(encoder)
 }
 
-// A game-side display query; preparation uses the same sizing rule without device access.
+// A game-side display query; the frame build uses the same sizing rule without device access.
 bloom_levels :: proc(engine: ^Engine, max_levels: u32) -> u32 {
 	desc := backend.image_desc(&engine.vk_ctx, engine.render_targets.bloom)
 	targets := TargetInfo {
@@ -183,5 +187,5 @@ bloom_levels :: proc(engine: ^Engine, max_levels: u32) -> u32 {
 		bloom_extent = {desc.extent.width, desc.extent.height},
 		bloom_mips   = desc.mip_levels,
 	}
-	return bloom_prepare(targets, PostSettings{bloom_max_levels = max_levels}).levels
+	return bloom_level_count(targets, max_levels)
 }

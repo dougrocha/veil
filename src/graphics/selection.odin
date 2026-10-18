@@ -33,7 +33,6 @@ entity_textures :: proc(
 
 	switch s in selection {
 	case ModelHandle:
-		if !pool_is_valid(&engine.model_system.models, s) do break
 		model := pool_get(&engine.model_system.models, s)
 		seen := make(map[MaterialHandle]struct{}, allocator = context.temp_allocator)
 		for mesh in model.meshes {

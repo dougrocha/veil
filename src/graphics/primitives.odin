@@ -52,8 +52,7 @@ primitive_plane :: proc(
 	rows := subdivisions + 2
 	size := half_size * 2
 
-	vertices := make([]MeshVertex, cols * rows)
-	defer delete(vertices)
+	vertices := make([]MeshVertex, cols * rows, context.temp_allocator)
 
 	for z in 0 ..< rows {
 		for x in 0 ..< cols {
@@ -67,8 +66,7 @@ primitive_plane :: proc(
 		}
 	}
 
-	indices := make([]u32, (cols - 1) * (rows - 1) * 6)
-	defer delete(indices)
+	indices := make([]u32, (cols - 1) * (rows - 1) * 6, context.temp_allocator)
 
 	i := 0
 	for z in 0 ..< rows - 1 {

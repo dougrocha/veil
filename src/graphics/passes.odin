@@ -2,16 +2,16 @@ package graphics
 
 import "backend"
 
-// The frame, in order. The executor runs each enabled pass inside a GPU timing scope.
-PassKind :: enum {
-	Particles,
-	Shadow_2D,
-	Shadow_Point,
-	Clusters,
-	Main,
-	Bloom,
-	Tonemap,
-	Overlay,
+// One struct per pass kind: everything that pass records, decided while building the frame. A pass
+// that is skipped this frame is not in the list. The list is in execution order.
+Pass :: union {
+	ParticlesPass,
+	ShadowPass, // one per atlas that has views
+	ClustersPass,
+	MainPass,
+	BloomPass,
+	TonemapPass,
+	OverlayPass,
 }
 
 // Images that passes hand to each other. Their owners resolve them each frame, so the table
@@ -42,41 +42,44 @@ PassUse :: struct {
 	state:    backend.ImageStateKind,
 }
 
-PassSpec :: struct {
-	name:   string, // timing scope
-	record: proc(r: ^Recorder, f: ^PreparedFrame),
-	uses:   []PassUse,
+@(rodata)
+USES_SHADOW_2D := [?]PassUse{{.Shadow_2D, .Depth_Write}}
+@(rodata)
+USES_SHADOW_CUBE := [?]PassUse{{.Shadow_Cube, .Depth_Write}}
+// Main and Overlay declaring the atlases Depth_Read is what leaves them readable, including when the
+// shadow passes are skipped.
+@(rodata)
+USES_MAIN := [?]PassUse {
+	{.Msaa_Color, .Color_Write},
+	{.Hdr, .Color_Write},
+	{.Depth, .Depth_Write},
+	{.Shadow_2D, .Depth_Read},
+	{.Shadow_Cube, .Depth_Read},
 }
+@(rodata)
+USES_BLOOM := [?]PassUse{{.Hdr, .Shader_Read}, {.Bloom, .General}}
+@(rodata)
+USES_TONEMAP := [?]PassUse{{.Hdr, .Shader_Read}, {.Bloom, .Shader_Read}, {.Draw, .General}}
+@(rodata)
+USES_OVERLAY := [?]PassUse{{.Draw, .Color_Write}, {.Shadow_2D, .Depth_Read}, {.Shadow_Cube, .Depth_Read}}
 
-PASSES := [PassKind]PassSpec {
-	.Particles = {name = "particles", record = record_particles},
-	.Shadow_2D = {name = "shadow 2d", record = record_shadow_2d, uses = {{.Shadow_2D, .Depth_Write}}},
-	.Shadow_Point = {name = "shadow point", record = record_shadow_point, uses = {{.Shadow_Cube, .Depth_Write}}},
-	.Clusters = {name = "clusters", record = record_clusters},
-	// Main and Overlay declaring the atlases Depth_Read is what leaves them readable, including
-	// when the shadow passes are disabled.
-	.Main = {
-		name = "main",
-		record = record_main,
-		uses = {
-			{.Msaa_Color, .Color_Write},
-			{.Hdr, .Color_Write},
-			{.Depth, .Depth_Write},
-			{.Shadow_2D, .Depth_Read},
-			{.Shadow_Cube, .Depth_Read},
-		},
-	},
-	.Bloom = {name = "bloom", record = record_bloom, uses = {{.Hdr, .Shader_Read}, {.Bloom, .General}}},
-	.Tonemap = {
-		name = "tonemap",
-		record = record_tonemap,
-		uses = {{.Hdr, .Shader_Read}, {.Bloom, .Shader_Read}, {.Draw, .General}},
-	},
-	.Overlay = {
-		name = "overlay",
-		record = record_overlay,
-		uses = {{.Draw, .Color_Write}, {.Shadow_2D, .Depth_Read}, {.Shadow_Cube, .Depth_Read}},
-	},
+// The frame resources a pass touches and the state each must be in before it runs.
+pass_uses :: proc(pass: Pass) -> []PassUse {
+	switch p in pass {
+	case ParticlesPass, ClustersPass:
+		return nil
+	case ShadowPass:
+		return USES_SHADOW_2D[:] if p.atlas == .Atlas_2D else USES_SHADOW_CUBE[:]
+	case MainPass:
+		return USES_MAIN[:]
+	case BloomPass:
+		return USES_BLOOM[:]
+	case TonemapPass:
+		return USES_TONEMAP[:]
+	case OverlayPass:
+		return USES_OVERLAY[:]
+	}
+	unreachable()
 }
 
 frame_resource_image :: proc(r: ^Recorder, resource: FrameResource) -> backend.Image {
@@ -100,159 +103,97 @@ frame_resource_image :: proc(r: ^Recorder, resource: FrameResource) -> backend.I
 	unreachable()
 }
 
-// A pass runs when its prepared data is present. Main, Bloom, Tonemap and Overlay always run.
-pass_enabled :: proc(f: ^PreparedFrame, kind: PassKind) -> bool {
-	switch kind {
-	case .Particles:
-		return f.passes.particles != nil
-	case .Shadow_2D:
-		return f.passes.shadow_2d != nil
-	case .Shadow_Point:
-		return f.passes.shadow_point != nil
-	case .Clusters:
-		return f.passes.clusters != nil
-	case .Main, .Bloom, .Tonemap, .Overlay:
-		return true
-	}
-	unreachable()
-}
-
-// Brings each enabled pass's frame resources into its entry states, then records it inside a
-// timing scope. The barrier takes each subresource from its tracked state, and skips the ones
-// already in a read-only target state.
-run_passes :: proc(r: ^Recorder, f: ^PreparedFrame) {
-	for spec, kind in PASSES {
-		if !pass_enabled(f, kind) do continue
-		for use in spec.uses {
-			image := frame_resource_image(r, use.resource)
-			desc := backend.image_desc(r.ctx, image)
-			backend.image_barrier(
-				r.cmd,
-				image,
-				use.state,
-				FRAME_RESOURCE_ASPECT[use.resource],
-				level_count = desc.mip_levels,
-				layer_count = desc.array_layers,
-			)
-		}
-		scope := gpu_scope_begin(r, spec.name)
-		spec.record(r, f)
-		gpu_scope_end(r, scope)
-	}
-}
-
-// GPU-culled or CPU-culled draws. Chosen during preparation.
-MainOpaque :: union #no_nil {
-	DrawGroups,
-	CullDraws,
-}
-
-// Everything the main pass records, decided during preparation.
-MainPrep :: struct {
-	opaque:                       MainOpaque,
-	transparent:                  []TransparentDraw,
-	clear_color:                  Vec4,
-	sky, particles:               bool,
-	counters:                     DrawCounters,
-	draws_visible, meshes_culled: u32,
-}
-
-// If GPU culling doesn't fit the budget, falls back to the CPU list, like before.
-main_prepare :: proc(input: PrepareInput, layout: ^LayoutBuilder) -> (p: MainPrep, cull: Maybe(CullUpload)) {
-	packet := input.packet
-	view := DrawInput {
-		draws     = draw_history_live(input.history),
-		models    = input.models,
-		materials = input.materials,
-	}
-	aspect := extent_aspect(input.targets.extent)
-	frustum := frustum_create_from_camera(&packet.camera, aspect)
-	list := build_draw_list(view, frustum, packet.camera.position, packet.settings.gpu_cull)
-	gpu_culled := false
-	if packet.settings.gpu_cull {
-		upload, draws, ok := cull_layout_build(list.opaque, frustum, input.budget)
-		if ok {
-			p.opaque = draws
-			cull = upload
-			draw_counters_add(&p.counters, draws.counters)
-			gpu_culled = true
-		} else {
-			list = build_draw_list(view, frustum, packet.camera.position)
-		}
-	}
-	if !gpu_culled {
-		draws, _ := layout_push_runs(layout, list.opaque, nil)
-		p.opaque = draws
-		draw_counters_add(&p.counters, draws.counters)
-		p.draws_visible, p.meshes_culled = list.draws_visible, list.meshes_culled
-	}
-	transparent := make([dynamic]TransparentDraw, context.temp_allocator)
-	// Back to front, one draw per mesh so the order holds. Drawn after everything opaque, skybox
-	// included: these don't write depth, so anything drawn later would cover them.
-	for item in list.transparent {
-		material := pool_get(input.materials, item.mesh.material)
-		kind := PipelineKind.Mesh_Transparent_Double_Sided if material.double_sided else PipelineKind.Mesh_Transparent
-		draw, ok := layout_push_single(layout, item).(DirectDraw)
-		if !ok do break
-		append(&transparent, TransparentDraw{kind, draw})
-		p.counters.draw_calls += 1
-		p.counters.triangles += draw.triangles
-	}
-	p.transparent = transparent[:]
-	p.clear_color, _ = packet.background.(Vec4)
-	_, p.sky = packet.background.(TextureHandle)
-	p.particles = packet.settings.particles
-	if p.sky do p.counters.draw_calls += 1
-	if p.particles do p.counters.draw_calls += 1
-	return
-}
-
+// Brings the pass's frame resources into their entry states, then opens its timing scope; the caller
+// closes it with gpu_scope_end. The barrier takes each subresource from its tracked state, and skips
+// the ones already in a read-only target state.
 @(private = "file")
-record_main :: proc(r: ^Recorder, f: ^PreparedFrame) {
-	p := &f.passes.main
-	if upload, ok := f.uploads.cull.(CullUpload); ok {
-		cull_record_dispatch(r, &upload, f.debug.cull_readback)
+pass_begin :: proc(r: ^Recorder, name: string, uses: []PassUse) -> int {
+	for use in uses {
+		image := frame_resource_image(r, use.resource)
+		desc := backend.image_desc(r.ctx, image)
+		backend.image_barrier(
+			r.cmd,
+			image,
+			use.state,
+			FRAME_RESOURCE_ASPECT[use.resource],
+			level_count = desc.mip_levels,
+			layer_count = desc.array_layers,
+		)
 	}
-	// A sky covers every pixel left uncovered, so its clear value never shows.
-	encoder := backend.begin_render_pass(
-		r.cmd,
-		backend.PassConfig {
-			color = {image = r.targets.color},
-			resolve = {image = r.targets.hdr},
-			depth = {image = r.targets.depth},
-			clear_color = p.clear_color,
-			load_op = .Clear,
-		},
-	)
-	defer backend.end_render_pass(encoder)
-	backend.cmd_bind_index_buffer(encoder, r.geometry.index)
-	pc := rec_mesh_push_constants(r)
-	// Opaque, then the sky (if any) where nothing opaque wrote depth, then transparent on top.
-	switch draws in p.opaque {
-	case DrawGroups:
-		layout_record_groups(r, encoder, draws, &pc)
-	case CullDraws:
-		cull_record_groups(r, encoder, draws, &pc)
-	}
-	if p.sky {
-		backend.pipeline_bind(encoder, rec_pipeline(r, .Skybox))
-		sky_pc := SkyboxPushConstants {
-			scene_data = rec_scene_data(r),
+	return gpu_scope_begin(r, name)
+}
+
+// Records the list in order. The only place that dispatches on the pass kind, as r_window_submit does.
+passes_record :: proc(r: ^Recorder, passes: []Pass) {
+	for &pass in passes {
+		switch &p in pass {
+		case ParticlesPass:
+			scope := pass_begin(r, "particles", pass_uses(pass))
+			record_particles(r, &p)
+			gpu_scope_end(r, scope)
+		case ShadowPass:
+			scope := pass_begin(r, "shadow 2d" if p.atlas == .Atlas_2D else "shadow point", pass_uses(pass))
+			record_shadow(r, &p)
+			gpu_scope_end(r, scope)
+		case ClustersPass:
+			scope := pass_begin(r, "clusters", pass_uses(pass))
+			record_clusters(r, &p)
+			gpu_scope_end(r, scope)
+		case MainPass:
+			scope := pass_begin(r, "main", pass_uses(pass))
+			record_main(r, &p)
+			gpu_scope_end(r, scope)
+		case BloomPass:
+			scope := pass_begin(r, "bloom", pass_uses(pass))
+			record_bloom(r, &p)
+			gpu_scope_end(r, scope)
+		case TonemapPass:
+			scope := pass_begin(r, "tonemap", pass_uses(pass))
+			record_tonemap(r, &p)
+			gpu_scope_end(r, scope)
+		case OverlayPass:
+			scope := pass_begin(r, "overlay", pass_uses(pass))
+			record_overlay(r, &p)
+			gpu_scope_end(r, scope)
 		}
-		backend.pipeline_push(encoder, &sky_pc)
-		backend.cmd_draw(encoder)
-		r.tally.draw_calls += 1
 	}
-	layout_record_transparent(r, encoder, p.transparent)
-	if p.particles {
-		backend.pipeline_bind(encoder, rec_pipeline(r, .Particle))
-		particle_pc := ParticlePushConstants {
-			scene_data    = rec_scene_data(r),
-			particles_out = backend.buffer_address(r.ctx, r.frame.particle_buffer),
+}
+
+// The counters record must match, summed from the built passes. The record side keeps its own tally,
+// so the two are independent.
+passes_counters :: proc(passes: []Pass, plan: ^ShadowPlan) -> FrameCounters {
+	counters: FrameCounters
+	total: DrawCounters
+	for pass in passes {
+		switch p in pass {
+		case ParticlesPass, ClustersPass, BloomPass, TonemapPass:
+		case ShadowPass:
+			draw_counters_add(&total, p.counters)
+			counters.shadow_views += u32(len(p.views))
+		case MainPass:
+			draw_counters_add(&total, p.counters)
+			counters.draws_visible = p.draws_visible
+			counters.meshes_culled = p.meshes_culled
+		case OverlayPass:
+			counters.draw_calls += p.draw_calls
+			counters.dropped_lines = p.dropped_lines
+			counters.dropped_ui = p.dropped_ui
+			counters.dropped_debug_views = p.dropped_debug_views
 		}
-		backend.pipeline_push(encoder, &particle_pc)
-		backend.cmd_draw_points(encoder, PARTICLE_COUNT)
-		r.tally.draw_calls += 1
 	}
-	record_lines(r, encoder)
+	counters.draw_calls += total.draw_calls
+	counters.indirect_calls = total.indirect_calls
+	counters.triangles = total.triangles
+	counters.candidate_instances = total.candidate_instances
+	counters.candidate_triangles = total.candidate_triangles
+	counters.shadow_views_cached = plan.views_cached
+	return counters
+}
+
+// The first pass of kind T, if the list has one.
+pass_find :: proc(passes: []Pass, $T: typeid) -> (^T, bool) {
+	for &pass in passes {
+		if p, ok := &pass.(T); ok do return p, true
+	}
+	return nil, false
 }

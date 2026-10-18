@@ -2,6 +2,7 @@ package backend
 
 import "base:runtime"
 import "core:fmt"
+import "core:mem"
 
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
@@ -89,18 +90,17 @@ buffer_memory_to_vma :: proc(memory: BufferMemory) -> vma.Allocation_Create_Flag
 	return {}
 }
 
-buffers_init :: proc(ctx: ^Context) {
-	ctx.buffers = handles.pool_init(MAX_BUFFERS, BufferSlot)
+buffers_init :: proc(ctx: ^Context, allocator: mem.Allocator) {
+	ctx.buffers = handles.pool_init(MAX_BUFFERS, BufferSlot, allocator)
 }
 
 buffers_destroy :: proc(ctx: ^Context) {
 	assert(handles.pool_live_count(&ctx.buffers) == 0, "buffers_destroy: buffers still alive")
-	handles.pool_destroy(&ctx.buffers)
 }
 
 @(private)
-buffer_slot :: proc(ctx: ^Context, buf: Buffer($T)) -> ^BufferSlot {
-	return handles.pool_get(&ctx.buffers, buf.handle)
+buffer_slot :: proc(ctx: ^Context, buf: Buffer($T), loc := #caller_location) -> ^BufferSlot {
+	return handles.pool_get_live(&ctx.buffers, buf.handle, loc)
 }
 
 // True while the buffer is alive: false for the zero handle and after buffer_destroy.

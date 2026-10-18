@@ -32,7 +32,7 @@ DrawIndexedIndirectCommand :: struct #max_field_align(16) {
 #assert(size_of(DrawIndexedIndirectCommand) == 20)
 
 #assert(MAX_DRAWS <= 1 << INSTANCE_DRAW_ID_BITS)
-#assert(MAX_MATERIALS <= 1 << INSTANCE_MATERIAL_BITS)
+#assert(MAX_MATERIALS < 1 << INSTANCE_MATERIAL_BITS)
 
 // Every pass in a frame appends to the same list: main, transparent and every shadow view.
 // Enough for one mesh per instance in the camera and every possible shadow view.

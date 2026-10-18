@@ -78,14 +78,15 @@ Stats :: struct {
 
 // Sampled once per frame (last frame's values), not averaged.
 MemoryStats :: struct {
-	latest:      CpuTimings, // raw timings for the most recently submitted frame
-	heap_allocs: i64, // heap allocations since the previous frame (whole loop, game + engine)
-	heap_bytes:  i64,
-	heap_live:   i64, // bytes currently allocated on the tracked heap
-	arena_used:  uint, // engine frame arena (temp allocator) at the end of the frame
-	arena_peak:  uint,
-	vram_used:   u64, // device-local heaps, VMA estimate
-	vram_budget: u64,
+	latest:        CpuTimings, // raw timings for the most recently submitted frame
+	heap_allocs:   i64, // heap allocations since the previous frame (whole loop, game + engine)
+	heap_bytes:    i64,
+	heap_live:     i64, // bytes currently allocated on the tracked heap
+	arena_used:    uint, // engine frame arena (temp allocator) at the end of the frame
+	arena_peak:    uint,
+	system_arenas: uint, // backend, texture, material, model and shader arenas; invisible to the tracked heap
+	vram_used:     u64, // device-local heaps, VMA estimate
+	vram_budget:   u64,
 }
 
 // Reads heap stats from the app's tracking allocator. The engine only reads it.
@@ -106,6 +107,12 @@ stats_memory_sample :: proc(engine: ^Engine) {
 	}
 	m.arena_used = engine.frame_arena.total_used
 	m.arena_peak = max(m.arena_peak, m.arena_used)
+	m.system_arenas =
+		engine.vk_ctx.arena.total_used +
+		engine.texture_system.arena.total_used +
+		engine.material_system.arena.total_used +
+		engine.model_system.arena.total_used +
+		engine.shader_system.arena.total_used
 	m.vram_used, m.vram_budget = backend.memory_budget(&engine.vk_ctx)
 }
 
@@ -235,10 +242,11 @@ stats_draw :: proc(
 		)
 	}
 	mem_line := fmt.tprintf(
-		"mem  %s  arena %s (peak %s)  vram %s / %s est.",
+		"mem  %s  arena %s (peak %s)  sys arenas %s  vram %s / %s est.",
 		heap_line,
 		fmt_bytes(i64(m.arena_used)),
 		fmt_bytes(i64(m.arena_peak)),
+		fmt_bytes(i64(m.system_arenas)),
 		fmt_bytes(i64(m.vram_used)),
 		fmt_bytes(i64(m.vram_budget)),
 	)

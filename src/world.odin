@@ -1,13 +1,15 @@
 package main
 
 import "core:math/linalg"
+import "core:mem/virtual"
 import gfx "veil:graphics"
 import "veil:handles"
 
-// Entity slots double as draw ids.
+// Entity slots double as draw ids (slot - 1: slot 0 is the pool's nil slot).
 MAX_ENTITIES :: gfx.MAX_DRAWS
 
 World :: struct {
+	arena:         virtual.Arena, // the entity pool and the lists below
 	entities:      handles.Pool(Entity),
 	active_camera: EntityHandle,
 	selected:      EntityHandle,
@@ -20,7 +22,12 @@ World :: struct {
 }
 
 world_create :: proc(w: ^World) {
-	w.entities = handles.pool_init(MAX_ENTITIES, Entity)
+	// Only fails when the OS has no address space left; the app can't run without a world.
+	ensure(virtual.arena_init_growing(&w.arena) == nil, "world: could not create arena")
+	allocator := virtual.arena_allocator(&w.arena)
+	w.entities = handles.pool_init(MAX_ENTITIES, Entity, allocator)
+	w.pending = make([dynamic]EntityHandle, allocator)
+	w.light_links = make([dynamic]LightLink, allocator)
 	w.background = gfx.Vec4{0, 0, 0, 1}
 	w.lights.ambient_light = {
 		color      = {1, 1, 1, 1},
@@ -29,9 +36,7 @@ world_create :: proc(w: ^World) {
 }
 
 world_destroy :: proc(w: ^World) {
-	handles.pool_destroy(&w.entities)
-	delete(w.pending)
-	delete(w.light_links)
+	virtual.arena_destroy(&w.arena)
 	w^ = {}
 }
 
@@ -99,7 +104,7 @@ world_extract :: proc(w: ^World, allocator := context.temp_allocator) -> gfx.Fra
 		append(
 			&draws,
 			gfx.Draw {
-				id = u32(i),
+				id = u32(i) - 1,
 				model = e.model,
 				world = e.global_transform,
 				casts_shadow = .Casts_Shadow in e.flags,
@@ -134,6 +139,6 @@ world_camera :: proc(w: ^World) -> gfx.Camera {
 world_pick :: proc(engine: ^gfx.Engine, w: ^World, pos: gfx.Vec2) -> EntityHandle {
 	id, hit := gfx.pick(engine, world_camera(w), pos)
 	if !hit do return INVALID_ENTITY
-	h := EntityHandle{handles.Index(id), w.entities.generations[id]}
+	h := EntityHandle{handles.Index(id + 1), w.entities.generations[id + 1]}
 	return h if entity_alive(w, h) else INVALID_ENTITY
 }

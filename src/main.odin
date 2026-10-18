@@ -95,6 +95,8 @@ main :: proc() {
 		defer free_all(context.temp_allocator)
 
 		ev: sdl.Event
+		// The editor camera is always alive; writing through a dead handle would hit the pool's nil slot.
+		assert(entity_alive(&world, world.active_camera), "active camera was destroyed")
 		// The active camera's rig: controls edit it, and it drives the entity's transform below.
 		active_cam := &entity_get(&world, world.active_camera).camera
 

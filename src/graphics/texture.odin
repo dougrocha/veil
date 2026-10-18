@@ -2,6 +2,7 @@ package graphics
 
 import "core:log"
 import "core:math"
+import "core:mem/virtual"
 import "core:strings"
 
 import "backend"
@@ -65,6 +66,9 @@ DefaultTexture :: enum u8 {
 }
 
 TextureSystem :: struct {
+	// Pool slices, cache maps and the cube free list. Cache keys are not here: texture_unload frees
+	// them one by one.
+	arena:              virtual.Arena,
 	config:             TextureSystemConfig,
 	// Fixed samplers shared by every bindless texture, indexed by the SAMPLER_* constants.
 	samplers:           [BINDLESS_SAMPLER_COUNT]backend.Sampler,
@@ -87,17 +91,20 @@ TextureSystemConfig :: struct {
 texture_system_create :: proc(engine: ^Engine, config: TextureSystemConfig) {
 	ts := &engine.texture_system
 	ts.config = config
-	ts.textures = pool_init(config.max_textures_count, Texture)
-	ts.srgb_texture_map = make(map[string]TextureHandle)
-	ts.linear_texture_map = make(map[string]TextureHandle)
-	ts.cubemap_map = make(map[string]TextureHandle)
+	ensure(virtual.arena_init_growing(&ts.arena) == nil, "texture system: could not create arena")
+	allocator := virtual.arena_allocator(&ts.arena)
+	ts.textures = pool_init(config.max_textures_count, Texture, allocator)
+	ts.srgb_texture_map = make(map[string]TextureHandle, allocator)
+	ts.linear_texture_map = make(map[string]TextureHandle, allocator)
+	ts.cubemap_map = make(map[string]TextureHandle, allocator)
+	ts.cube_free = make([dynamic]u32, allocator) // at most BINDLESS_CUBE_COUNT entries
 
 	backend.bindless_init(
 		&engine.vk_ctx,
 		{
-			texture_count = config.max_textures_count,
+			texture_count = config.max_textures_count + 1, // slot 0 is the nil texture
 			sampler_count = BINDLESS_SAMPLER_COUNT,
-			cube_count = BINDLESS_CUBE_COUNT,
+			cube_count    = BINDLESS_CUBE_COUNT,
 			storage_count = BINDLESS_STORAGE_IMAGE_COUNT,
 		},
 	)
@@ -118,19 +125,14 @@ texture_system_destroy :: proc(engine: ^Engine) {
 		texture_destroy(&engine.vk_ctx, texture)
 		if texture.cache != .None do delete(texture.key)
 	}
-	pool_destroy(&ts.textures)
 	for sampler in ts.samplers {
 		backend.sampler_destroy(&engine.vk_ctx, sampler)
 	}
-	delete(ts.srgb_texture_map)
-	delete(ts.linear_texture_map)
-	delete(ts.cubemap_map)
-	delete(ts.cube_free)
+	virtual.arena_destroy(&ts.arena)
 }
 
 texture_system_has_capacity :: proc(ts: ^TextureSystem) -> bool {
-	// count is the pool's high-water mark; unloading returns slots to free_list instead.
-	return ts.textures.count < ts.config.max_textures_count || len(ts.textures.free_list) > 0
+	return !pool_is_full(&ts.textures)
 }
 
 // Unloads an owned texture: removes its cache entry, frees its key and bindless slot, releases the
@@ -297,6 +299,10 @@ texture_create_builtin :: proc(engine: ^Engine) {
 		Texture{extent = backend.extent3d(1, 1, 1), channel_count = 4},
 		&white,
 	)
+	// The zero handle samples white, so an unset texture slot needs no branch.
+	white_tex := pool_get(&ts.textures, ts.defaults[.White])^
+	pool_set_nil(&ts.textures, white_tex)
+	backend.bindless_write_texture(&engine.vk_ctx, 0, white_tex.image)
 	ts.defaults[.Metallic_Roughness] = upload_builtin(
 		engine,
 		Texture{extent = backend.extent3d(1, 1, 1), channel_count = 4},

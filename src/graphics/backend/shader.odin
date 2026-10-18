@@ -1,6 +1,7 @@
 package backend
 
 import "core:fmt"
+import "core:mem"
 import "core:slice"
 import "core:strings"
 
@@ -51,13 +52,12 @@ shader_target :: proc(ctx: ^Context) -> ShaderTarget {
 	return .SPIRV
 }
 
-shaders_init :: proc(ctx: ^Context) {
-	ctx.shaders = handles.pool_init(MAX_SHADERS, ShaderSlot)
+shaders_init :: proc(ctx: ^Context, allocator: mem.Allocator) {
+	ctx.shaders = handles.pool_init(MAX_SHADERS, ShaderSlot, allocator)
 }
 
 shaders_destroy :: proc(ctx: ^Context) {
 	assert(handles.pool_live_count(&ctx.shaders) == 0, "shaders_destroy: shaders still alive")
-	handles.pool_destroy(&ctx.shaders)
 }
 
 shader_create :: proc(ctx: ^Context, desc: ShaderDesc) -> Shader {
@@ -66,14 +66,14 @@ shader_create :: proc(ctx: ^Context, desc: ShaderDesc) -> Shader {
 
 // Swaps in new code under the same handle (hot reload). Pipelines built from the old code
 // keep working; rebuild them to pick up the new one.
-shader_replace :: proc(ctx: ^Context, shader: Shader, desc: ShaderDesc) {
-	slot := handles.pool_get(&ctx.shaders, shader)
+shader_replace :: proc(ctx: ^Context, shader: Shader, desc: ShaderDesc, loc := #caller_location) {
+	slot := handles.pool_get_live(&ctx.shaders, shader, loc)
 	release_deferred(ctx, slot^)
 	slot^ = shader_slot_make(ctx, desc)
 }
 
-shader_destroy :: proc(ctx: ^Context, shader: Shader) {
-	release_deferred(ctx, handles.pool_get(&ctx.shaders, shader)^)
+shader_destroy :: proc(ctx: ^Context, shader: Shader, loc := #caller_location) {
+	release_deferred(ctx, handles.pool_get_live(&ctx.shaders, shader, loc)^)
 	handles.pool_free(&ctx.shaders, shader)
 }
 
@@ -118,8 +118,15 @@ shader_stage_to_vk :: proc(stage: ShaderStage) -> vk.ShaderStageFlags {
 
 // Resolves the entry point by name; panics if the shader doesn't declare it.
 @(private)
-shader_stage_info :: proc(ctx: ^Context, desc: ShaderStageDesc) -> (vk.PipelineShaderStageCreateInfo, ShaderStage) {
-	slot := handles.pool_get(&ctx.shaders, desc.shader)
+shader_stage_info :: proc(
+	ctx: ^Context,
+	desc: ShaderStageDesc,
+	loc := #caller_location,
+) -> (
+	vk.PipelineShaderStageCreateInfo,
+	ShaderStage,
+) {
+	slot := handles.pool_get_live(&ctx.shaders, desc.shader, loc)
 	for entry in slot.entry_points {
 		if entry.name != desc.entry do continue
 		info := vk.PipelineShaderStageCreateInfo {

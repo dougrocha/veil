@@ -141,18 +141,18 @@ cluster_debug_report_overflow :: proc(engine: ^Engine, slot: int) {
 }
 
 // Dispatch size for the cluster build, one invocation per cluster.
-ClustersPrep :: struct {
+ClustersPass :: struct {
 	groups: u32,
 }
 
-// Runs when clustered lighting, the heatmap, or validation needs it.
-clusters_prepare :: proc(camera: Camera, enabled: bool) -> Maybe(ClustersPrep) {
-	if !enabled do return nil
+// Built when clustered lighting, the heatmap, or validation needs it; otherwise not ok.
+clusters_pass_build :: proc(camera: Camera, enabled: bool) -> (p: ClustersPass, ok: bool) {
+	if !enabled do return {}, false
 	assert(camera.near > 0, "cluster depth slices require a positive near plane")
-	return ClustersPrep{groups = (CLUSTER_COUNT + 63) / 64}
+	return {groups = (CLUSTER_COUNT + 63) / 64}, true
 }
 
-record_clusters :: proc(r: ^Recorder, f: ^PreparedFrame) {
+record_clusters :: proc(r: ^Recorder, p: ^ClustersPass) {
 	frame := r.frame
 	pc := ClusterPushConstants {
 		scene_data = backend.buffer_address(r.ctx, frame.scene_data_buffer),
@@ -164,7 +164,7 @@ record_clusters :: proc(r: ^Recorder, f: ^PreparedFrame) {
 	encoder := backend.begin_compute_pass(r.cmd)
 	backend.pipeline_bind_compute(encoder, rec_pipeline(r, .Clusters))
 	backend.pipeline_push_compute(encoder, &pc)
-	backend.cmd_dispatch(encoder, f.passes.clusters.?.groups, 1, 1)
+	backend.cmd_dispatch(encoder, p.groups, 1, 1)
 	backend.cmd_barrier_compute_write_to_fragment_read(encoder)
 	backend.end_compute_pass(encoder)
 }

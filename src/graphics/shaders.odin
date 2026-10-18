@@ -2,6 +2,7 @@ package graphics
 
 import "core:fmt"
 import "core:log"
+import "core:mem/virtual"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
@@ -28,6 +29,9 @@ log_slang_diagnostics :: proc(diagnostics: ^sp.IBlob, failed: bool) {
 }
 
 ShaderSystem :: struct {
+	// The loaded map with its name keys and entry point lists. Modules are added once and reloads reuse
+	// their entry, so none of it is freed before shader_system_destroy.
+	arena:                  virtual.Arena,
 	global_session:         ^sp.IGlobalSession,
 	// Slang's ISession caches loaded modules by name; reusing one session
 	// across reloads makes loadModule return the stale cached module instead
@@ -108,7 +112,11 @@ shader_system_create :: proc(self: ^Engine, bindless_texture_count: u32) -> bool
 	session->release()
 	ss.bindless_texture_count = bindless_texture_count
 
-	ss.loaded = make(map[string]LoadedShader)
+	if err := virtual.arena_init_growing(&ss.arena); err != nil {
+		log.errorf("Failed to create shader system arena: %v", err)
+		return false
+	}
+	ss.loaded = make(map[string]LoadedShader, virtual.arena_allocator(&ss.arena))
 
 	watcher.init(&ss.fw, "shaders")
 
@@ -117,12 +125,8 @@ shader_system_create :: proc(self: ^Engine, bindless_texture_count: u32) -> bool
 
 shader_system_destroy :: proc(self: ^Engine) {
 	ss := &self.shader_system
-	for name, loaded in ss.loaded {
-		backend.shader_destroy(&self.vk_ctx, loaded.shader)
-		delete(loaded.entry_points)
-		delete(name)
-	}
-	delete(ss.loaded)
+	for _, loaded in ss.loaded do backend.shader_destroy(&self.vk_ctx, loaded.shader)
+	virtual.arena_destroy(&ss.arena)
 	watcher.destroy(&ss.fw)
 	ss.global_session->release()
 }
@@ -238,9 +242,10 @@ shader_load :: proc(
 	}
 
 	shader = backend.shader_create(&self.vk_ctx, desc)
-	ss.loaded[strings.clone(module_name)] = {
+	allocator := virtual.arena_allocator(&ss.arena)
+	ss.loaded[strings.clone(module_name, allocator)] = {
 		shader       = shader,
-		entry_points = slice.clone(entry_points),
+		entry_points = slice.clone(entry_points, allocator),
 	}
 	return shader, true
 }

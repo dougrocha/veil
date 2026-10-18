@@ -1,6 +1,7 @@
 package backend
 
 import "core:log"
+import "core:mem/virtual"
 
 import vma "shared:odin-vma"
 import vk "vendor:vulkan"
@@ -124,6 +125,7 @@ Limits :: struct {
 }
 
 Context :: struct {
+	arena:                           virtual.Arena, // handle pools and the release queue; freed by context_destroy
 	instance:                        vk.Instance,
 	surface:                         vk.SurfaceKHR,
 	physical_device:                 vk.PhysicalDevice,

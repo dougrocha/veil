@@ -15,3 +15,6 @@ pool_is_alive :: handles.pool_is_alive
 pool_is_valid :: handles.pool_is_valid
 pool_free :: handles.pool_free
 pool_get :: handles.pool_get
+pool_get_live :: handles.pool_get_live
+pool_set_nil :: handles.pool_set_nil
+pool_is_full :: handles.pool_is_full

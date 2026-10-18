@@ -37,7 +37,7 @@ shadow_casters_sync :: proc(casters: ^ShadowCasters, view: DrawInput, changes: [
 
 	items := make([dynamic]DrawItem, context.temp_allocator)
 	for record, id in view.draws {
-		if record.model == INVALID_MODEL || !record.casts_shadow do continue
+		if !record.casts_shadow do continue
 		model := pool_get(view.models, record.model)
 		for &mesh in model.meshes do append(&items, DrawItem{mesh = &mesh, id = u32(id)})
 	}

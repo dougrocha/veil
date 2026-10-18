@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:log"
 import "core:math"
 import "core:math/linalg"
+import "core:mem/virtual"
 import "core:path/filepath"
 import "core:strings"
 
@@ -45,11 +46,10 @@ ModelHandle :: Handle(Model)
 INVALID_MODEL :: ModelHandle{}
 
 Model :: struct {
-	borrowed_geometry: bool, // shared-buffer ranges and CPU geometry belong to another engine-owned model
-	variant_of:        Handle(Model), // root asset of a model_with_material variant; INVALID_MODEL for assets
-	meshes:            [dynamic]Mesh,
-	name:              string,
-	bounds:            BoundingSphere,
+	variant_of: Handle(Model), // root asset of a model_with_material variant; INVALID_MODEL for assets
+	meshes:     [dynamic]Mesh,
+	name:       string,
+	bounds:     BoundingSphere,
 }
 
 // One spawnable piece of a file loaded with model_load_parts. transform places the piece
@@ -66,6 +66,9 @@ ModelVariantKey :: struct {
 }
 
 ModelSystem :: struct {
+	// The pool, name maps, and every model's meshes, names and CPU geometry. Models have no unload,
+	// so all of it lives until model_system_destroy.
+	arena:         virtual.Arena,
 	next_mesh_key: u64,
 	vertex_buffer: backend.Buffer(Vertex),
 	index_buffer:  backend.Buffer(u32),
@@ -98,37 +101,21 @@ model_system_create :: proc(engine: ^Engine) {
 		{.Index, .Transfer_Dst},
 		.Gpu,
 	)
-	engine.model_system.models = pool_init(16384, Model)
-	engine.model_system.model_map = make(map[string]ModelHandle)
-	engine.model_system.variant_map = make(map[ModelVariantKey]ModelHandle)
-	engine.model_system.primitive_map = make(map[PrimitiveKey]ModelHandle)
-	engine.model_system.parts_map = make(map[string][]ModelPart)
+	ms := &engine.model_system
+	ensure(virtual.arena_init_growing(&ms.arena) == nil, "model system: could not create arena")
+	allocator := virtual.arena_allocator(&ms.arena)
+	ms.models = pool_init(16384, Model, allocator)
+	ms.model_map = make(map[string]ModelHandle, allocator)
+	ms.variant_map = make(map[ModelVariantKey]ModelHandle, allocator)
+	ms.primitive_map = make(map[PrimitiveKey]ModelHandle, allocator)
+	ms.parts_map = make(map[string][]ModelPart, allocator)
 }
 
 model_system_destroy :: proc(engine: ^Engine) {
 	ms := &engine.model_system
-	for &model, i in ms.models.values {
-		if pool_is_alive(&ms.models, Index(i)) {
-			for &mesh in model.meshes {
-				if model.borrowed_geometry do continue
-				delete(mesh.positions)
-				delete(mesh.indices)
-			}
-			delete(model.meshes)
-			delete(model.name)
-		}
-	}
 	backend.buffer_destroy(&engine.vk_ctx, ms.vertex_buffer)
 	backend.buffer_destroy(&engine.vk_ctx, ms.index_buffer)
-	pool_destroy(&ms.models)
-	delete(ms.model_map)
-	delete(ms.variant_map)
-	delete(ms.primitive_map)
-	for key, parts in ms.parts_map {
-		delete(key)
-		delete(parts)
-	}
-	delete(ms.parts_map)
+	virtual.arena_destroy(&ms.arena)
 }
 
 // Loads a model by asset path, cached by path. Materials come from the file or the default; use
@@ -259,32 +246,34 @@ model_make :: proc(
 ) -> Model {
 	first_vertex, first_index := mesh_geometry_upload(engine, vertices, indices)
 
-	material_handle := material_get_default(engine) if material == INVALID_MATERIAL else material
-	positions := make([]Vec3, len(vertices))
+	allocator := virtual.arena_allocator(&engine.model_system.arena)
+	positions := make([]Vec3, len(vertices), allocator)
 	for v, i in vertices {
 		positions[i] = v.pos
 	}
-	mesh_indices := make([]u32, len(indices))
+	mesh_indices := make([]u32, len(indices), allocator)
 	copy(mesh_indices, indices)
 
 	mesh := Mesh {
 		first_vertex = first_vertex,
 		first_index  = first_index,
 		index_count  = u32(len(indices)),
-		material     = material_handle,
+		material     = material, // INVALID_MATERIAL reads as the default
 		positions    = positions,
 		indices      = mesh_indices,
 		bounds       = aabb_from_points(positions),
 	}
 
 	model := Model {
-		name = strings.clone(name),
+		name   = strings.clone(name, allocator),
+		meshes = make([dynamic]Mesh, 0, 1, allocator),
 	}
 	append(&model.meshes, mesh)
 	return model
 }
 
-// Takes ownership of model, whose name must be an owned copy (it doubles as the map key).
+// Takes ownership of model, whose name and meshes must come from the model system's arena (the name
+// doubles as the map key).
 model_add :: proc(engine: ^Engine, model: Model) -> ModelHandle {
 	handle := model_pool_add(engine, model)
 	engine.model_system.model_map[model.name] = handle
@@ -332,6 +321,7 @@ model_load_parts :: proc(engine: ^Engine, path: string, split_primitives := fals
 		return parts
 	}
 
+	allocator := virtual.arena_allocator(&engine.model_system.arena)
 	parts: []ModelPart
 	ext := filepath.ext(path)
 	if ext == ".gltf" || ext == ".glb" {
@@ -339,7 +329,7 @@ model_load_parts :: proc(engine: ^Engine, path: string, split_primitives := fals
 	} else {
 		model := model_load(engine, path)
 		if model != INVALID_MODEL {
-			parts = make([]ModelPart, 1)
+			parts = make([]ModelPart, 1, allocator)
 			parts[0] = {
 				model     = model,
 				transform = transform_create(),
@@ -347,7 +337,7 @@ model_load_parts :: proc(engine: ^Engine, path: string, split_primitives := fals
 		}
 	}
 	if len(parts) > 0 {
-		engine.model_system.parts_map[strings.clone(key)] = parts
+		engine.model_system.parts_map[strings.clone(key, allocator)] = parts
 	}
 	return parts
 }
@@ -371,15 +361,17 @@ model_with_material :: proc(engine: ^Engine, source: ModelHandle, material: Mate
 	key := ModelVariantKey{root, material}
 	if handle, ok := ms.variant_map[key]; ok do return handle
 
+	allocator := virtual.arena_allocator(&ms.arena)
 	original := pool_get(&ms.models, root)
 	variant := Model {
-		name              = fmt.aprintf(
+		name       = fmt.aprintf(
 			"{}+{}",
 			original.name,
 			pool_get(&engine.material_system.materials, material).name,
+			allocator = allocator,
 		),
-		borrowed_geometry = true,
-		variant_of        = root,
+		variant_of = root,
+		meshes     = make([dynamic]Mesh, 0, len(original.meshes), allocator),
 	}
 	for mesh in original.meshes {
 		mesh := mesh

@@ -27,7 +27,7 @@ ShadowPlan :: struct {
 	views_cached:        u32, // spot maps + cube faces skipped because the cache holds them
 	invalidated_point:   [MAX_POINT_SHADOW_LIGHTS]bool,
 	invalidated_spot:    [MAX_SPOT_LIGHTS]bool,
-	// Set by shadow_prepare: lights with a view that lost casters to the frame budget.
+	// Set by shadow_passes_build: lights with a view that lost casters to the frame budget.
 	dropped_point:       [MAX_POINT_SHADOW_LIGHTS]bool,
 	dropped_spot:        [MAX_SPOT_LIGHTS]bool,
 }

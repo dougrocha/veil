@@ -176,7 +176,8 @@ def main():
                     raise RuntimeError('Replay did not exercise skip and resize')
                 if (960, 540) not in sizes:
                     raise RuntimeError('Replay never rendered at the resized extent')
-            picks = [re.findall(r'pick test .*', log) for log in logs]
+            # draw ids differ between builds (slot vs slot - 1); compare the rest of the line
+            picks = [[re.sub(r'-> draw \d+', '-> draw', p) for p in re.findall(r'pick test .*', log)] for log in logs]
             if picks[0] != picks[1]:
                 raise RuntimeError(f'{name}: picking changed')
             for i in range(count):

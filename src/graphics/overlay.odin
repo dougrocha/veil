@@ -21,22 +21,22 @@ Overlay :: struct {
 	allocator:   mem.Allocator,
 }
 
-PreparedUIBatch :: struct {
+OverlayUIBatch :: struct {
 	atlas_texture: TextureIndex,
 	vertices:      []UIVertex,
 }
 
-PreparedDebugView :: struct {
+OverlayDebugView :: struct {
 	view: DebugViewPushConstants,
 	rect: Rect2D,
 	clip: Rect2D,
 }
 
 // Clamped to buffer capacities; dropped_* count what didn't fit.
-PreparedOverlay :: struct {
+OverlayPass :: struct {
 	lines:               [LineBatch][]LineVertex,
-	ui:                  []PreparedUIBatch,
-	debug_views:         []PreparedDebugView,
+	ui:                  []OverlayUIBatch,
+	debug_views:         []OverlayDebugView,
 	draw_calls:          u32,
 	dropped_lines:       u32,
 	dropped_ui:          u32,
@@ -58,7 +58,7 @@ UploadedUIBatch :: struct {
 UploadedOverlay :: struct {
 	lines:       [LineBatch]UploadedLineBatch,
 	ui:          []UploadedUIBatch,
-	debug_views: []PreparedDebugView,
+	debug_views: []OverlayDebugView,
 }
 
 // Starts an empty overlay for one tick of game code.
@@ -113,34 +113,34 @@ overlay_shadow_view :: proc(o: ^Overlay, mode: DebugViewMode, index, face: u32, 
 
 // Clamps game geometry to buffer capacities and clips debug views to the target.
 // The cluster heatmap view is generated here and always goes last.
-overlay_prepare :: proc(o: ^Overlay, settings: RenderSettings, extent: Extent2D) -> PreparedOverlay {
-	prepared: PreparedOverlay
-	views := make([dynamic]PreparedDebugView, context.temp_allocator)
+overlay_pass_build :: proc(o: ^Overlay, settings: RenderSettings, extent: Extent2D) -> OverlayPass {
+	pass: OverlayPass
+	views := make([dynamic]OverlayDebugView, context.temp_allocator)
 
 	if o != nil {
 		for batch in LineBatch {
 			stride := 3 if batch == .Sector else 2
 			count := min(len(o.lines[batch]), MAX_LINE_VERTICES)
 			count -= count % stride
-			prepared.lines[batch] = o.lines[batch][:count]
-			prepared.dropped_lines += u32((len(o.lines[batch]) - count) / stride)
-			if count > 0 do prepared.draw_calls += 1
+			pass.lines[batch] = o.lines[batch][:count]
+			pass.dropped_lines += u32((len(o.lines[batch]) - count) / stride)
+			if count > 0 do pass.draw_calls += 1
 		}
-		ui := make([dynamic]PreparedUIBatch, context.temp_allocator)
+		ui := make([dynamic]OverlayUIBatch, context.temp_allocator)
 		for atlas in o.ui_order {
 			vertices := o.ui[atlas]
 			count := min(len(vertices), MAX_UI_VERTICES)
 			count -= count % 6
-			prepared.dropped_ui += u32((len(vertices) - count) / 6)
+			pass.dropped_ui += u32((len(vertices) - count) / 6)
 			if count == 0 do continue
-			append(&ui, PreparedUIBatch{TextureIndex(atlas), vertices[:count]})
-			prepared.draw_calls += 1
+			append(&ui, OverlayUIBatch{TextureIndex(atlas), vertices[:count]})
+			pass.draw_calls += 1
 		}
-		prepared.ui = ui[:]
+		pass.ui = ui[:]
 
 		for req, index in o.debug_views {
 			if index >= MAX_DEBUG_VIEWS {
-				prepared.dropped_debug_views += 1
+				pass.dropped_debug_views += 1
 				continue
 			}
 			// Clip to the target; a zero-size or off-screen scissor is invalid.
@@ -150,7 +150,7 @@ overlay_prepare :: proc(o: ^Overlay, settings: RenderSettings, extent: Extent2D)
 			if x1 <= x0 || y1 <= y0 do continue
 			append(
 				&views,
-				PreparedDebugView {
+				OverlayDebugView {
 					view = {mode = req.mode, index = req.index, face = req.face},
 					rect = req.rect,
 					clip = {offset = {i32(x0), i32(y0)}, extent = {u32(x1 - x0), u32(y1 - y0)}},
@@ -160,26 +160,21 @@ overlay_prepare :: proc(o: ^Overlay, settings: RenderSettings, extent: Extent2D)
 	}
 	if settings.cluster_heatmap && extent.width > 0 && extent.height > 0 {
 		if o != nil && len(o.debug_views) >= MAX_DEBUG_VIEWS {
-			prepared.dropped_debug_views += 1
+			pass.dropped_debug_views += 1
 		} else {
 			rect := Rect2D {
 				extent = {extent.width, extent.height},
 			}
-			append(&views, PreparedDebugView{view = {mode = .Cluster_Heatmap}, rect = rect, clip = rect})
+			append(&views, OverlayDebugView{view = {mode = .Cluster_Heatmap}, rect = rect, clip = rect})
 		}
 	}
-	prepared.debug_views = views[:]
-	prepared.draw_calls += u32(len(views))
-	return prepared
+	pass.debug_views = views[:]
+	pass.draw_calls += u32(len(views))
+	return pass
 }
 
 // Writes this frame's vertices into the per-slot buffers. An atlas's UI buffers are created on first use.
-overlay_upload :: proc(
-	ctx: ^backend.Context,
-	lr: ^LineRenderer,
-	ur: ^UIRenderer,
-	p: ^PreparedOverlay,
-) -> UploadedOverlay {
+overlay_upload :: proc(ctx: ^backend.Context, lr: ^LineRenderer, ur: ^UIRenderer, p: ^OverlayPass) -> UploadedOverlay {
 	uploaded := UploadedOverlay {
 		debug_views = p.debug_views,
 	}
@@ -236,7 +231,7 @@ record_lines :: proc(r: ^Recorder, encoder: backend.RenderEncoder) {
 }
 
 // Draws debug views, then UI, over the tonemapped draw target.
-record_overlay :: proc(r: ^Recorder, f: ^PreparedFrame) {
+record_overlay :: proc(r: ^Recorder, _: ^OverlayPass) {
 	if len(r.overlay.debug_views) > 0 {
 		encoder := backend.begin_render_pass(
 			r.cmd,

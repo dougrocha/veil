@@ -3,21 +3,21 @@ package graphics
 import "backend"
 
 // One frame's simulation step.
-ParticlesPrep :: struct {
+ParticlesPass :: struct {
 	delta_time: f32,
 }
 
-// Nil when particles are off, so the pass is skipped.
-particles_prepare :: proc(packet: ^FramePacket) -> Maybe(ParticlesPrep) {
-	if !packet.settings.particles do return nil
-	return ParticlesPrep{delta_time = packet.delta_time}
+// Not ok when particles are off, so the pass is not in the list.
+particles_pass_build :: proc(packet: ^FramePacket) -> (p: ParticlesPass, ok: bool) {
+	if !packet.settings.particles do return {}, false
+	return {delta_time = packet.delta_time}, true
 }
 
-record_particles :: proc(r: ^Recorder, f: ^PreparedFrame) {
+record_particles :: proc(r: ^Recorder, p: ^ParticlesPass) {
 	pc := ParticlePushConstants {
 		particles_in  = backend.buffer_address(r.ctx, r.prev_frame.particle_buffer),
 		particles_out = backend.buffer_address(r.ctx, r.frame.particle_buffer),
-		delta_time    = f.passes.particles.?.delta_time,
+		delta_time    = p.delta_time,
 	}
 	encoder := backend.begin_compute_pass(r.cmd)
 	// particles_in was written by the previous frame's dispatch in an earlier submission.
