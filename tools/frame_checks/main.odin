@@ -309,7 +309,8 @@ check_cull_pass :: proc() {
 	for c in claimed do assert(c)
 	assert(view_index == 8 && shadow_candidates == 21)
 	assert(built.counters.shadow_views == 10 && built.counters.indirect_calls == 8 && built.counters.draw_calls == 8)
-	assert(built.counters.candidate_instances == 24)
+	// Candidate counts are main's only: gpu_visible reads back main's commands.
+	assert(built.counters.candidate_instances == 24 - shadow_candidates)
 
 	// Outputs overflow the id budget while the candidates fit, or the batches overflow the command budget: main
 	// and every shadow view go back to the CPU.

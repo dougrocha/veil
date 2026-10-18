@@ -256,7 +256,10 @@ shadow_passes_build :: proc(
 			case DrawGroups:
 				draw_counters_add(&p.counters, d.counters)
 			case CullDraws:
-				draw_counters_add(&p.counters, d.counters)
+				// gpu_visible reads back main's commands only, so the candidate counts stay main's.
+				c := d.counters
+				c.candidate_instances, c.candidate_triangles = 0, 0
+				draw_counters_add(&p.counters, c)
 			}
 		}
 		if len(views) == 0 do continue

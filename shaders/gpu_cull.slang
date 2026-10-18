@@ -46,7 +46,8 @@ void compute_main(uint3 dispatch_id : SV_DispatchThreadID) {
         abs(world[0][0]) * extents.x + abs(world[0][1]) * extents.y + abs(world[0][2]) * extents.z,
         abs(world[1][0]) * extents.x + abs(world[1][1]) * extents.y + abs(world[1][2]) * extents.z,
         abs(world[2][0]) * extents.x + abs(world[2][1]) * extents.y + abs(world[2][2]) * extents.z);
-    CullView view = pc.views[run.view_index];
+    // Through the pointer, so each thread loads only the planes it tests, not the whole view.
+    CullView* view = pc.views + run.view_index;
     uint visible = 0;
     for (uint f = 0; f < view.frustum_count && visible == 0; ++f) {
         bool inside = true;
