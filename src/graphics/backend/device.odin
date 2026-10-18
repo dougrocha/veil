@@ -56,6 +56,7 @@ context_init :: proc(ctx: ^Context, window: ^sdl.Window) -> bool {
 	// MoltenVK supports far less than a desktop GPU, so bindless array sizes must be
 	// clamped to what the device actually supports instead of a hardcoded constant.
 	ctx.max_bindless_textures_per_stage = vk_get_max_bindless_textures_per_stage(ctx)
+	ctx.max_multiview_views = vk_get_max_multiview_view_count(ctx)
 
 	return true
 }
@@ -65,6 +66,7 @@ limits :: proc(ctx: ^Context) -> Limits {
 		max_bindless_textures_per_stage = ctx.max_bindless_textures_per_stage,
 		msaa_samples = ctx.msaa_samples,
 		max_draw_indirect_count = ctx.max_draw_indirect_count,
+		max_multiview_views = ctx.max_multiview_views,
 	}
 }
 
@@ -289,6 +291,7 @@ logical_device_create :: proc(ctx: ^Context) -> bool {
 	   !features_12.descriptorBindingStorageImageUpdateAfterBind ||
 	   !features_12.descriptorBindingUpdateUnusedWhilePending ||
 	   !features_11.shaderDrawParameters ||
+	   !features_11.multiview ||
 	   !extended_dynamic_state_features.extendedDynamicState ||
 	   !supported_features.features.samplerAnisotropy ||
 	   !supported_features.features.sampleRateShading ||
@@ -324,6 +327,7 @@ logical_device_create :: proc(ctx: ^Context) -> bool {
 		sType                = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
 		pNext                = &enabled_features_12,
 		shaderDrawParameters = true,
+		multiview            = true,
 	}
 	enabled_extended_dynamic_state_features := vk.PhysicalDeviceExtendedDynamicStateFeaturesEXT {
 		sType                = .PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,

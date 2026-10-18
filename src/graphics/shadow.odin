@@ -212,7 +212,10 @@ shadow_passes_build :: proc(input: FrameInput, layout: ^LayoutBuilder, passes: ^
 		}
 		for view in plan.views {
 			if view.atlas != kind do continue
-			frustums := []Frustum{frustum_from_view_proj(view.view_proj)}
+			// A multiview pass keeps a caster any of its views sees. Last cascade first: it covers the
+			// most, so the test usually stops there.
+			frustums := make([]Frustum, view.view_count, context.temp_allocator)
+			for i in 0 ..< view.view_count do frustums[view.view_count - 1 - i] = frustum_from_view_proj(view.view_proj[i])
 			// Directional cascades ignore the near plane, since their depth is clamped rather than clipped.
 			runs := shadow_casters_filter(input.casters, frustums, view.light_type == .Directional)
 			pipeline := PipelineKind.Shadow_Directional if view.light_type == .Directional else PipelineKind.Shadow
@@ -243,12 +246,17 @@ record_shadow :: proc(r: ^Recorder, p: ^ShadowPass) {
 		// passes_record has already put the atlas in .Depth_Write.
 		encoder := backend.begin_render_pass(
 			r.cmd,
-			backend.PassConfig{depth = {image = atlas, layer = view.layer}, load_op = .Clear, store_depth = true},
+			backend.PassConfig {
+				depth = {image = atlas, layer = view.layer},
+				load_op = .Clear,
+				store_depth = true,
+				view_count = view.view_count,
+			},
 		)
 		backend.cmd_bind_index_buffer(encoder, r.geometry.index)
 		backend.cmd_set_depth_bias(encoder, 1.25, 0, 1.75)
 		pc := ShadowPushConstants {
-			view_proj        = view.view_proj,
+			view_proj        = view.view_proj[0], // unused by directional: each view reads its cascade's from scene_data
 			scene_data       = rec_scene_data(r),
 			vertex_buffer    = r.geometry.vertices,
 			material_buffer  = r.geometry.materials,

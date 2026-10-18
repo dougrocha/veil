@@ -33,9 +33,16 @@ ImageSlot :: struct {
 	image:       vk.Image,
 	view:        vk.ImageView, // whole image: D2, D2_ARRAY, CUBE or CUBE_ARRAY from desc
 	layer_views: []vk.ImageView, // one per array layer; only for multi-layer attachment images
+	range_views: [dynamic]LayerRangeView, // multiview attachments, created on first use
 	mip_views:   []vk.ImageView, // one per mip level; only for multi-mip images
 	alloc:       vma.Allocation,
 	layout:      []vk.ImageLayout, // one per (mip, layer); index with image_layout_index
+}
+
+@(private)
+LayerRangeView :: struct {
+	base, count: u32,
+	view:        vk.ImageView,
 }
 
 image_usage_to_vk :: proc(usage: ImageUsageFlags) -> vk.ImageUsageFlags {
@@ -187,15 +194,31 @@ image_slot_release :: proc(ctx: ^Context, slot: ImageSlot) {
 	delete(slot.mip_views)
 	for view in slot.layer_views do vk.DestroyImageView(ctx.device, view, nil)
 	delete(slot.layer_views)
+	for r in slot.range_views do vk.DestroyImageView(ctx.device, r.view, nil)
+	delete(slot.range_views)
 	delete(slot.layout)
 	vma.destroy_image(ctx.vma_allocator, slot.image, slot.alloc)
 }
 
-// View to render into one (layer, mip) of an image. Falls back to the whole view for
-// single-layer images.
+// View to render into layers [layer, layer + layer_count) of one mip of an image. A single layer
+// falls back to the whole view for single-layer images; a range (multiview) gets a 2D array view,
+// created on first use and kept until the image is destroyed.
 @(private)
-image_attachment_view :: proc(slot: ^ImageSlot, layer: u32, mip: u32 = 0) -> vk.ImageView {
+image_attachment_view :: proc(
+	ctx: ^Context,
+	slot: ^ImageSlot,
+	layer: u32,
+	mip: u32 = 0,
+	layer_count: u32 = 1,
+) -> vk.ImageView {
 	assert(mip == 0, "mip attachment views not implemented yet")
+	if layer_count > 1 {
+		assert(layer + layer_count <= slot.desc.array_layers, "image_attachment_view: layer range out of bounds")
+		for r in slot.range_views do if r.base == layer && r.count == layer_count do return r.view
+		view := image_view_create(ctx, slot, .D2_ARRAY, 0, 1, layer, layer_count)
+		append(&slot.range_views, LayerRangeView{base = layer, count = layer_count, view = view})
+		return view
+	}
 	if len(slot.layer_views) == 0 {
 		assert(layer == 0, "image has no layer views")
 		return slot.view

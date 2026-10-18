@@ -15,18 +15,25 @@ PassConfig :: struct {
 	clear_color: [4]f32,
 	load_op:     LoadOp,
 	store_depth: bool,
+	// > 1: multiview pass rendering views 0 ..< view_count into layers [layer, layer + view_count) of
+	// each attachment. Pipelines drawn in it need the same view_count.
+	view_count:  u32,
 }
 
 // Attachments must already be in their attachment states; passes_record owns frame-resource layouts.
 begin_render_pass :: proc(cmd: CommandBuffer, config: PassConfig) -> RenderEncoder {
+	assert(config.view_count <= cmd.ctx.max_multiview_views, "begin_render_pass: view_count above the device limit")
+	layers := max(config.view_count, 1)
 	color_attach_info: vk.RenderingAttachmentInfo
 	if config.color.image != {} {
 		color_attach_info = vk.RenderingAttachmentInfo {
 			sType = .RENDERING_ATTACHMENT_INFO,
 			imageView = image_attachment_view(
+				cmd.ctx,
 				image_slot(cmd.ctx, config.color.image),
 				config.color.layer,
 				config.color.mip,
+				layers,
 			),
 			imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
 			loadOp = load_op_to_vk(config.load_op),
@@ -36,9 +43,11 @@ begin_render_pass :: proc(cmd: CommandBuffer, config: PassConfig) -> RenderEncod
 		if config.resolve.image != {} {
 			color_attach_info.resolveMode = {.AVERAGE}
 			color_attach_info.resolveImageView = image_attachment_view(
+				cmd.ctx,
 				image_slot(cmd.ctx, config.resolve.image),
 				config.resolve.layer,
 				config.resolve.mip,
+				layers,
 			)
 			color_attach_info.resolveImageLayout = .COLOR_ATTACHMENT_OPTIMAL
 		} else {
@@ -58,7 +67,8 @@ begin_render_pass :: proc(cmd: CommandBuffer, config: PassConfig) -> RenderEncod
 	rendering_info := vk.RenderingInfo {
 		sType = .RENDERING_INFO,
 		renderArea = {offset = {0, 0}, extent = extent},
-		layerCount = 1,
+		layerCount = 1, // ignored when viewMask is set
+		viewMask = view_mask(config.view_count),
 		colorAttachmentCount = 1 if config.color.image != {} else 0,
 		pColorAttachments = &color_attach_info if config.color.image != {} else nil,
 	}
@@ -68,9 +78,11 @@ begin_render_pass :: proc(cmd: CommandBuffer, config: PassConfig) -> RenderEncod
 		depth_attach_info = vk.RenderingAttachmentInfo {
 			sType = .RENDERING_ATTACHMENT_INFO,
 			imageView = image_attachment_view(
+				cmd.ctx,
 				image_slot(cmd.ctx, config.depth.image),
 				config.depth.layer,
 				config.depth.mip,
+				layers,
 			),
 			imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
 			loadOp = load_op_to_vk(config.load_op),
@@ -90,4 +102,10 @@ begin_render_pass :: proc(cmd: CommandBuffer, config: PassConfig) -> RenderEncod
 
 end_render_pass :: proc(encoder: RenderEncoder) {
 	vk.CmdEndRendering(encoder.handle)
+}
+
+// Multiview mask for views 0 ..< view_count; 0 (multiview off) for 0 or 1.
+@(private)
+view_mask :: proc(view_count: u32) -> u32 {
+	return view_count > 1 ? (1 << view_count) - 1 : 0
 }

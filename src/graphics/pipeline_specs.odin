@@ -6,7 +6,7 @@ import "backend"
 // PipelineSpec.stage is Graphics.
 PipelineKind :: enum u8 {
 	Shadow, // spot + point lights
-	Shadow_Directional, // directional cascades, depth-clamped
+	Shadow_Directional, // directional cascades, one multiview pass per light, depth-clamped
 	Mesh, // opaque, no discard
 	Mesh_Transparent, // alpha blended, no depth write
 	Mesh_Double_Sided, // Mesh without back-face culling
@@ -53,6 +53,7 @@ PipelineSpec :: struct {
 	cull:     backend.CullMode,
 	blend:    backend.BlendMode,
 	depth:    backend.DepthState,
+	views:    u32, // > 1: multiview, drawn in passes with the same PassConfig.view_count
 }
 
 @(rodata)
@@ -70,6 +71,7 @@ PIPELINE_SPECS := [PipelineKind]PipelineSpec {
 		targets = .Shadow,
 		cull = .None,
 		depth = {test = true, write = true, bias = true, clamp = true, compare = .LessOrEqual},
+		views = SHADOW_MAP_CASCADE_COUNT,
 	},
 	.Mesh = {shader = "mesh", targets = .Main, depth = {test = true, write = true, compare = .Less}},
 	.Mesh_Transparent = {shader = "mesh", targets = .Main, blend = .Alpha, depth = {test = true, compare = .Less}},
@@ -151,5 +153,6 @@ graphics_pipeline_desc :: proc(ctx: ^backend.Context, spec: PipelineSpec) -> bac
 		cull = spec.cull,
 		blend = spec.blend,
 		depth = spec.depth,
+		view_count = spec.views,
 	}
 }
