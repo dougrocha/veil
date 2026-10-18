@@ -189,9 +189,9 @@ engine_render :: proc(engine: ^Engine, packet: ^FramePacket, width, height: u32)
 			_ = sdl.PushEvent(&quit)
 		}
 	}
-	if main, ok := pass_find(passes, MainPass); ok && main.cull_readback && !engine.gpu_cull_validated {
+	if cull, ok := pass_find(passes, CullPass); ok && cull.readback && !engine.gpu_cull_validated {
 		backend.device_wait_idle(&engine.vk_ctx)
-		gpu_cull_validate_frame(engine, packet, recorder.slot, main)
+		gpu_cull_validate_frame(engine, packet, recorder.slot, cull)
 		engine.gpu_cull_validated = true
 	}
 	return true
@@ -209,12 +209,12 @@ current_frame_data :: #force_inline proc(engine: ^Engine) -> ^FrameData {
 	return &engine.frame_data[backend.frame_slot(&engine.vk_ctx)]
 }
 
-gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket, slot: int, main: ^MainPass) {
-	cull, ok := main.cull.(CullUpload)
-	if !ok || len(cull.runs) == 0 do return
+gpu_cull_validate_frame :: proc(engine: ^Engine, packet: ^FramePacket, slot: int, cull: ^CullPass) {
+	// Main owns the first batches and candidates, which are all the readback holds.
+	if cull.main_batches == 0 do return
 	frame := &engine.frame_data[slot]
-	batch_count := len(cull.runs)
-	candidate_count := len(cull.candidates)
+	batch_count := int(cull.main_batches)
+	candidate_count := int(cull.main_candidates)
 	commands := make([]DrawIndexedIndirectCommand, batch_count, context.temp_allocator)
 	ids := make([]u32, candidate_count, context.temp_allocator)
 	backend.buffer_read(&engine.vk_ctx, frame.cull_readback_commands, commands)
@@ -413,9 +413,7 @@ frame_commit :: proc(
 	draw_history_commit(&engine.prev_draws, slot)
 	engine.stats.last = counters
 	engine.frame_data[slot].cull_readback_batches = 0
-	if main, ok := pass_find(passes, MainPass); ok {
-		if cull, culled := main.cull.(CullUpload); culled do engine.frame_data[slot].cull_readback_batches = len(cull.runs)
-	}
+	if cull, ok := pass_find(passes, CullPass); ok do engine.frame_data[slot].cull_readback_batches = int(cull.main_batches)
 }
 
 // Reads this slot's cull commands from its last submitted frame. Call after frame begin's fence wait.

@@ -2,26 +2,19 @@ package graphics
 
 import "backend"
 
-// GPU-culled or CPU-culled draws. Chosen while building.
-MainOpaque :: union #no_nil {
-	DrawGroups,
-	CullDraws,
-}
-
 // Everything the main pass records, decided while building.
 MainPass :: struct {
-	opaque:                       MainOpaque,
+	opaque:                       ViewDraws, // GPU-culled or CPU-culled, chosen while building
 	transparent:                  []TransparentDraw,
-	cull:                         Maybe(CullUpload), // set exactly when opaque is CullDraws
-	cull_readback:                bool, // debug: copy the cull commands back for validation
 	clear_color:                  Vec4,
 	sky, particles:               bool,
 	counters:                     DrawCounters,
 	draws_visible, meshes_culled: u32,
 }
 
-// If GPU culling doesn't fit the budget, falls back to the CPU list, like before.
-main_pass_build :: proc(input: FrameInput, layout: ^LayoutBuilder) -> (p: MainPass) {
+// With a CullBuilder the opaque draws are GPU-culled, in its first slots; without one they are CPU-culled
+// into the layout. If the builder overflows, frame_build discards this pass and builds again without it.
+main_pass_build :: proc(input: FrameInput, layout: ^LayoutBuilder, cull: ^CullBuilder) -> (p: MainPass) {
 	packet := input.packet
 	view := DrawInput {
 		draws     = draw_history_live(input.history),
@@ -30,26 +23,17 @@ main_pass_build :: proc(input: FrameInput, layout: ^LayoutBuilder) -> (p: MainPa
 	}
 	aspect := extent_aspect(input.targets.extent)
 	frustum := frustum_create_from_camera(&packet.camera, aspect)
-	list := build_draw_list(view, frustum, packet.camera.position, packet.settings.gpu_cull)
-	gpu_culled := false
-	if packet.settings.gpu_cull {
-		upload, draws, ok := cull_layout_build(list.opaque, frustum, input.budget)
-		if ok {
-			p.opaque = draws
-			p.cull = upload
-			draw_counters_add(&p.counters, draws.counters)
-			gpu_culled = true
-		} else {
-			list = build_draw_list(view, frustum, packet.camera.position)
-		}
-	}
-	if !gpu_culled {
+	list := build_draw_list(view, frustum, packet.camera.position, cull != nil)
+	if cull != nil {
+		draws := cull_push_main(cull, list.opaque, frustum)
+		p.opaque = draws
+		draw_counters_add(&p.counters, draws.counters)
+	} else {
 		draws, _ := layout_push_runs(layout, list.opaque, nil)
 		p.opaque = draws
 		draw_counters_add(&p.counters, draws.counters)
 		p.draws_visible, p.meshes_culled = list.draws_visible, list.meshes_culled
 	}
-	p.cull_readback = input.cull_readback && gpu_culled
 	transparent := make([dynamic]TransparentDraw, context.temp_allocator)
 	// Back to front, one draw per mesh so the order holds. Drawn after everything opaque, skybox
 	// included: these don't write depth, so anything drawn later would cover them.
@@ -72,9 +56,6 @@ main_pass_build :: proc(input: FrameInput, layout: ^LayoutBuilder) -> (p: MainPa
 }
 
 record_main :: proc(r: ^Recorder, p: ^MainPass) {
-	if upload, ok := p.cull.(CullUpload); ok {
-		cull_record_dispatch(r, &upload, p.cull_readback)
-	}
 	// A sky covers every pixel left uncovered, so its clear value never shows.
 	encoder := backend.begin_render_pass(
 		r.cmd,

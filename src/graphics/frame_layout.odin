@@ -241,11 +241,20 @@ layout_record_transparent :: proc(r: ^Recorder, encoder: backend.RenderEncoder, 
 	}
 }
 
-// The cull compute's inputs: candidate ids, one run per batch, and the frustum planes.
+// The cull compute's inputs: packed candidate ids, one run per batch, and the views they test against.
+// Main's candidates, batches and outputs come first, so main owns [0, n) of each.
 CullUpload :: struct {
-	candidates: []GpuCullCandidate,
+	candidates: []u32,
 	runs:       []GpuCullRun,
-	planes:     [6]Vec4,
+	views:      []GpuCullView,
+}
+
+// The frame's one cull dispatch, ahead of every pass that draws its output. Main's range is also what the
+// stats and validator read back.
+CullPass :: struct {
+	upload:                        CullUpload,
+	main_batches, main_candidates: u32,
+	readback:                      bool, // debug: copy main's commands and ids back for validation
 }
 
 // One pipeline kind's commands in cull_commands. These are not the CPU indirect buffer.
@@ -262,43 +271,113 @@ CullDraws :: struct {
 	counters:                     DrawCounters,
 }
 
-// Builds the cull inputs and draw groups. ok = false when the candidates or batches exceed the budget,
-// and the caller falls back to CPU culling.
-cull_layout_build :: proc(
-	runs: []DrawRun,
-	frustum: Frustum,
-	budget: FrameBudget,
-) -> (
-	upload: CullUpload,
-	draws: CullDraws,
-	ok: bool,
-) {
-	candidate_count, batch_count: int
-	for run in runs {
-		candidate_count += len(run.ids)
-		batch_count += gpu_cull_batch_count(len(run.ids))
-		if candidate_count > int(budget.instance_ids) || batch_count > int(budget.indirect_commands) do return
+// One view's draws: CPU-filtered into the layout, or GPU-culled.
+ViewDraws :: union #no_nil {
+	DrawGroups,
+	CullDraws,
+}
+
+// Collects a frame's cull inputs against its FrameBudget. Candidates, outputs and batches each draw from
+// the budget; overflow means the whole frame falls back to CPU culling.
+CullBuilder :: struct {
+	budget:     FrameBudget,
+	candidates: [dynamic]u32,
+	runs:       [dynamic]GpuCullRun,
+	views:      [dynamic]GpuCullView,
+	outputs:    u32,
+	casters:    Maybe(u32), // first candidate of the shared shadow casters, once pushed
+	overflow:   bool,
+}
+
+cull_builder_make :: proc(budget: FrameBudget) -> CullBuilder {
+	assert(budget.instance_ids <= MAX_INSTANCE_IDS)
+	assert(budget.indirect_commands <= MAX_INDIRECT_COMMANDS_PER_FRAME)
+	return {
+		budget = budget,
+		candidates = make([dynamic]u32, context.temp_allocator),
+		runs = make([dynamic]GpuCullRun, context.temp_allocator),
+		views = make([dynamic]GpuCullView, context.temp_allocator),
 	}
-	candidates := make([dynamic]GpuCullCandidate, 0, candidate_count, context.temp_allocator)
-	run_data := make([dynamic]GpuCullRun, 0, batch_count, context.temp_allocator)
+}
+
+// Adds a view that keeps a candidate any of frustums holds. Returns its index.
+cull_push_view :: proc(b: ^CullBuilder, frustums: []Frustum, skip_near: bool) -> u32 {
+	assert(len(frustums) <= SHADOW_MAP_CASCADE_COUNT)
+	if len(b.views) >= MAX_CULL_VIEWS {
+		b.overflow = true
+		return 0
+	}
+	view := GpuCullView {
+		frustum_count = u32(len(frustums)),
+		skip_near     = u32(skip_near),
+	}
+	for frustum, f in frustums {
+		for plane, p in frustum.planes {
+			view.planes[f * 6 + p] = {plane.normal.x, plane.normal.y, plane.normal.z, plane.distance}
+		}
+	}
+	append(&b.views, view)
+	return u32(len(b.views) - 1)
+}
+
+// Adds every shadow caster as a candidate, once per frame. Every shadow view's batches read this range.
+cull_push_casters :: proc(b: ^CullBuilder, casters: ^ShadowCasters) -> u32 {
+	if first, ok := b.casters.?; ok do return first
+	first := u32(len(b.candidates))
+	for run in casters.runs {
+		for id in run.ids do append(&b.candidates, instance_id_pack(id, run.mesh.material))
+	}
+	if len(b.candidates) > int(b.budget.instance_ids) do b.overflow = true
+	b.casters = first
+	return first
+}
+
+// Main's camera view and opaque runs. Must come first, so main's batches land at command 0 and its outputs at 0.
+cull_push_main :: proc(b: ^CullBuilder, runs: []DrawRun, frustum: Frustum) -> CullDraws {
+	assert(len(b.runs) == 0 && len(b.candidates) == 0 && len(b.views) == 0, "main culls first")
+	view := cull_push_view(b, {frustum}, false)
+	return cull_push_runs(b, runs, view, nil, nil)
+}
+
+// Splits each run into batches of GPU_CULL_BATCH_CANDIDATES against one view. With shared nil the run's ids
+// become new candidates (main). Otherwise the runs' ids are already candidates, consecutive from shared
+// (the shadow casters). group_kind overrides each run's kind, as in layout_push_runs. Batches stay in run
+// order and candidate order, and each takes the next outputs, so a view's outputs are contiguous.
+// Sets b.overflow and stops when a budget is exceeded.
+cull_push_runs :: proc(
+	b: ^CullBuilder,
+	runs: []DrawRun,
+	view: u32,
+	group_kind: Maybe(PipelineKind),
+	shared: Maybe(u32),
+) -> (
+	draws: CullDraws,
+) {
 	groups := make([dynamic]CullGroup, context.temp_allocator)
-	// Batches stay in run order and candidate order, so each batch's output lands at its own
-	// first_candidate.
+	shared_next := shared.? or_else 0
+	first_batch := u32(len(b.runs))
 	for run in runs {
-		if len(groups) == 0 || groups[len(groups) - 1].kind != run.kind {
-			append(&groups, CullGroup{kind = run.kind, commands = {first = u32(len(run_data))}})
+		kind := group_kind.? or_else run.kind
+		if len(groups) == 0 || groups[len(groups) - 1].kind != kind {
+			append(&groups, CullGroup{kind = kind, commands = {first = u32(len(b.runs))}})
 		}
 		mesh := run.mesh
-		run_batches := gpu_cull_batch_count(len(run.ids))
-		for batch_index in 0 ..< run_batches {
+		first_candidate := shared_next
+		if shared == nil {
+			first_candidate = u32(len(b.candidates))
+			for id in run.ids do append(&b.candidates, instance_id_pack(id, mesh.material))
+		}
+		shared_next += u32(len(run.ids))
+		for batch_index in 0 ..< gpu_cull_batch_count(len(run.ids)) {
 			first := min(batch_index * GPU_CULL_BATCH_CANDIDATES, len(run.ids))
 			last := min(first + GPU_CULL_BATCH_CANDIDATES, len(run.ids))
-			batch := u32(len(run_data))
 			append(
-				&run_data,
+				&b.runs,
 				GpuCullRun {
-					first_candidate = u32(len(candidates)),
+					first_candidate = first_candidate + u32(first),
 					candidate_count = u32(last - first),
+					first_output = b.outputs,
+					view_index = view,
 					first_index = mesh.first_index,
 					vertex_offset = i32(mesh.first_vertex),
 					index_count = mesh.index_count,
@@ -306,30 +385,29 @@ cull_layout_build :: proc(
 					bounds_extents = {mesh.bounds.extents.x, mesh.bounds.extents.y, mesh.bounds.extents.z, 0},
 				},
 			)
-			for id in run.ids[first:last] {
-				append(
-					&candidates,
-					GpuCullCandidate{packed_id = instance_id_pack(id, mesh.material), run_index = batch},
-				)
-			}
+			b.outputs += u32(last - first)
 			groups[len(groups) - 1].commands.count += 1
 		}
 		groups[len(groups) - 1].draw_count += 1
 		draws.counters.draw_calls += 1
 		draws.counters.candidate_instances += u32(len(run.ids))
 		draws.counters.candidate_triangles += u64(mesh.index_count / 3) * u64(len(run.ids))
+		if len(b.candidates) > int(b.budget.instance_ids) ||
+		   b.outputs > b.budget.instance_ids ||
+		   len(b.runs) > int(min(b.budget.indirect_commands, GPU_CULL_MAX_BATCHES)) {
+			b.overflow = true
+			return
+		}
 	}
-	for plane, i in frustum.planes {
-		upload.planes[i] = {plane.normal.x, plane.normal.y, plane.normal.z, plane.distance}
-	}
-	upload.candidates = candidates[:]
-	upload.runs = run_data[:]
 	draws.groups = groups[:]
-	draws.batch_count = u32(batch_count)
-	draws.candidate_count = u32(candidate_count)
+	draws.batch_count = u32(len(b.runs)) - first_batch
+	draws.candidate_count = draws.counters.candidate_instances
 	draws.counters.indirect_calls = u32(len(groups))
-	ok = true
 	return
+}
+
+cull_builder_finish :: proc(b: ^CullBuilder) -> CullUpload {
+	return {candidates = b.candidates[:], runs = b.runs[:], views = b.views[:]}
 }
 
 // Commands a run takes: one per GPU_CULL_BATCH_CANDIDATES ids.
@@ -342,47 +420,47 @@ cull_upload :: proc(r: ^Recorder, upload: ^CullUpload) {
 	if len(upload.runs) == 0 do return
 	if len(upload.candidates) > 0 do backend.buffer_write_slice(r.ctx, r.frame.cull_candidates, upload.candidates)
 	backend.buffer_write_slice(r.ctx, r.frame.cull_runs, upload.runs)
-	backend.buffer_write_slice(r.ctx, r.frame.cull_planes, upload.planes[:])
+	backend.buffer_write_slice(r.ctx, r.frame.cull_views, upload.views)
 }
 
-cull_record_dispatch :: proc(r: ^Recorder, upload: ^CullUpload, readback: bool) {
-	batch_count := len(upload.runs)
-	candidate_count := len(upload.candidates)
+// Culls every view's batches: init the commands, test each candidate, then compact each batch.
+record_cull :: proc(r: ^Recorder, p: ^CullPass) {
+	batch_count := len(p.upload.runs)
 	if batch_count == 0 do return
 	pc := GpuCullPushConstants {
-		candidates      = backend.buffer_address(r.ctx, r.frame.cull_candidates),
-		runs            = backend.buffer_address(r.ctx, r.frame.cull_runs),
-		transforms      = backend.buffer_address(r.ctx, r.frame.transforms_buffer),
-		planes          = backend.buffer_address(r.ctx, r.frame.cull_planes),
-		output_ids      = backend.buffer_address(r.ctx, r.frame.cull_output_ids),
-		commands        = backend.buffer_address(r.ctx, r.frame.cull_commands),
-		candidate_count = u32(candidate_count),
-		run_count       = u32(batch_count),
+		candidates = backend.buffer_address(r.ctx, r.frame.cull_candidates),
+		runs       = backend.buffer_address(r.ctx, r.frame.cull_runs),
+		transforms = backend.buffer_address(r.ctx, r.frame.transforms_buffer),
+		views      = backend.buffer_address(r.ctx, r.frame.cull_views),
+		output_ids = backend.buffer_address(r.ctx, r.frame.cull_output_ids),
+		commands   = backend.buffer_address(r.ctx, r.frame.cull_commands),
+		run_count  = u32(batch_count),
 	}
-	scope := gpu_scope_begin(r, "culling")
-	defer gpu_scope_end(r, scope)
+	per_batch := (u32(batch_count) + 255) / 256
 	encoder := backend.begin_compute_pass(r.cmd)
 	backend.cmd_barrier_host_write_to_compute(encoder)
 	backend.pipeline_bind_compute(encoder, rec_pipeline(r, .Gpu_Cull))
 	pc.init_commands = 1
 	backend.pipeline_push_compute(encoder, &pc)
-	backend.cmd_dispatch(encoder, (u32(batch_count) + 255) / 256, 1, 1)
+	backend.cmd_dispatch(encoder, per_batch, 1, 1)
 	backend.cmd_barrier_compute_write_to_compute_read(encoder)
 	pc.init_commands = 0
 	backend.pipeline_push_compute(encoder, &pc)
-	backend.cmd_dispatch(encoder, (u32(candidate_count) + 255) / 256, 1, 1)
+	// x covers a batch's candidates, y is the batch. cull_push_runs keeps y within GPU_CULL_MAX_BATCHES.
+	backend.cmd_dispatch(encoder, (GPU_CULL_BATCH_CANDIDATES + 255) / 256, u32(batch_count), 1)
 	backend.cmd_barrier_compute_write_to_compute_read(encoder)
 	pc.init_commands = 2
 	backend.pipeline_push_compute(encoder, &pc)
-	backend.cmd_dispatch(encoder, (u32(batch_count) + 255) / 256, 1, 1)
-	// Every culled frame copies the commands for the latent visibility stats; the slot's fence covers the read.
-	backend.cmd_barrier_compute_write_to_copy_read(encoder)
-	backend.cmd_copy_buffer(r.cmd, r.frame.cull_commands, r.frame.cull_readback_commands, batch_count)
-	backend.cmd_barrier_transfer_write_to_host_read(r.cmd, r.frame.cull_readback_commands)
-	if readback {
-		// A zero-size copy is invalid. Runs can all be empty, which leaves no candidates to read back.
-		if candidate_count > 0 {
-			backend.cmd_copy_buffer(r.cmd, r.frame.cull_output_ids, r.frame.cull_readback_ids, candidate_count)
+	backend.cmd_dispatch(encoder, per_batch, 1, 1)
+	if p.main_batches > 0 {
+		// Every culled frame copies main's commands for the latent visibility stats; the slot's fence covers
+		// the read. Main's batches are the first commands and its outputs the first ids.
+		backend.cmd_barrier_compute_write_to_copy_read(encoder)
+		backend.cmd_copy_buffer(r.cmd, r.frame.cull_commands, r.frame.cull_readback_commands, int(p.main_batches))
+		backend.cmd_barrier_transfer_write_to_host_read(r.cmd, r.frame.cull_readback_commands)
+		// A zero-size copy is invalid. Main's runs can all be empty, which leaves no candidates to read back.
+		if p.readback && p.main_candidates > 0 {
+			backend.cmd_copy_buffer(r.cmd, r.frame.cull_output_ids, r.frame.cull_readback_ids, int(p.main_candidates))
 			backend.cmd_barrier_transfer_write_to_host_read(r.cmd, r.frame.cull_readback_ids)
 		}
 	}
@@ -390,7 +468,7 @@ cull_record_dispatch :: proc(r: ^Recorder, upload: ^CullUpload, readback: bool) 
 	backend.end_compute_pass(encoder)
 }
 
-cull_record_groups :: proc(r: ^Recorder, encoder: backend.RenderEncoder, draws: CullDraws, pc: ^MeshPushConstants) {
+cull_record_groups :: proc(r: ^Recorder, encoder: backend.RenderEncoder, draws: CullDraws, pc: ^$P) {
 	pc.instance_ids = backend.buffer_address(r.ctx, r.frame.cull_output_ids)
 	// Each run owns gpu_cull_batch_count commands in run order, so a group's commands are contiguous too.
 	for group in draws.groups {

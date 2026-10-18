@@ -28,11 +28,11 @@ FrameData :: struct {
 	transforms_buffer:      backend.Buffer(GpuTransform),
 	instance_ids_buffer:    backend.Buffer(u32),
 	indirect_buffer:        backend.Buffer(DrawIndexedIndirectCommand),
-	cull_candidates:        backend.Buffer(GpuCullCandidate),
+	cull_candidates:        backend.Buffer(u32),
 	cull_runs:              backend.Buffer(GpuCullRun),
 	cull_output_ids:        backend.Buffer(u32),
 	cull_commands:          backend.Buffer(DrawIndexedIndirectCommand),
-	cull_planes:            backend.Buffer(Vec4),
+	cull_views:             backend.Buffer(GpuCullView),
 	cull_readback_ids:      backend.Buffer(u32),
 	cull_readback_commands: backend.Buffer(DrawIndexedIndirectCommand),
 	// Commands in cull_readback_commands from this slot's last submitted frame; 0 when it did not cull on the GPU.
@@ -87,7 +87,7 @@ frame_data_create :: proc(engine: ^Engine) {
 		)
 		engine.frame_data[i].particle_buffer = create_particle_buffer(&engine.vk_ctx)
 		engine.frame_data[i].cull_candidates = backend.buffer_create(
-			GpuCullCandidate,
+			u32,
 			&engine.vk_ctx,
 			MAX_INSTANCE_IDS,
 			{.Storage},
@@ -131,7 +131,13 @@ frame_data_create :: proc(engine: ^Engine) {
 				.Readback,
 			)
 		}
-		engine.frame_data[i].cull_planes = backend.buffer_create(Vec4, &engine.vk_ctx, 6, {.Storage}, .Shared)
+		engine.frame_data[i].cull_views = backend.buffer_create(
+			GpuCullView,
+			&engine.vk_ctx,
+			MAX_CULL_VIEWS,
+			{.Storage},
+			.Shared,
+		)
 	}
 	cluster_buffers_create(engine)
 }
@@ -149,7 +155,7 @@ frame_data_destroy :: proc(engine: ^Engine) {
 		backend.buffer_destroy(&engine.vk_ctx, res.cull_runs)
 		backend.buffer_destroy(&engine.vk_ctx, res.cull_output_ids)
 		backend.buffer_destroy(&engine.vk_ctx, res.cull_commands)
-		backend.buffer_destroy(&engine.vk_ctx, res.cull_planes)
+		backend.buffer_destroy(&engine.vk_ctx, res.cull_views)
 		if backend.buffer_is_valid(&engine.vk_ctx, res.cull_readback_ids) do backend.buffer_destroy(&engine.vk_ctx, res.cull_readback_ids)
 		if backend.buffer_is_valid(&engine.vk_ctx, res.cull_readback_commands) do backend.buffer_destroy(&engine.vk_ctx, res.cull_readback_commands)
 	}

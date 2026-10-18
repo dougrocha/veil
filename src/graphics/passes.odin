@@ -6,6 +6,7 @@ import "backend"
 // that is skipped this frame is not in the list. The list is in execution order.
 Pass :: union {
 	ParticlesPass,
+	CullPass, // ahead of every pass that draws its output
 	ShadowPass, // one per atlas that has views
 	ClustersPass,
 	MainPass,
@@ -66,7 +67,7 @@ USES_OVERLAY := [?]PassUse{{.Draw, .Color_Write}, {.Shadow_2D, .Depth_Read}, {.S
 // The frame resources a pass touches and the state each must be in before it runs.
 pass_uses :: proc(pass: Pass) -> []PassUse {
 	switch p in pass {
-	case ParticlesPass, ClustersPass:
+	case ParticlesPass, CullPass, ClustersPass:
 		return nil
 	case ShadowPass:
 		return USES_SHADOW_2D[:] if p.atlas == .Atlas_2D else USES_SHADOW_CUBE[:]
@@ -131,6 +132,10 @@ passes_record :: proc(r: ^Recorder, passes: []Pass) {
 			scope := pass_begin(r, "particles", pass_uses(pass))
 			record_particles(r, &p)
 			gpu_scope_end(r, scope)
+		case CullPass:
+			scope := pass_begin(r, "culling", pass_uses(pass))
+			record_cull(r, &p)
+			gpu_scope_end(r, scope)
 		case ShadowPass:
 			scope := pass_begin(r, "shadow 2d" if p.atlas == .Atlas_2D else "shadow point", pass_uses(pass))
 			record_shadow(r, &p)
@@ -166,7 +171,7 @@ passes_counters :: proc(passes: []Pass, plan: ^ShadowPlan) -> FrameCounters {
 	total: DrawCounters
 	for pass in passes {
 		switch p in pass {
-		case ParticlesPass, ClustersPass, BloomPass, TonemapPass:
+		case ParticlesPass, CullPass, ClustersPass, BloomPass, TonemapPass:
 		case ShadowPass:
 			draw_counters_add(&total, p.counters)
 			for v in p.views do counters.shadow_views += v.view.view_count

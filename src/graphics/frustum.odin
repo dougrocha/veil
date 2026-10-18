@@ -180,6 +180,7 @@ plane_is_on_or_forward :: proc(global_plane: AABB, plane: Plane) -> bool {
 }
 
 // planes[0] is the near plane for both frustum_from_view_proj and frustum_create_from_camera.
+@(shader_shared)
 FRUSTUM_NEAR_PLANE :: 0
 
 // skip_near ignores the near plane, for passes that clamp depth instead of clipping at it

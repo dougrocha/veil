@@ -187,7 +187,7 @@ compute_spot_light_view_proj :: proc(light: SpotLight) -> Mat4x4 {
 // One shadow view and the casters it draws, filtered while building.
 ShadowPassView :: struct {
 	view:  ShadowView,
-	draws: DrawGroups,
+	draws: ViewDraws,
 }
 
 // The views for one atlas this frame. Only built when the atlas has something to draw.
@@ -199,8 +199,16 @@ ShadowPass :: struct {
 
 // Plans this frame's shadow work and appends a ShadowPass per atlas that has views, 2D first. Lights
 // of a type turned off, or every light when shadows are off, render nothing but still have their
-// cache entries invalidated.
-shadow_passes_build :: proc(input: FrameInput, layout: ^LayoutBuilder, passes: ^[dynamic]Pass) -> (plan: ShadowPlan) {
+// cache entries invalidated. With a CullBuilder every view is GPU-culled against the shared caster
+// candidates; without one the casters are filtered per view into the layout.
+shadow_passes_build :: proc(
+	input: FrameInput,
+	layout: ^LayoutBuilder,
+	cull: ^CullBuilder,
+	passes: ^[dynamic]Pass,
+) -> (
+	plan: ShadowPlan,
+) {
 	packet := input.packet
 	shadow_lights := packet.settings.lights if packet.settings.shadows else LightTypes{}
 	aspect := extent_aspect(input.targets.extent)
@@ -217,20 +225,39 @@ shadow_passes_build :: proc(input: FrameInput, layout: ^LayoutBuilder, passes: ^
 			frustums := make([]Frustum, view.view_count, context.temp_allocator)
 			for i in 0 ..< view.view_count do frustums[view.view_count - 1 - i] = frustum_from_view_proj(view.view_proj[i])
 			// Directional cascades ignore the near plane, since their depth is clamped rather than clipped.
-			runs := shadow_casters_filter(input.casters, frustums, view.light_type == .Directional)
+			skip_near := view.light_type == .Directional
 			pipeline := PipelineKind.Shadow_Directional if view.light_type == .Directional else PipelineKind.Shadow
-			draws, dropped := layout_push_runs(layout, runs, pipeline)
-			// A map missing casters must not be cached, so shadow_cache_commit leaves it invalid.
-			if dropped {
-				#partial switch view.light_type {
-				case .Point:
-					plan.dropped_point[view.light_index] = true
-				case .Spot:
-					plan.dropped_spot[view.light_index] = true
+			draws: ViewDraws
+			if cull != nil {
+				first := cull_push_casters(cull, input.casters)
+				draws = cull_push_runs(
+					cull,
+					input.casters.runs[:],
+					cull_push_view(cull, frustums, skip_near),
+					pipeline,
+					first,
+				)
+			} else {
+				runs := shadow_casters_filter(input.casters, frustums, skip_near)
+				groups, dropped := layout_push_runs(layout, runs, pipeline)
+				draws = groups
+				// A map missing casters must not be cached, so shadow_cache_commit leaves it invalid.
+				if dropped {
+					#partial switch view.light_type {
+					case .Point:
+						plan.dropped_point[view.light_index] = true
+					case .Spot:
+						plan.dropped_spot[view.light_index] = true
+					}
 				}
 			}
 			append(&views, ShadowPassView{view, draws})
-			draw_counters_add(&p.counters, draws.counters)
+			switch d in draws {
+			case DrawGroups:
+				draw_counters_add(&p.counters, d.counters)
+			case CullDraws:
+				draw_counters_add(&p.counters, d.counters)
+			}
 		}
 		if len(views) == 0 do continue
 		p.views = views[:]
@@ -265,7 +292,12 @@ record_shadow :: proc(r: ^Recorder, p: ^ShadowPass) {
 			light_type       = view.light_type,
 			light_index      = view.light_index,
 		}
-		layout_record_groups(r, encoder, planned.draws, &pc)
+		switch draws in planned.draws {
+		case DrawGroups:
+			layout_record_groups(r, encoder, draws, &pc)
+		case CullDraws:
+			cull_record_groups(r, encoder, draws, &pc)
+		}
 		backend.end_render_pass(encoder)
 	}
 }

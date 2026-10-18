@@ -41,22 +41,36 @@ MAX_INSTANCE_IDS :: MAX_DRAWS * (1 + MAX_SHADOW_2D_SLOTS + MAX_POINT_SHADOW_LIGH
 MAX_INDIRECT_COMMANDS_PER_FRAME :: 64 * 1024
 // GPU culling compacts each batch serially in one invocation, so a batch caps that scan's length.
 GPU_CULL_BATCH_CANDIDATES :: 1024
-
+// The test dispatch uses one workgroup row per batch, so a frame's batches must fit maxComputeWorkGroupCount[1].
+GPU_CULL_MAX_BATCHES :: 65535
+// A view tests its candidates against up to one frustum per directional cascade.
 @(shader_shared)
-GpuCullCandidate :: struct #max_field_align(16) {
-	packed_id: u32,
-	run_index: u32,
+GPU_CULL_VIEW_PLANES :: 24
+#assert(GPU_CULL_VIEW_PLANES == SHADOW_MAP_CASCADE_COUNT * 6)
+// The main camera plus every shadow view the atlases can hold.
+MAX_CULL_VIEWS :: 1 + MAX_SHADOW_2D_SLOTS + MAX_POINT_SHADOW_LIGHTS * 6
+
+// One view's frustums: planes[f * 6 + p] is plane p of frustum f (normal.xyz, distance). A candidate
+// is visible when any frustum holds it.
+@(shader_shared)
+GpuCullView :: struct #max_field_align(16) {
+	frustum_count: u32,
+	skip_near:     u32, // 1 ignores FRUSTUM_NEAR_PLANE, for directional cascades
+	_pad:          [2]u32,
+	planes:        [GPU_CULL_VIEW_PLANES]Vec4,
 }
 
+// One batch: up to GPU_CULL_BATCH_CANDIDATES packed ids of one mesh, tested against one view. The visible
+// ones compact into output_ids at first_output, in candidate order.
 @(shader_shared)
 GpuCullRun :: struct #max_field_align(16) {
 	first_candidate: u32,
 	candidate_count: u32,
+	first_output:    u32,
+	view_index:      u32,
 	first_index:     u32,
 	vertex_offset:   i32,
 	index_count:     u32,
-	instance_count:  u32,
-	first_instance:  u32,
 	_reserved:       u32,
 	bounds_center:   Vec4,
 	bounds_extents:  Vec4,
@@ -64,13 +78,12 @@ GpuCullRun :: struct #max_field_align(16) {
 
 @(shader_shared)
 GpuCullPushConstants :: struct #max_field_align(16) {
-	candidates:      backend.GPUPtr(GpuCullCandidate),
-	runs:            backend.GPUPtr(GpuCullRun),
-	transforms:      backend.GPUPtr(GpuTransform),
-	planes:          backend.GPUPtr(Vec4),
-	output_ids:      backend.GPUPtr(u32),
-	commands:        backend.GPUPtr(DrawIndexedIndirectCommand),
-	candidate_count: u32,
-	run_count:       u32,
-	init_commands:   u32,
+	candidates:    backend.GPUPtr(u32),
+	runs:          backend.GPUPtr(GpuCullRun),
+	transforms:    backend.GPUPtr(GpuTransform),
+	views:         backend.GPUPtr(GpuCullView),
+	output_ids:    backend.GPUPtr(u32),
+	commands:      backend.GPUPtr(DrawIndexedIndirectCommand),
+	run_count:     u32,
+	init_commands: u32,
 }

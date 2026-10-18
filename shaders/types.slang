@@ -6,6 +6,7 @@ static const uint CLUSTER_Z = 24;
 static const uint CLUSTER_COUNT = ((CLUSTER_X * CLUSTER_Y) * CLUSTER_Z);
 static const uint CLUSTER_INDEX_CAPACITY = 131072;
 static const uint CLUSTER_OVERFLOW_BIT = 0x80000000;
+static const uint FRUSTUM_NEAR_PLANE = 0;
 static const uint SAMPLER_LINEAR_REPEAT = 0;
 static const uint SAMPLER_LINEAR_CLAMP = 1;
 static const uint SAMPLER_NEAREST_CLAMP = 2;
@@ -16,6 +17,7 @@ static const uint INSTANCE_MATERIAL_BITS = 14;
 static const uint INSTANCE_MATERIAL_MASK = (((1 << INSTANCE_MATERIAL_BITS)) - 1);
 static const uint INSTANCE_DRAW_ID_SHIFT = INSTANCE_MATERIAL_BITS;
 static const uint INSTANCE_DRAW_ID_BITS = 15;
+static const uint GPU_CULL_VIEW_PLANES = 24;
 static const uint MAX_POINT_LIGHTS = 512;
 static const uint MAX_DIRECTIONAL_LIGHTS = 2;
 static const uint MAX_SPOT_LIGHTS = 32;
@@ -167,32 +169,33 @@ struct DrawIndexedIndirectCommand {
     uint first_instance;
 };
 
-struct CullCandidate {
-    uint packed_id;
-    uint run_index;
+struct CullView {
+    uint frustum_count;
+    uint skip_near;
+    uint _pad[2];
+    float4 planes[GPU_CULL_VIEW_PLANES];
 };
 
 struct CullRun {
     uint first_candidate;
     uint candidate_count;
+    uint first_output;
+    uint view_index;
     uint first_index;
     int vertex_offset;
     uint index_count;
-    uint instance_count;
-    uint first_instance;
     uint _reserved;
     float4 bounds_center;
     float4 bounds_extents;
 };
 
 struct CullPushConstants {
-    CullCandidate* candidates;
+    uint* candidates;
     CullRun* runs;
     Transform* transforms;
-    float4* planes;
+    CullView* views;
     uint* output_ids;
     DrawIndexedIndirectCommand* commands;
-    uint candidate_count;
     uint run_count;
     uint init_commands;
 };

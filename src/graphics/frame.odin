@@ -83,23 +83,58 @@ rec_scene_data :: #force_inline proc(r: ^Recorder) -> backend.GPUPtr(SceneData) 
 	return backend.buffer_address(r.ctx, r.frame.scene_data_buffer)
 }
 
-// Pure: reads input and writes only its return values. Passes are appended in execution order; a
-// skipped pass is not appended. The call order fixes the layout's allocation order (2D shadow views,
-// cube shadow views, main opaque, transparent), so it must not change. shadow_plan is the third
-// frame-wide output beside the list and the uploads: commit reads it after submission.
+// Pure: reads input and writes only its return values. With gpu_cull on, it first tries every view on
+// the GPU; if the frame's candidates, outputs or batches overflow the budget, it builds again with the
+// CPU filter for main and shadows alike.
 frame_build :: proc(input: FrameInput) -> (passes: []Pass, uploads: FrameUploads, shadow_plan: ShadowPlan) {
+	if input.packet.settings.gpu_cull {
+		cull := cull_builder_make(input.budget)
+		passes, uploads, shadow_plan = frame_build_passes(input, &cull)
+		if !cull.overflow do return
+	}
+	return frame_build_passes(input, nil)
+}
+
+// Passes are appended in execution order; a skipped pass is not appended. On the CPU path the call order
+// fixes the layout's allocation order (2D shadow views, cube shadow views, main opaque, transparent), so it
+// must not change. shadow_plan is the third frame-wide output beside the list and the uploads: commit reads
+// it after submission. With a CullBuilder, main builds before the shadows because its candidates and outputs
+// come first, and the CullPass is inserted ahead of the shadow passes at the end. The layout then holds
+// only the transparent singles.
+frame_build_passes :: proc(
+	input: FrameInput,
+	cull: ^CullBuilder,
+) -> (
+	passes: []Pass,
+	uploads: FrameUploads,
+	shadow_plan: ShadowPlan,
+) {
 	list := make([dynamic]Pass, context.temp_allocator)
 	settings := input.packet.settings
 	layout := layout_builder_make(input.budget)
 	if p, ok := particles_pass_build(input.packet); ok do append(&list, p)
-	shadow_plan = shadow_passes_build(input, &layout, &list)
+	cull_at := len(list)
+	main: MainPass
+	if cull != nil do main = main_pass_build(input, &layout, cull)
+	shadow_plan = shadow_passes_build(input, &layout, cull, &list)
 	uploads.scene, uploads.point_lights, uploads.spot_lights = scene_data_build(input, &shadow_plan)
 	clusters_enabled := settings.clustered_lighting || settings.cluster_heatmap || input.cluster_validate
 	if p, ok := clusters_pass_build(input.packet.camera, clusters_enabled); ok do append(&list, p)
-	append(&list, main_pass_build(input, &layout))
+	if cull == nil do main = main_pass_build(input, &layout, nil)
+	append(&list, main)
 	bloom, tonemap := post_passes_build(input.targets, input.packet.camera.post)
 	append(&list, bloom, tonemap)
 	append(&list, overlay_pass_build(input.packet.overlay, settings, input.targets.extent))
+	if cull != nil && len(cull.runs) > 0 {
+		draws := main.opaque.(CullDraws)
+		pass := CullPass {
+			upload          = cull_builder_finish(cull),
+			main_batches    = draws.batch_count,
+			main_candidates = draws.candidate_count,
+			readback        = input.cull_readback,
+		}
+		inject_at(&list, cull_at, Pass(pass))
+	}
 	uploads.transforms = transform_writes(input.history, input.slot)
 	uploads.layout = layout_finish(&layout)
 	return list[:], uploads, shadow_plan

@@ -131,8 +131,8 @@ frame_upload :: proc(r: ^Recorder, uploads: ^FrameUploads, passes: []Pass, lines
 	layout_upload(r, &uploads.layout)
 	for &pass in passes {
 		#partial switch &p in pass {
-		case MainPass:
-			if cull, ok := p.cull.(CullUpload); ok do cull_upload(r, &cull)
+		case CullPass:
+			cull_upload(r, &p.upload)
 		case OverlayPass:
 			r.overlay = overlay_upload(r.ctx, lines, ui, &p)
 		}

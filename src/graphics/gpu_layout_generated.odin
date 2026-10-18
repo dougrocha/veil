@@ -15,7 +15,7 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 	{"Transform", GpuTransform},
 	{"SceneData", SceneData},
 	{"DrawIndexedIndirectCommand", DrawIndexedIndirectCommand},
-	{"CullCandidate", GpuCullCandidate},
+	{"CullView", GpuCullView},
 	{"CullRun", GpuCullRun},
 	{"CullPushConstants", GpuCullPushConstants},
 	{"AmbientLight", GpuAmbientLight},
@@ -110,17 +110,19 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(DrawIndexedIndirectCommand, first_instance) == 16)
 #assert(size_of(DrawIndexedIndirectCommand) == 20)
 
-#assert(offset_of(GpuCullCandidate, packed_id) == 0)
-#assert(offset_of(GpuCullCandidate, run_index) == 4)
-#assert(size_of(GpuCullCandidate) == 8)
+#assert(offset_of(GpuCullView, frustum_count) == 0)
+#assert(offset_of(GpuCullView, skip_near) == 4)
+#assert(offset_of(GpuCullView, _pad) == 8)
+#assert(offset_of(GpuCullView, planes) == 16)
+#assert(size_of(GpuCullView) == 400)
 
 #assert(offset_of(GpuCullRun, first_candidate) == 0)
 #assert(offset_of(GpuCullRun, candidate_count) == 4)
-#assert(offset_of(GpuCullRun, first_index) == 8)
-#assert(offset_of(GpuCullRun, vertex_offset) == 12)
-#assert(offset_of(GpuCullRun, index_count) == 16)
-#assert(offset_of(GpuCullRun, instance_count) == 20)
-#assert(offset_of(GpuCullRun, first_instance) == 24)
+#assert(offset_of(GpuCullRun, first_output) == 8)
+#assert(offset_of(GpuCullRun, view_index) == 12)
+#assert(offset_of(GpuCullRun, first_index) == 16)
+#assert(offset_of(GpuCullRun, vertex_offset) == 20)
+#assert(offset_of(GpuCullRun, index_count) == 24)
 #assert(offset_of(GpuCullRun, _reserved) == 28)
 #assert(offset_of(GpuCullRun, bounds_center) == 32)
 #assert(offset_of(GpuCullRun, bounds_extents) == 48)
@@ -129,13 +131,12 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(GpuCullPushConstants, candidates) == 0)
 #assert(offset_of(GpuCullPushConstants, runs) == 8)
 #assert(offset_of(GpuCullPushConstants, transforms) == 16)
-#assert(offset_of(GpuCullPushConstants, planes) == 24)
+#assert(offset_of(GpuCullPushConstants, views) == 24)
 #assert(offset_of(GpuCullPushConstants, output_ids) == 32)
 #assert(offset_of(GpuCullPushConstants, commands) == 40)
-#assert(offset_of(GpuCullPushConstants, candidate_count) == 48)
-#assert(offset_of(GpuCullPushConstants, run_count) == 52)
-#assert(offset_of(GpuCullPushConstants, init_commands) == 56)
-#assert(size_of(GpuCullPushConstants) == 64)
+#assert(offset_of(GpuCullPushConstants, run_count) == 48)
+#assert(offset_of(GpuCullPushConstants, init_commands) == 52)
+#assert(size_of(GpuCullPushConstants) == 56)
 
 #assert(offset_of(GpuAmbientLight, color_brightness) == 0)
 #assert(size_of(GpuAmbientLight) == 16)

@@ -10,6 +10,7 @@ main :: proc() {
 	check_shared_layout()
 	check_id_overflow()
 	check_cull_batches()
+	check_cull_pass()
 	check_dirty_commit()
 	check_overlay_views()
 	check_overlay_budgets()
@@ -22,7 +23,7 @@ main :: proc() {
 	check_overlay_counters()
 	check_pool_nil()
 	fmt.println(
-		"PASS: shared layout, ID overflow, GPU batches/fallback, dirty-slot commit, overlay clipping/budgets, packet settings/resize, shadow overflow commit, post levels, pass uses, main pass CPU/GPU choice, overlay counters, pool nil slot",
+		"PASS: shared layout, ID overflow, GPU batches/fallback, cull pass ranges, dirty-slot commit, overlay clipping/budgets, packet settings/resize, shadow overflow commit, post levels, pass uses, main pass CPU/GPU choice, overlay counters, pool nil slot",
 	)
 }
 
@@ -55,6 +56,8 @@ pass_order :: proc(passes: []gfx.Pass) -> string {
 		switch p in pass {
 		case gfx.ParticlesPass:
 			append(&names, "particles")
+		case gfx.CullPass:
+			append(&names, "cull")
 		case gfx.ShadowPass:
 			append(&names, "shadow:2d" if p.atlas == .Atlas_2D else "shadow:cube")
 		case gfx.ClustersPass:
@@ -153,8 +156,10 @@ check_cull_batches :: proc() {
 		{mesh = &b, kind = .Mesh, ids = ids_b},
 		{mesh = &a, kind = .Mesh_Masked, ids = nil},
 	}
-	upload, draws, ok := gfx.cull_layout_build(runs, {}, {instance_ids = 2049, indirect_commands = 4})
-	assert(ok && len(upload.runs) == 4 && len(upload.candidates) == 2049)
+	cull := gfx.cull_builder_make({instance_ids = 2049, indirect_commands = 4})
+	draws := gfx.cull_push_main(&cull, runs, {})
+	upload := gfx.cull_builder_finish(&cull)
+	assert(!cull.overflow && len(upload.runs) == 4 && len(upload.candidates) == 2049 && len(upload.views) == 1)
 	assert(draws.batch_count == 4 && draws.candidate_count == 2049)
 	assert(
 		draws.counters ==
@@ -169,17 +174,161 @@ check_cull_batches :: proc() {
 	expected_count := [4]u32{1024, 1024, 1, 0}
 	for run, i in upload.runs {
 		assert(run.first_candidate == expected_first[i] && run.candidate_count == expected_count[i])
+		assert(
+			run.first_output == expected_first[i] && run.view_index == 0,
+			"main outputs start at 0, in candidate order",
+		)
 	}
-	assert(upload.candidates[0] == gfx.GpuCullCandidate{7, 0})
-	assert(upload.candidates[1023] == gfx.GpuCullCandidate{16760839, 0})
-	assert(upload.candidates[1024] == gfx.GpuCullCandidate{9, 1})
-	assert(upload.candidates[2048] == gfx.GpuCullCandidate{16777225, 2})
-	failed_upload, failed_draws, fits := gfx.cull_layout_build(runs, {}, {instance_ids = 2049, indirect_commands = 3})
-	assert(
-		!fits && len(failed_upload.runs) == 0 && len(failed_upload.candidates) == 0 && len(failed_draws.groups) == 0,
+	assert(upload.candidates[0] == 7 && upload.candidates[1023] == 16760839)
+	assert(upload.candidates[1024] == 9 && upload.candidates[2048] == 16777225)
+	few_commands := gfx.cull_builder_make({instance_ids = 2049, indirect_commands = 3})
+	gfx.cull_push_main(&few_commands, runs, {})
+	assert(few_commands.overflow)
+	few_ids := gfx.cull_builder_make({instance_ids = 2048, indirect_commands = 4})
+	gfx.cull_push_main(&few_ids, runs, {})
+	assert(few_ids.overflow)
+}
+
+// A frame with main and shadow views culls in one pass: main first, shadows over one shared candidate range.
+check_cull_pass :: proc() {
+	history: gfx.DrawHistory
+	gfx.draw_history_create(&history)
+	defer gfx.draw_history_destroy(&history)
+	models := gfx.pool_init(1, gfx.Model)
+	materials := gfx.pool_init(1, gfx.Material)
+	defer gfx.pool_destroy(&models)
+	defer gfx.pool_destroy(&materials)
+	material := gfx.pool_alloc(&materials, gfx.Material{})
+	model := gfx.Model {
+		meshes = make([dynamic]gfx.Mesh),
+	}
+	defer delete(model.meshes)
+	append(&model.meshes, gfx.Mesh{index_count = 6, material = material, bounds = {extents = {1, 1, 1}}})
+	handle := gfx.pool_alloc(&models, model)
+	for i in 0 ..< 3 {
+		history.records[i] = {
+			model = handle,
+			bounds = {radius = 2},
+			world = gfx.Mat4x4(1) * linalg.matrix4_translate_f32({f32(i), 0, -3}),
+			casts_shadow = true,
+		}
+	}
+	history.high = 3
+	casters: gfx.ShadowCasters
+	defer gfx.shadow_casters_destroy(&casters)
+	gfx.shadow_casters_sync(
+		&casters,
+		{draws = gfx.draw_history_live(&history), models = &models, materials = &materials},
+		nil,
 	)
-	_, _, fits_ids := gfx.cull_layout_build(runs, {}, {instance_ids = 2048, indirect_commands = 4})
-	assert(!fits_ids)
+	lights := gfx.LightData {
+		point_light_count       = 1,
+		directional_light_count = 1,
+	}
+	lights.point_lights[0] = {
+		range       = 10,
+		shadow_near = 0.1,
+		color       = {1, 1, 1},
+	}
+	lights.directional_lights[0] = {
+		direction               = {0, -1, 0},
+		color                   = {1, 1, 1},
+		shadow_maximum_distance = 20,
+	}
+	cache: gfx.ShadowCache
+	packet := gfx.FramePacket {
+		camera   = gfx.camera_create(),
+		lights   = &lights,
+		settings = gfx.RENDER_SETTINGS_DEFAULT,
+	}
+	input := gfx.FrameInput {
+		packet = &packet,
+		history = &history,
+		casters = &casters,
+		cache = &cache,
+		models = &models,
+		materials = &materials,
+		targets = {extent = {1280, 720}, bloom_extent = {640, 360}, bloom_mips = 6},
+		budget = {instance_ids = 64, indirect_commands = 64},
+		cull_readback = true,
+	}
+	// Main's 3 candidates, the 3 shared casters, and 7 shadow views (4 cascades in one, 6 cube faces).
+	built := build_frame(input)
+	assert(pass_order(built.passes) == "cull shadow:2d shadow:cube clusters main bloom tonemap overlay")
+	cull, has_cull := gfx.pass_find(built.passes, gfx.CullPass)
+	main, _ := gfx.pass_find(built.passes, gfx.MainPass)
+	main_draws, main_gpu := main.opaque.(gfx.CullDraws)
+	assert(has_cull && main_gpu && cull.readback)
+	upload := cull.upload
+	assert(cull.main_batches == 1 && cull.main_candidates == 3 && main_draws.batch_count == 1)
+	assert(len(main_draws.groups) == 1 && main_draws.groups[0].commands == gfx.IndirectSpan{0, 1})
+	assert(upload.runs[0].first_candidate == 0 && upload.runs[0].first_output == 0 && upload.runs[0].view_index == 0)
+	assert(len(upload.candidates) == int(cull.main_candidates) + len(casters.ids), "casters are uploaded once")
+	assert(len(upload.runs) == 8 && len(upload.views) == 8)
+	assert(upload.views[0].frustum_count == 1 && upload.views[0].skip_near == 0)
+	assert(upload.views[1].frustum_count == gfx.SHADOW_MAP_CASCADE_COUNT && upload.views[1].skip_near == 1)
+	for view in upload.views[2:] do assert(view.frustum_count == 1 && view.skip_near == 0)
+
+	// Every batch belongs to one view, and no two batches share an output.
+	claimed := make([]bool, len(upload.runs), context.temp_allocator)
+	used := make([]bool, 64, context.temp_allocator)
+	claim :: proc(
+		upload: gfx.CullUpload,
+		claimed, used: []bool,
+		draws: gfx.CullDraws,
+		view: u32,
+		shared: bool,
+		base: u32,
+	) {
+		for group in draws.groups {
+			for i in group.commands.first ..< group.commands.first + group.commands.count {
+				run := upload.runs[i]
+				assert(!claimed[i] && run.view_index == view, "batches belong to one view")
+				claimed[i] = true
+				if shared do assert(run.first_candidate >= base && run.first_candidate + run.candidate_count <= u32(len(upload.candidates)))
+				for out in run.first_output ..< run.first_output + run.candidate_count {
+					assert(!used[out], "output ranges are disjoint")
+					used[out] = true
+				}
+			}
+		}
+	}
+	claim(upload, claimed, used, main_draws, 0, false, 0)
+	view_index: u32 = 1
+	shadow_candidates: u32
+	for pass in built.passes {
+		shadow := pass.(gfx.ShadowPass) or_continue
+		for planned in shadow.views {
+			draws, is_gpu := planned.draws.(gfx.CullDraws)
+			assert(is_gpu)
+			claim(upload, claimed, used, draws, view_index, true, cull.main_candidates)
+			view_index += 1
+			shadow_candidates += draws.candidate_count
+		}
+	}
+	for c in claimed do assert(c)
+	assert(view_index == 8 && shadow_candidates == 21)
+	assert(built.counters.shadow_views == 10 && built.counters.indirect_calls == 8 && built.counters.draw_calls == 8)
+	assert(built.counters.candidate_instances == 24)
+
+	// Outputs overflow the id budget while the candidates fit, or the batches overflow the command budget: main
+	// and every shadow view go back to the CPU.
+	for budget in ([2]gfx.FrameBudget{{6, 64}, {64, 7}}) {
+		input.budget = budget
+		fallback := build_frame(input)
+		_, has_cull = gfx.pass_find(fallback.passes, gfx.CullPass)
+		fallback_main, _ := gfx.pass_find(fallback.passes, gfx.MainPass)
+		_, main_cpu := fallback_main.opaque.(gfx.DrawGroups)
+		assert(!has_cull && main_cpu && fallback_main.draws_visible == 3)
+		assert(pass_order(fallback.passes) == "shadow:2d shadow:cube clusters main bloom tonemap overlay")
+		for pass in fallback.passes {
+			shadow := pass.(gfx.ShadowPass) or_continue
+			for planned in shadow.views {
+				_, cpu_view := planned.draws.(gfx.DrawGroups)
+				assert(cpu_view)
+			}
+		}
+	}
 }
 
 check_dirty_commit :: proc() {
@@ -327,7 +476,6 @@ check_packet_settings :: proc() {
 	assert(
 		first_gpu &&
 		second_gpu &&
-		first_main.cull != nil &&
 		first_cull.candidate_count == 0 &&
 		second_cull.candidate_count == 0 &&
 		len(first_cull.groups) == 0 &&
@@ -365,13 +513,8 @@ check_packet_settings :: proc() {
 	changed := build_frame(input)
 	changed_main, _ := gfx.pass_find(changed.passes, gfx.MainPass)
 	cpu_draws, cpu_path := changed_main.opaque.(gfx.DrawGroups)
-	assert(
-		changed_main.cull == nil &&
-		!changed_main.cull_readback &&
-		cpu_path &&
-		len(cpu_draws.groups) == 0 &&
-		cpu_draws.counters == gfx.DrawCounters{},
-	)
+	_, changed_cull := gfx.pass_find(changed.passes, gfx.CullPass)
+	assert(!changed_cull && cpu_path && len(cpu_draws.groups) == 0 && cpu_draws.counters == gfx.DrawCounters{})
 	_, has_2d = find_shadow(changed.passes, .Atlas_2D)
 	_, has_cube = find_shadow(changed.passes, .Cube)
 	_, has_clusters = gfx.pass_find(changed.passes, gfx.ClustersPass)
@@ -456,7 +599,11 @@ check_pass_uses :: proc() {
 	}
 	assert(has_use(gfx.pass_uses(gfx.ShadowPass{atlas = .Atlas_2D}), {.Shadow_2D, .Depth_Write}))
 	assert(has_use(gfx.pass_uses(gfx.ShadowPass{atlas = .Cube}), {.Shadow_Cube, .Depth_Write}))
-	assert(len(gfx.pass_uses(gfx.ParticlesPass{})) == 0 && len(gfx.pass_uses(gfx.ClustersPass{})) == 0)
+	assert(
+		len(gfx.pass_uses(gfx.ParticlesPass{})) == 0 &&
+		len(gfx.pass_uses(gfx.CullPass{})) == 0 &&
+		len(gfx.pass_uses(gfx.ClustersPass{})) == 0,
+	)
 }
 
 // One opaque mesh in the scene: the main pass takes the GPU path when it fits the budget and falls back to
@@ -498,18 +645,19 @@ check_main_pass_choice :: proc() {
 		budget = {instance_ids = 32, indirect_commands = 32},
 		cull_readback = true,
 	}
-	layout := gfx.layout_builder_make(input.budget)
-	gpu := gfx.main_pass_build(input, &layout)
-	cull, is_gpu := gpu.opaque.(gfx.CullDraws)
-	assert(is_gpu && gpu.cull != nil && gpu.cull_readback && cull.candidate_count == 1)
+	gpu := build_frame(input)
+	cull_pass, has_cull := gfx.pass_find(gpu.passes, gfx.CullPass)
+	gpu_main, _ := gfx.pass_find(gpu.passes, gfx.MainPass)
+	cull, is_gpu := gpu_main.opaque.(gfx.CullDraws)
+	assert(is_gpu && has_cull && cull_pass.readback && cull.candidate_count == 1)
 	assert(
-		gpu.counters.candidate_instances == 1 && gpu.draws_visible == 0,
+		gpu_main.counters.candidate_instances == 1 && gpu_main.draws_visible == 0,
 		"GPU path reports candidates, not visibility",
 	)
 
 	input.cull_readback = false
-	layout = gfx.layout_builder_make(input.budget)
-	assert(!gfx.main_pass_build(input, &layout).cull_readback)
+	cull_pass, _ = gfx.pass_find(build_frame(input).passes, gfx.CullPass)
+	assert(!cull_pass.readback)
 
 	// Too small for the cull layout: falls back to the CPU list, which then draws what fits.
 	input.cull_readback = true
@@ -517,21 +665,23 @@ check_main_pass_choice :: proc() {
 		instance_ids      = 1,
 		indirect_commands = 0,
 	}
-	layout = gfx.layout_builder_make(input.budget)
-	cpu := gfx.main_pass_build(input, &layout)
-	cpu_draws, is_cpu := cpu.opaque.(gfx.DrawGroups)
-	assert(is_cpu && cpu.cull == nil && !cpu.cull_readback)
-	assert(cpu.draws_visible == 1 && cpu_draws.counters.draw_calls == 1 && cpu.counters.draw_calls == 1)
+	cpu := build_frame(input)
+	_, has_cull = gfx.pass_find(cpu.passes, gfx.CullPass)
+	cpu_main, _ := gfx.pass_find(cpu.passes, gfx.MainPass)
+	cpu_draws, is_cpu := cpu_main.opaque.(gfx.DrawGroups)
+	assert(is_cpu && !has_cull)
+	assert(cpu_main.draws_visible == 1 && cpu_draws.counters.draw_calls == 1 && cpu_main.counters.draw_calls == 1)
 
 	packet.settings.gpu_cull = false
 	input.budget = {
 		instance_ids      = 32,
 		indirect_commands = 32,
 	}
-	layout = gfx.layout_builder_make(input.budget)
-	cpu = gfx.main_pass_build(input, &layout)
-	_, is_cpu = cpu.opaque.(gfx.DrawGroups)
-	assert(is_cpu && cpu.cull == nil && !cpu.cull_readback && cpu.draws_visible == 1)
+	cpu = build_frame(input)
+	_, has_cull = gfx.pass_find(cpu.passes, gfx.CullPass)
+	cpu_main, _ = gfx.pass_find(cpu.passes, gfx.MainPass)
+	_, is_cpu = cpu_main.opaque.(gfx.DrawGroups)
+	assert(is_cpu && !has_cull && cpu_main.draws_visible == 1)
 }
 
 // Overlay draws and drops flow into the frame counters next to the main pass's.
