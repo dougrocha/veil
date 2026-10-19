@@ -110,11 +110,10 @@ GPU_SHARED_TYPES := [?]GpuSharedType {
 #assert(offset_of(DrawIndexedIndirectCommand, first_instance) == 16)
 #assert(size_of(DrawIndexedIndirectCommand) == 20)
 
-#assert(offset_of(GpuCullView, frustum_count) == 0)
-#assert(offset_of(GpuCullView, skip_near) == 4)
-#assert(offset_of(GpuCullView, _pad) == 8)
+#assert(offset_of(GpuCullView, skip_near) == 0)
+#assert(offset_of(GpuCullView, _pad) == 4)
 #assert(offset_of(GpuCullView, planes) == 16)
-#assert(size_of(GpuCullView) == 400)
+#assert(size_of(GpuCullView) == 112)
 
 #assert(offset_of(GpuCullRun, first_candidate) == 0)
 #assert(offset_of(GpuCullRun, candidate_count) == 4)

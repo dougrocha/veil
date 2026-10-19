@@ -34,18 +34,6 @@ vk_get_max_bindless_textures_per_stage :: proc(ctx: ^Context) -> u32 {
 	return descriptor_indexing_props.maxPerStageDescriptorUpdateAfterBindSampledImages
 }
 
-vk_get_max_multiview_view_count :: proc(ctx: ^Context) -> u32 {
-	props_11 := vk.PhysicalDeviceVulkan11Properties {
-		sType = .PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES,
-	}
-	props2 := vk.PhysicalDeviceProperties2 {
-		sType = .PHYSICAL_DEVICE_PROPERTIES_2,
-		pNext = &props_11,
-	}
-	vk.GetPhysicalDeviceProperties2(ctx.physical_device, &props2)
-	return props_11.maxMultiviewViewCount
-}
-
 vk_get_max_usable_sample_count :: proc(ctx: ^Context) -> u32 {
 	properties := vk_get_physical_device_properties(ctx)
 	counts := properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts

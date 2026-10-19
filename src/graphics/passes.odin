@@ -174,7 +174,7 @@ passes_counters :: proc(passes: []Pass, plan: ^ShadowPlan) -> FrameCounters {
 		case ParticlesPass, CullPass, ClustersPass, BloomPass, TonemapPass:
 		case ShadowPass:
 			draw_counters_add(&total, p.counters)
-			for v in p.views do counters.shadow_views += v.view.view_count
+			counters.shadow_views += u32(len(p.views))
 		case MainPass:
 			draw_counters_add(&total, p.counters)
 			counters.draws_visible = p.draws_visible

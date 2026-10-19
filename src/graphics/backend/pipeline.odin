@@ -58,7 +58,6 @@ GraphicsPipelineDesc :: struct {
 	cull:        CullMode,
 	blend:       BlendMode,
 	depth:       DepthState,
-	view_count:  u32, // > 1: drawn in multiview passes with the same view_count (PassConfig)
 }
 
 // Binds the pipeline and the bindless table (set 0).
@@ -112,8 +111,6 @@ pipeline_create :: proc(ctx: ^Context, desc: GraphicsPipelineDesc, stages: []Sha
 	assert(!depth.test || attachments.depth != .Undefined, "pipeline_create: depth test without a depth attachment")
 	assert(!depth.test || depth.compare != .Never, "pipeline_create: depth test with compare .Never draws nothing")
 	assert(!depth.write || depth.test, "pipeline_create: depth write needs depth test")
-
-	assert(desc.view_count <= ctx.max_multiview_views, "pipeline_create: view_count above the device limit")
 
 	shader_stages := make([]vk.PipelineShaderStageCreateInfo, len(stages), context.temp_allocator)
 	for stage_desc, i in stages {
@@ -187,7 +184,6 @@ pipeline_create :: proc(ctx: ^Context, desc: GraphicsPipelineDesc, stages: []Sha
 	}
 	rendering_info := vk.PipelineRenderingCreateInfo {
 		sType                   = .PIPELINE_RENDERING_CREATE_INFO,
-		viewMask                = view_mask(desc.view_count),
 		colorAttachmentCount    = attachments.color_count,
 		pColorAttachmentFormats = &color_formats[0],
 		depthAttachmentFormat   = format_to_vk(attachments.depth),

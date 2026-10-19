@@ -252,7 +252,7 @@ check_cull_pass :: proc() {
 		budget = {instance_ids = 64, indirect_commands = 64},
 		cull_readback = true,
 	}
-	// Main's 3 candidates, the 3 shared casters, and 7 shadow views (4 cascades in one, 6 cube faces).
+	// Main's 3 candidates, the 3 shared casters, and 10 shadow views (4 cascades, 6 cube faces).
 	built := build_frame(input)
 	assert(pass_order(built.passes) == "cull shadow:2d shadow:cube clusters main bloom tonemap overlay")
 	cull, has_cull := gfx.pass_find(built.passes, gfx.CullPass)
@@ -264,10 +264,12 @@ check_cull_pass :: proc() {
 	assert(len(main_draws.groups) == 1 && main_draws.groups[0].commands == gfx.IndirectSpan{0, 1})
 	assert(upload.runs[0].first_candidate == 0 && upload.runs[0].first_output == 0 && upload.runs[0].view_index == 0)
 	assert(len(upload.candidates) == int(cull.main_candidates) + len(casters.ids), "casters are uploaded once")
-	assert(len(upload.runs) == 8 && len(upload.views) == 8)
-	assert(upload.views[0].frustum_count == 1 && upload.views[0].skip_near == 0)
-	assert(upload.views[1].frustum_count == gfx.SHADOW_MAP_CASCADE_COUNT && upload.views[1].skip_near == 1)
-	for view in upload.views[2:] do assert(view.frustum_count == 1 && view.skip_near == 0)
+	assert(len(upload.runs) == 11 && len(upload.views) == 11)
+	// Main, then the cascades (directional: near plane skipped), then the cube faces.
+	cascades_end := 1 + gfx.SHADOW_MAP_CASCADE_COUNT
+	assert(upload.views[0].skip_near == 0)
+	for view in upload.views[1:cascades_end] do assert(view.skip_near == 1)
+	for view in upload.views[cascades_end:] do assert(view.skip_near == 0)
 
 	// Every batch belongs to one view, and no two batches share an output.
 	claimed := make([]bool, len(upload.runs), context.temp_allocator)
@@ -307,10 +309,10 @@ check_cull_pass :: proc() {
 		}
 	}
 	for c in claimed do assert(c)
-	assert(view_index == 8 && shadow_candidates == 21)
-	assert(built.counters.shadow_views == 10 && built.counters.indirect_calls == 8 && built.counters.draw_calls == 8)
+	assert(view_index == 11 && shadow_candidates == 30)
+	assert(built.counters.shadow_views == 10 && built.counters.indirect_calls == 11 && built.counters.draw_calls == 11)
 	// Candidate counts are main's only: gpu_visible reads back main's commands.
-	assert(built.counters.candidate_instances == 24 - shadow_candidates)
+	assert(built.counters.candidate_instances == cull.main_candidates)
 
 	// Outputs overflow the id budget while the candidates fit, or the batches overflow the command budget: main
 	// and every shadow view go back to the CPU.

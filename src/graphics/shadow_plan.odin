@@ -7,15 +7,13 @@ ShadowAtlasKind :: enum {
 	Cube, // 6 faces per point light
 }
 
-// One depth pass into atlas layers [layer, layer + view_count): a single layer, or every cascade of a
-// directional light as one multiview pass (a view per cascade).
+// One depth render into one atlas layer.
 ShadowView :: struct {
 	atlas:       ShadowAtlasKind,
 	layer:       u32,
-	view_count:  u32,
 	light_type:  LightType,
 	light_index: u32,
-	view_proj:   [SHADOW_MAP_CASCADE_COUNT]Mat4x4, // per view; the first view_count are set
+	view_proj:   Mat4x4,
 }
 
 // What the shadow passes render this frame. Built by shadow_plan, read by the input data upload and
@@ -43,14 +41,13 @@ ShadowPlan :: struct {
 //   compute_directional_shadow_data (slots light * SHADOW_MAP_CASCADE_COUNT + cascade, split/bias
 //   into cascade_data), spot from compute_spot_light_view_proj (slot SPOT_SHADOW_SLOT_BASE + light),
 //   point from compute_point_light_view_proj.
-// - Directional: one view per light, covering its SHADOW_MAP_CASCADE_COUNT cascade slots (contiguous
-//   layers from light * SHADOW_MAP_CASCADE_COUNT), unless Directional is masked.
+// - Directional: every cascade of every light is a view unless Directional is masked.
 // - Spot and point: invalidated when the cached key differs from the light's key, or a caster's
 //   draw change overlaps the light's bound (a sphere of radius range around the light, also for
 //   spots). Invalidation is recorded whether the light is masked or not.
 // - A light not masked renders when it is invalidated or its cache entry isn't valid; otherwise it
 //   counts in views_cached (1 per spot, 6 per point light).
-// - View order: directional lights, spots, then point faces (light * 6 + face).
+// - View order: cascades, spots, then point faces (light * 6 + face).
 shadow_plan :: proc(
 	lights: ^LightData,
 	changes: []DrawChange,
@@ -74,17 +71,10 @@ shadow_plan :: proc(
 			bias  = data.bias,
 		}
 		if .Directional not_in shadow_lights do continue
-		append(
-			&plan.views,
-			ShadowView {
-				atlas = .Atlas_2D,
-				layer = u32(l * SHADOW_MAP_CASCADE_COUNT),
-				view_count = SHADOW_MAP_CASCADE_COUNT,
-				light_type = .Directional,
-				light_index = u32(l),
-				view_proj = data.view_proj,
-			},
-		)
+		for c in 0 ..< SHADOW_MAP_CASCADE_COUNT {
+			slot := u32(l * SHADOW_MAP_CASCADE_COUNT + c)
+			append(&plan.views, ShadowView{.Atlas_2D, slot, .Directional, u32(l), plan.shadow_2d_view_proj[slot]})
+		}
 	}
 	for l in 0 ..< spot_count {
 		slot := SPOT_SHADOW_SLOT_BASE + u32(l)
@@ -102,7 +92,7 @@ shadow_plan :: proc(
 			plan.views_cached += 1
 			continue
 		}
-		append(&plan.views, single_view(.Atlas_2D, slot, .Spot, u32(l), plan.shadow_2d_view_proj[slot]))
+		append(&plan.views, ShadowView{.Atlas_2D, slot, .Spot, u32(l), plan.shadow_2d_view_proj[slot]})
 	}
 	for l in 0 ..< point_count {
 		plan.point_view_proj[l] = compute_point_light_view_proj(lights.point_lights[l])
@@ -119,27 +109,9 @@ shadow_plan :: proc(
 			plan.views_cached += 6
 			continue
 		}
-		for f in 0 ..< 6 do append(&plan.views, single_view(.Cube, u32(l * 6 + f), .Point, u32(l), plan.point_view_proj[l][f]))
+		for f in 0 ..< 6 do append(&plan.views, ShadowView{.Cube, u32(l * 6 + f), .Point, u32(l), plan.point_view_proj[l][f]})
 	}
 	return
-}
-
-@(private = "file")
-single_view :: proc(
-	atlas: ShadowAtlasKind,
-	layer: u32,
-	light_type: LightType,
-	light_index: u32,
-	view_proj: Mat4x4,
-) -> ShadowView {
-	return {
-		atlas = atlas,
-		layer = layer,
-		view_count = 1,
-		light_type = light_type,
-		light_index = light_index,
-		view_proj = {0 = view_proj},
-	}
 }
 
 // Same rule for point and spot entries: the light's key changed, or a caster entered, left or moved

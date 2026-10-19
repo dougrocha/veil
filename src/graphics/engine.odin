@@ -55,19 +55,7 @@ engine_destroy :: proc(self: ^Engine) {
 // image, buffer and shader is already gone. The swapchain belongs to the render targets.
 @(private = "file")
 device_create :: proc(engine: ^Engine, window: ^sdl.Window) -> bool {
-	backend.context_init(&engine.vk_ctx, window) or_return
-	// Each directional light renders its cascades as the views of one multiview pass.
-	limits := backend.limits(&engine.vk_ctx)
-	if limits.max_multiview_views < SHADOW_MAP_CASCADE_COUNT {
-		log.errorf(
-			"Device supports %d multiview views, cascades need %d",
-			limits.max_multiview_views,
-			SHADOW_MAP_CASCADE_COUNT,
-		)
-		backend.context_destroy(&engine.vk_ctx)
-		return false
-	}
-	return true
+	return backend.context_init(&engine.vk_ctx, window)
 }
 
 @(private = "file")

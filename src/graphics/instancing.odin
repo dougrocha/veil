@@ -43,21 +43,15 @@ MAX_INDIRECT_COMMANDS_PER_FRAME :: 64 * 1024
 GPU_CULL_BATCH_CANDIDATES :: 1024
 // The test dispatch uses one workgroup row per batch, so a frame's batches must fit maxComputeWorkGroupCount[1].
 GPU_CULL_MAX_BATCHES :: 65535
-// A view tests its candidates against up to one frustum per directional cascade.
-@(shader_shared)
-GPU_CULL_VIEW_PLANES :: 24
-#assert(GPU_CULL_VIEW_PLANES == SHADOW_MAP_CASCADE_COUNT * 6)
 // The main camera plus every shadow view the atlases can hold.
 MAX_CULL_VIEWS :: 1 + MAX_SHADOW_2D_SLOTS + MAX_POINT_SHADOW_LIGHTS * 6
 
-// One view's frustums: planes[f * 6 + p] is plane p of frustum f (normal.xyz, distance). A candidate
-// is visible when any frustum holds it.
+// One view's frustum planes (normal.xyz, distance), in Frustum.planes order.
 @(shader_shared)
 GpuCullView :: struct #max_field_align(16) {
-	frustum_count: u32,
-	skip_near:     u32, // 1 ignores FRUSTUM_NEAR_PLANE, for directional cascades
-	_pad:          [2]u32,
-	planes:        [GPU_CULL_VIEW_PLANES]Vec4,
+	skip_near: u32, // 1 ignores FRUSTUM_NEAR_PLANE, for directional cascades
+	_pad:      [3]u32,
+	planes:    [6]Vec4,
 }
 
 // One batch: up to GPU_CULL_BATCH_CANDIDATES packed ids of one mesh, tested against one view. The visible

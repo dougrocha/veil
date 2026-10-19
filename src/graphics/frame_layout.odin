@@ -300,21 +300,17 @@ cull_builder_make :: proc(budget: FrameBudget) -> CullBuilder {
 	}
 }
 
-// Adds a view that keeps a candidate any of frustums holds. Returns its index.
-cull_push_view :: proc(b: ^CullBuilder, frustums: []Frustum, skip_near: bool) -> u32 {
-	assert(len(frustums) <= SHADOW_MAP_CASCADE_COUNT)
+// Adds a view that keeps a candidate the frustum holds. Returns its index.
+cull_push_view :: proc(b: ^CullBuilder, frustum: Frustum, skip_near: bool) -> u32 {
 	if len(b.views) >= MAX_CULL_VIEWS {
 		b.overflow = true
 		return 0
 	}
 	view := GpuCullView {
-		frustum_count = u32(len(frustums)),
-		skip_near     = u32(skip_near),
+		skip_near = u32(skip_near),
 	}
-	for frustum, f in frustums {
-		for plane, p in frustum.planes {
-			view.planes[f * 6 + p] = {plane.normal.x, plane.normal.y, plane.normal.z, plane.distance}
-		}
+	for plane, p in frustum.planes {
+		view.planes[p] = {plane.normal.x, plane.normal.y, plane.normal.z, plane.distance}
 	}
 	append(&b.views, view)
 	return u32(len(b.views) - 1)
@@ -335,7 +331,7 @@ cull_push_casters :: proc(b: ^CullBuilder, casters: ^ShadowCasters) -> u32 {
 // Main's camera view and opaque runs. Must come first, so main's batches land at command 0 and its outputs at 0.
 cull_push_main :: proc(b: ^CullBuilder, runs: []DrawRun, frustum: Frustum) -> CullDraws {
 	assert(len(b.runs) == 0 && len(b.candidates) == 0 && len(b.views) == 0, "main culls first")
-	view := cull_push_view(b, {frustum}, false)
+	view := cull_push_view(b, frustum, false)
 	return cull_push_runs(b, runs, view, nil, nil)
 }
 

@@ -17,7 +17,6 @@ static const uint INSTANCE_MATERIAL_BITS = 14;
 static const uint INSTANCE_MATERIAL_MASK = (((1 << INSTANCE_MATERIAL_BITS)) - 1);
 static const uint INSTANCE_DRAW_ID_SHIFT = INSTANCE_MATERIAL_BITS;
 static const uint INSTANCE_DRAW_ID_BITS = 15;
-static const uint GPU_CULL_VIEW_PLANES = 24;
 static const uint MAX_POINT_LIGHTS = 512;
 static const uint MAX_DIRECTIONAL_LIGHTS = 2;
 static const uint MAX_SPOT_LIGHTS = 32;
@@ -170,10 +169,9 @@ struct DrawIndexedIndirectCommand {
 };
 
 struct CullView {
-    uint frustum_count;
     uint skip_near;
-    uint _pad[2];
-    float4 planes[GPU_CULL_VIEW_PLANES];
+    uint _pad[3];
+    float4 planes[6];
 };
 
 struct CullRun {

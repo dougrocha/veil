@@ -122,7 +122,6 @@ Limits :: struct {
 	max_bindless_textures_per_stage: u32,
 	msaa_samples:                    u32, // highest count usable for color + depth
 	max_draw_indirect_count:         u32,
-	max_multiview_views:             u32, // highest view_count a pass and pipeline can use
 }
 
 Context :: struct {
@@ -140,7 +139,6 @@ Context :: struct {
 	max_draw_indirect_count:         u32,
 	upload_pool:                     vk.CommandPool,
 	max_bindless_textures_per_stage: u32,
-	max_multiview_views:             u32,
 	timeline_semaphore:              vk.Semaphore,
 	frame_sync:                      [MAX_FRAMES_IN_FLIGHT]FrameSync,
 	frame_index:                     u64, // frames submitted; the frame being recorded signals frame_index + 1

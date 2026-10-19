@@ -9,7 +9,7 @@ struct VSOutput {
 };
 
 [shader("vertex")]
-VSOutput vertex_main(uint vertex_index : SV_VertexID, uint start_vertex_location : SV_StartVertexLocation, uint instance_id : SV_InstanceID, uint start_instance_location : SV_StartInstanceLocation, uint view_index : SV_ViewID) {
+VSOutput vertex_main(uint vertex_index : SV_VertexID, uint start_vertex_location : SV_StartVertexLocation, uint instance_id : SV_InstanceID, uint start_instance_location : SV_StartInstanceLocation) {
     let v = pc.vertex_buffer[vertex_index + start_vertex_location];
     // Slang lowers SV_InstanceID without the Vulkan base instance; add SV_StartInstanceLocation to restore it.
     let instance_slot = instance_id + start_instance_location;
@@ -18,13 +18,8 @@ VSOutput vertex_main(uint vertex_index : SV_VertexID, uint start_vertex_location
 
     float4 world_pos = mul(transform.model, float4(v.pos_uv_x.xyz, 1.0));
 
-    // Directional lights render every cascade in one multiview pass, a view per cascade. Other
-    // passes aren't multiview, so view_index is 0 there.
-    float4x4 view_proj = pc.view_proj;
-    if (pc.light_type == LIGHT_TYPE_DIRECTIONAL) view_proj = pc.scene_data.shadow_2d_view_proj[pc.light_index * SHADOW_MAP_CASCADE_COUNT + view_index];
-
     VSOutput output;
-    output.pos = mul(view_proj, world_pos);
+    output.pos = mul(pc.view_proj, world_pos);
     output.world_pos = world_pos.xyz;
     output.uv = float2(v.pos_uv_x.w, v.normal_uv_y.w);
     output.material_index = packed_id & INSTANCE_MATERIAL_MASK;

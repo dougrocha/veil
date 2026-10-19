@@ -19,7 +19,7 @@ FrameCounters :: struct {
 	candidate_triangles: u64,
 	draws_visible:       u32, // main pass, after frustum culling
 	meshes_culled:       u32, // main pass, meshes of visible draws rejected by their AABB
-	shadow_views:        u32, // cascade layers + spot maps + cube faces rendered
+	shadow_views:        u32, // cascades + spot maps + cube faces rendered
 	shadow_views_cached: u32, // spot maps + cube faces reused from an earlier frame
 	dropped_lines:       u32,
 	dropped_ui:          u32,
