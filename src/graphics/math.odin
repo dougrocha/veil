@@ -144,7 +144,7 @@ matrix4_ortho3d_z0_f32 :: proc "contextless" (
 
 	if flip_y_axis {
 		m[1][1] *= -1
-		m[1][3] *= -1 // off-center translation flips with the scale
+		m[1, 3] *= -1 // off-center translation flips with the scale
 	}
 
 	return
